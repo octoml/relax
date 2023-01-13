@@ -150,11 +150,11 @@ def init_git() {
   )
 
   // Determine merge commit to use for all stages
-  if (env.BRANCH_NAME == 'main') {
+  if (env.BRANCH_NAME == 'relax') {
     // Only set upstream_revision to HEAD and skip merging to avoid a race with another commit merged to main.
     update_upstream_revision("HEAD")
   } else {
-    // This is PR branch so merge with latest main.
+    // This is PR branch so merge with latest relax branch.
     merge_with_main()
   }
 
@@ -181,13 +181,13 @@ def update_upstream_revision(git_ref) {
 
 def merge_with_main() {
   sh (
-    script: 'git fetch origin main',
+    script: 'git fetch origin relax',
     label: 'Fetch upstream',
   )
   update_upstream_revision("FETCH_HEAD")
   sh (
     script: "git -c user.name=TVM-Jenkins -c user.email=jenkins@tvm.apache.org merge ${upstream_revision}",
-    label: 'Merge to origin/main'
+    label: 'Merge to origin/relax'
   )
 }
 
@@ -281,7 +281,7 @@ def should_skip_slow_tests(pr_number) {
 
 def cancel_previous_build() {
   // cancel previous build if it is not on main.
-  if (env.BRANCH_NAME != 'main') {
+  if (env.BRANCH_NAME != 'relax') {
     def buildNumber = env.BUILD_NUMBER as int
     // Milestone API allows us to cancel previous build
     // with the same milestone number
