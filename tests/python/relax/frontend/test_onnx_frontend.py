@@ -27,6 +27,7 @@ import numpy as np
 import pytest
 
 import tvm
+import tvm.testing
 from tvm import relax
 
 import onnx
@@ -76,7 +77,6 @@ def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] =
     # Run the model through onnx to get the expected result.
     ort_session = onnxruntime.InferenceSession(model.SerializeToString())
     ort_output = ort_session.run([], inputs)
-    ort_output_number = len(ort_output)
 
     # Convert the onnx model into relax through the onnx importer.
     tvm_model = relax.from_onnx(model)
@@ -85,14 +85,18 @@ def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] =
         # TODO add target configuration.
         ex = relax.vm.build(tvm_model, target="llvm")
         vm = relax.VirtualMachine(ex, tvm.cpu())
-    tvm_output = vm["main"](**inputs)
-    tvm_output_number = len(tvm_output)
+    vm.set_input("main", **inputs)
+    vm.invoke_stateful("main")
+    tvm_output = vm.get_outputs("main")
+    # Wrap as a list if there is only one output.
+    if isinstance(tvm_output, tvm.nd.NDArray):
+        tvm_output = [tvm_output]
 
-    assert tvm_output_number == ort_output_number, "Unequal number of outputs"
+    assert len(tvm_output) == len(ort_output), "Unequal number of outputs"
 
     for (tvm_out, ort_out) in zip(tvm_output, ort_output):
         # TODO Allow configurable tolerance.
-        tvm.testing.assert_allclose(tvm_out.numpy(), ort_out, rtol=1e-5)
+        tvm.testing.assert_allclose(tvm_out.numpy(), ort_out, atol=1e-5)
 
 
 def test_matmul():
