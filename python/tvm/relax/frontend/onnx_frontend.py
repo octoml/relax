@@ -101,8 +101,43 @@ class onnx_input(list):
         raise TypeError("list indices must be integers or slices, not %s" % type(item).__name__)
 
 
+class OnnxOpConverter(object):
+    """A helper class for holding onnx op converters."""
+
+    @classmethod
+    def get_converter(cls, opset):
+        """Get converter matches given opset.
+
+        Parameters
+        ----------
+        opset: int
+            opset from model.
+
+        Returns
+        -------
+        converter, which should be `_impl_vx`. Number x is the biggest
+            number smaller than or equal to opset belongs to all support versions.
+        """
+        versions = [int(d.replace("_impl_v", "")) for d in dir(cls) if "_impl_v" in d]
+        versions = sorted(versions + [opset])
+        version = versions[max([i for i, v in enumerate(versions) if v == opset]) - 1]
+        if hasattr(cls, "_impl_v{}".format(version)):
+            return getattr(cls, "_impl_v{}".format(version))
+        raise NotImplementedError(
+            "opset version {} of {} not implemented".format(version, cls.__name__)
+        )        
+
+
+class MatMul(OnnxOpConverter):
+    """Converts an onnx MatMul node into an equivalent Relax expression."""
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.emit_te(topi.matmul, inputs[0], inputs[1])
+
+
 def _get_convert_map(opset):
     return {
+        "MatMul": MatMul.get_converter(opset),
     }
 
 
