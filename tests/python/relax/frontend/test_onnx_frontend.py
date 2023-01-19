@@ -57,7 +57,6 @@ def generate_random_inputs(model: ModelProto) -> Dict[str, np.array]:
     return input_values
 
 
-
 def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] = None) -> None:
     """Run an onnx model in both onnxruntime and TVM through our importer
        confirm that the results match. Otherwise, an exception will be raised.
@@ -73,7 +72,7 @@ def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] =
     # values that we'll use for testing.
     if inputs is None:
         inputs = generate_random_inputs(model)
-    
+
     # Run the model through onnx to get the expected result.
     ort_session = onnxruntime.InferenceSession(model.SerializeToString())
     ort_output = ort_session.run([], inputs)
@@ -101,7 +100,7 @@ def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] =
 
 def test_matmul():
     matmul_node = helper.make_node("MatMul", ["a", "b"], ["c"])
-    
+
     graph = helper.make_graph(
         [matmul_node],
         "matmul_test",
@@ -109,12 +108,148 @@ def test_matmul():
             helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
             helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
         ],
-        outputs = [helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])]
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])],
     )
 
     model = helper.make_model(graph, producer_name="matmul_test")
     check_correctness(model)
 
 
+def test_concat():
+    concat_node = helper.make_node("Concat", ["a", "b"], ["ab"], axis=0)
+
+    graph = helper.make_graph(
+        [concat_node],
+        "concat_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [1, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32]),
+        ],
+        outputs=[helper.make_tensor_value_info("ab", TensorProto.FLOAT, [2, 32])],
+    )
+
+    model = helper.make_model(graph, producer_name="concat_test")
+    check_correctness(model)
+
+
+def test_add():
+    add_node = helper.make_node("Add", ["a", "b"], ["ab"])
+
+    graph = helper.make_graph(
+        [add_node],
+        "add_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [1, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32]),
+        ],
+        outputs=[helper.make_tensor_value_info("ab", TensorProto.FLOAT, [1, 32])],
+    )
+
+    model = helper.make_model(graph, producer_name="add_test")
+    check_correctness(model)
+
+
+def test_mul():
+    mul_node = helper.make_node("Mul", ["a", "b"], ["ab"])
+
+    graph = helper.make_graph(
+        [mul_node],
+        "mul_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [1, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32]),
+        ],
+        outputs=[helper.make_tensor_value_info("ab", TensorProto.FLOAT, [1, 32])],
+    )
+
+    model = helper.make_model(graph, producer_name="mul_test")
+    check_correctness(model)    
+
+
+def test_cast():
+    cast_node = helper.make_node("Cast", ["a"], ["a_float"], to=TensorProto.FLOAT)
+
+    graph = helper.make_graph(
+        [cast_node],
+        "cast_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.INT32, [1, 32]),
+        ],
+        outputs=[helper.make_tensor_value_info("a_float", TensorProto.FLOAT, [1, 32])],
+    )
+
+    model = helper.make_model(graph, producer_name="cast_test")
+    check_correctness(model)
+
+
+def test_gather():
+    gather_node = helper.make_node("Gather", ["data", "indices"], ["y"], axis=0)
+
+    graph = helper.make_graph(
+        [gather_node],
+        "gather_test",
+        inputs=[
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, [5, 4, 3, 2]),
+            helper.make_tensor_value_info("indices", TensorProto.INT32, [3]),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 4, 3, 2])],
+    )
+
+    model = helper.make_model(graph, producer_name="gather_test")
+    input_values = {
+        "data": np.random.randn(5, 4, 3, 2).astype("float32"),
+        "indices": np.array([0, 1, 3]).astype("int32"),
+    }
+    check_correctness(model, inputs=input_values)
+
+
+def test_gemm():
+    gemm_node = helper.make_node(
+        "Gemm", ["a", "b", "c"], ["y"], alpha=0.25, beta=0.35, transA=1, transB=1
+    )
+
+    graph = helper.make_graph(
+        [gemm_node],
+        "gemm_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [4, 3]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [5, 4]),
+            helper.make_tensor_value_info("c", TensorProto.FLOAT, [1, 5]),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 5])],
+    )
+
+    model = helper.make_model(graph, producer_name="gemm_test")
+    check_correctness(model)
+
+
+def test_reshape():
+    reshape_node = helper.make_node("Reshape", ["data", "shape"], ["reshaped"])
+
+    graph = helper.make_graph(
+        [reshape_node],
+        "reshape_test",
+        inputs=[
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, [1, 32]),
+            helper.make_tensor_value_info("shape", TensorProto.INT64, [1]),
+        ],
+        initializer=[helper.make_tensor("shape", TensorProto.INT64, [1], [-1])],
+        outputs=[helper.make_tensor_value_info("reshaped", TensorProto.FLOAT, [32])],
+    )
+    input_values = {
+        "data": np.random.randn(1, 32).astype("float32"),
+    }
+    model = helper.make_model(graph, producer_name="reshape_test")
+    check_correctness(model, inputs=input_values)
+
+
 if __name__ == "__main__":
     test_matmul()
+    test_concat()
+    test_add()
+    test_mul()
+    test_cast()
+    test_gather()
+    test_gemm()
+    # TODO, still has issues
+    #test_reshape()
