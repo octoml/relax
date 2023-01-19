@@ -130,14 +130,126 @@ class OnnxOpConverter(object):
 
 class MatMul(OnnxOpConverter):
     """Converts an onnx MatMul node into an equivalent Relax expression."""
+
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         return bb.emit_te(topi.matmul, inputs[0], inputs[1])
 
 
+class Concat(OnnxOpConverter):
+    """Convert an onnx Concat node into an equivalent Relax expression."""        
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        axis = attr.get("axis", 0)
+        return bb.emit_te(topi.concatenate, inputs, axis)
+
+
+class Add(OnnxOpConverter):
+    """Convert an onnx Add node into an equivalent Relax expression."""        
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.emit_te(topi.add, inputs[0], inputs[1])
+
+
+class Mul(OnnxOpConverter):
+    """Convert an onnx Mul node into an equivalent Relax expression."""        
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.emit_te(topi.multiply, inputs[0], inputs[1])        
+
+
+class Cast(OnnxOpConverter):
+    """Convert an onnx Cast node into an equivalent Relax expression."""        
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        to_type = get_type(attr["to"])
+        return bb.emit_te(topi.cast, inputs[0], to_type)
+
+
+class Gather(OnnxOpConverter):
+    """Convert an onnx Gather node into an equivalent Relax expression."""        
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        # TODO This assumes positive only indices.
+        axis = attr.get("axis", 0)
+        return bb.emit_te(topi.take, inputs[0], inputs[1], axis)
+
+
+class Gemm(OnnxOpConverter):
+    """Convert an onnx Gemm node into an equivalent Relax expression."""        
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        alpha = attr.get("alpha", None)
+        beta = attr.get("beta", None)
+        transA = attr.get("transA", False)
+        transB = attr.get("transB", False)
+        A = inputs[0]
+        B = inputs[1]
+        C = inputs[2]
+        dtype = A.checked_type.dtype
+
+        # Compute Y = alpha * A X B + beta * C
+
+        if alpha is not None:
+            A = bb.emit_te(topi.multiply, A, relax.const(alpha, dtype=dtype))
+
+        Y = bb.emit_te(topi.matmul, A, B, transA, transB)
+
+        if C is not None:
+            if beta is not None:
+                C = bb.emit_te(topi.multiply, C, relax.const(beta, dtype=dtype))
+            Y = bb.emit_te(topi.add, Y, C)
+        
+        return Y 
+
+
+class Reshape(OnnxOpConverter):
+    """Convert an onnx Reshape node into an equivalent Relax expression."""        
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        from tvm.script import relax as R        
+        data = inputs[0]
+        # TODO We assume new_shape is a constant, need to enable tensor input to reshape
+        # for full support.
+        new_shape = inputs[1].data.numpy()
+
+        # Convert -1 dims in new_shape into positive equivalent.
+        if -1 in new_shape:
+            breakpoint()
+            data_shape = [dim.value for dim in data.shape.values] 
+            total_elements = np.prod(data_shape)
+            new_product = 1
+            for dim in new_shape:
+                if dim > 0:
+                    new_product *= dim
+            
+            # Replace -1 with positive equivalent
+            for i, dim in enumerate(new_shape):
+                if dim == -1:
+                    new_shape[i] = int(total_elements / new_product)
+        
+        breakpoint()
+
+        return bb.emit_te(topi.reshape, data, new_shape)
+
+
 def _get_convert_map(opset):
     return {
         "MatMul": MatMul.get_converter(opset),
+        "Concat": Concat.get_converter(opset),
+        "Add": Add.get_converter(opset),
+        "Mul": Mul.get_converter(opset),
+        "Cast": Cast.get_converter(opset),
+        "Gather": Gather.get_converter(opset),
+        "Gemm": Gemm.get_converter(opset),
+        "Reshape": Reshape.get_converter(opset),
     }
 
 
