@@ -88,11 +88,11 @@ if __name__ == "__main__":
     #     ninja_args.append("-v")
     # sh.run(f"cmake --build . -- " + " ".join(ninja_args), cwd=build_dir)
 
-    sh.run("cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..", cwd=build_dir)
+    sh.run("cmake -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo ..", cwd=build_dir)
     target = ""
     if args.cmake_target:
         target = args.cmake_target
-    sh.run(f"cmake --build . -- {target} VERBOSE=1 -j{num_cpus}", cwd=build_dir)
+    sh.run(f"cmake --build . -- {target} -j{num_cpus}", cwd=build_dir)
 
     if use_sccache:
         logging.info("===== sccache stats =====")
