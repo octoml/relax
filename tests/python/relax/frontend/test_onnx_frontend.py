@@ -163,7 +163,7 @@ def test_mul():
     )
 
     model = helper.make_model(graph, producer_name="mul_test")
-    check_correctness(model)    
+    check_correctness(model)
 
 
 def test_cast():
@@ -243,6 +243,80 @@ def test_reshape():
     check_correctness(model, inputs=input_values)
 
 
+def test_div():
+    div_node = helper.make_node("Div", ["a", "b"], ["c"])
+
+    graph = helper.make_graph(
+        [div_node],
+        "div_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
+        ],
+        outputs = [helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])]
+    )
+
+    model = helper.make_model(graph, producer_name="div_test")
+    check_correctness(model)
+
+
+def test_sigmoid():
+    sigmoid_node = helper.make_node("Sigmoid", ["a"], ["b"])
+
+    graph = helper.make_graph(
+        [sigmoid_node],
+        "sigmoid_test",
+        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32])],
+        outputs = [helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32])]
+    )
+
+    model = helper.make_model(graph, producer_name="sigmoid_test")
+    check_correctness(model)
+
+
+def test_softmax():
+    softmax_node = helper.make_node("Softmax", ["a"], ["b"])
+
+    graph = helper.make_graph(
+        [softmax_node],
+        "softmax_test",
+        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32, 32])],
+        outputs = [helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32, 32])]
+    )
+
+    model = helper.make_model(graph, producer_name="softmax_test")
+    check_correctness(model)
+
+
+def test_transpose():
+    transpose_node = helper.make_node("Transpose", ["a"], ["b"], perm=[1, 2, 0])
+
+    graph = helper.make_graph(
+        [transpose_node],
+        "transpose_test",
+        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32, 32])],
+        outputs = [helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32, 32])]
+    )
+
+    model = helper.make_model(graph, producer_name="transpose_test")
+    check_correctness(model)
+
+
+def test_unsqueeze():
+    unsqueeze_node = helper.make_node("Unsqueeze", ["a", "axes"], ["b"])
+
+    graph = helper.make_graph(
+        [unsqueeze_node],
+        "unsqueeze",
+        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32])],
+        initializer=[helper.make_tensor("axes", TensorProto.INT64, [3], vals=[0, 2, 3])],
+        outputs = [helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32, 1, 1, 32])]
+    )
+
+    model = helper.make_model(graph, producer_name="unsqueeze_test")
+    check_correctness(model)
+
+
 if __name__ == "__main__":
     test_matmul()
     test_concat()
@@ -253,3 +327,8 @@ if __name__ == "__main__":
     test_gemm()
     # TODO, still has issues
     #test_reshape()
+    test_div()
+    test_sigmoid()
+    test_softmax()
+    test_transpose()
+    test_unsqueeze()
