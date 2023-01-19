@@ -45,7 +45,7 @@ else:
 # To add people to this list, go to
 # your Slack Profile > Profile > 3 dots > Copy Member ID
 users = [
-    "U02LST1UPPH",  # driazati
+    "U013D814ZLJ",
 ]
 
 

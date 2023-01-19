@@ -63,14 +63,14 @@ aws_ecr_url = "dkr.ecr." + aws_default_region + ".amazonaws.com"
 
 # Docker Images
 docker_images = {
-    "ci_arm": {
-        "tag": "tlcpack/ci-arm:20221013-060115-61c9742ea",
-        "platform": "ARM",
-    },
-    "ci_cortexm": {
-        "tag": "tlcpack/ci-cortexm:20221013-060115-61c9742ea",
-        "platform": "CPU",
-    },
+    # "ci_arm": {
+    #     "tag": "tlcpack/ci-arm:20221013-060115-61c9742ea",
+    #     "platform": "ARM",
+    # },
+    # "ci_cortexm": {
+    #     "tag": "tlcpack/ci-cortexm:20221013-060115-61c9742ea",
+    #     "platform": "CPU",
+    # },
     "ci_cpu": {
         "tag": "tlcpack/ci-cpu:20221013-060115-61c9742ea",
         "platform": "CPU",
@@ -79,14 +79,14 @@ docker_images = {
         "tag": "tlcpack/ci-gpu:20221019-060125-0b4836739",
         "platform": "GPU",
     },
-    "ci_hexagon": {
-        "tag": "tlcpack/ci-hexagon:20221013-060115-61c9742ea",
-        "platform": "CPU",
-    },
-    "ci_i386": {
-        "tag": "tlcpack/ci-i386:20221013-060115-61c9742ea",
-        "platform": "CPU",
-    },
+    # "ci_hexagon": {
+    #     "tag": "tlcpack/ci-hexagon:20221013-060115-61c9742ea",
+    #     "platform": "CPU",
+    # },
+    # "ci_i386": {
+    #     "tag": "tlcpack/ci-i386:20221013-060115-61c9742ea",
+    #     "platform": "CPU",
+    # },
     "ci_lint": {
         "tag": "tlcpack/ci-lint:20221013-060115-61c9742ea",
         "platform": "CPU",
@@ -95,14 +95,14 @@ docker_images = {
         "tag": "tlcpack/ci-minimal:20221013-060115-61c9742ea",
         "platform": "CPU",
     },
-    "ci_riscv": {
-        "tag": "tlcpack/ci-riscv:20221013-060115-61c9742ea",
-        "platform": "CPU",
-    },
-    "ci_wasm": {
-        "tag": "tlcpack/ci-wasm:20221013-060115-61c9742ea",
-        "platform": "CPU",
-    },
+    # "ci_riscv": {
+    #     "tag": "tlcpack/ci-riscv:20221013-060115-61c9742ea",
+    #     "platform": "CPU",
+    # },
+    # "ci_wasm": {
+    #     "tag": "tlcpack/ci-wasm:20221013-060115-61c9742ea",
+    #     "platform": "CPU",
+    # },
 }
 
 data = {
