@@ -265,7 +265,6 @@ class Reshape(OnnxOpConverter):
 
         # Convert -1 dims in new_shape into positive equivalent.
         if -1 in new_shape:
-            breakpoint()
             data_shape = [dim.value for dim in data.shape.values]
             total_elements = np.prod(data_shape)
             new_product = 1
@@ -278,7 +277,6 @@ class Reshape(OnnxOpConverter):
                 if dim == -1:
                     new_shape[i] = int(total_elements / new_product)
 
-        breakpoint()
 
         return bb.emit_te(topi.reshape, data, new_shape)
 
