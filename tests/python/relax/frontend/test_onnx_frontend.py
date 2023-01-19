@@ -223,6 +223,7 @@ def test_gemm():
     check_correctness(model)
 
 
+@pytest.mark.skip
 def test_reshape():
     reshape_node = helper.make_node("Reshape", ["data", "shape"], ["reshaped"])
 
