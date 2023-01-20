@@ -195,7 +195,7 @@ def deploy_docs() {
 
 def deploy() {
   stage('Deploy') {
-    if (env.BRANCH_NAME == 'main') {
+    if (env.BRANCH_NAME == 'relax') {
       parallel(
         {% call m.deploy_step(
           name="Deploy Docs",
