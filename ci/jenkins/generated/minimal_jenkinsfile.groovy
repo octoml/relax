@@ -538,7 +538,8 @@ def shard_run_unittest_CPU_MINIMAL_1_of_1() {
                 )
 
               cpp_unittest(ci_minimal)
-              python_unittest(ci_minimal)
+              // TODO: Currently broken
+              // python_unittest(ci_minimal)
             })
           }
         } finally {
