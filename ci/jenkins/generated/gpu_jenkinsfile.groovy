@@ -1261,7 +1261,7 @@ def deploy_docs() {
 
 def deploy() {
   stage('Deploy') {
-    if (env.BRANCH_NAME == 'main') {
+    if (env.BRANCH_NAME == 'relax') {
       parallel(
   'Deploy Docs': {
     if (env.DOCS_DEPLOY_ENABLED == 'yes') {
