@@ -149,6 +149,23 @@
   )
 {% endcall %}
 
+{% call(shard_index, num_shards) m.sharded_test_step(
+  name="model coverage",
+  node="GPU",
+  num_shards=1,
+  ws="tvm/model-coverage",
+  platform="gpu",
+  docker_image="ci_gpu",
+  condition='!skip_ci && is_docs_only_build != 1',
+  test_method_names=test_method_names,
+) %}
+  {{ m.download_artifacts(tag='gpu') }}
+  ci_setup(ci_gpu)
+  sh (
+    script: "${docker_run} ${ci_gpu} ./tests/scripts/task_test_model_coverage.sh",
+    label: 'Run model coverage tests',
+  )
+{% endcall %}
 
 {{ m.invoke_tests(test_method_names) }}
 

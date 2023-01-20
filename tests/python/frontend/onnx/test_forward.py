@@ -168,7 +168,7 @@ def get_tvm_output(
 
 def get_onnxruntime_output(model, inputs):
     """Generic function to generate onnxruntime output"""
-    rep = onnxruntime.backend.prepare(model.SerializeToString(), "CPU")
+    rep = onnxruntime.backend.prepare(model.SerializeToString(), "GPU")
     if isinstance(inputs, list) and len(inputs) == 1:
         inp = inputs[0]
     else:
