@@ -317,6 +317,11 @@ class BiasGelu(OnnxOpConverter):
         inp = bb.emit_te(topi.add, x, b)
         return Gelu._impl_v1(bb, [inp], attr)
 
+class Where(OnnxOpConverter):
+    """Convert an onnx Where node into an equivalent Relax expression."""
+    @classmethod
+    def _impl_v16(cls, bb, inputs, attr):
+        return bb.emit_te(topi.where, *inputs)
 
 def _get_convert_map(opset):
     return {
@@ -335,6 +340,7 @@ def _get_convert_map(opset):
         "Unsqueeze": Unsqueeze.get_converter(opset),
         "Gelu": Gelu.get_converter(opset),
         "BiasGelu": BiasGelu.get_converter(opset),
+        "Where": Where.get_converter(opset),
     }
 
 

@@ -51,7 +51,10 @@ def generate_random_inputs(model: ModelProto) -> Dict[str, np.array]:
             dtype = "float32"
 
         # Generate random inputs for each input.
-        random_value = np.random.normal(size=shape).astype(dtype)
+        if dtype == "bool":
+            random_value = np.random.choice(a=[False, True], size=shape)
+        else:
+            random_value = np.random.normal(size=shape).astype(dtype)
         input_values[i.name] = random_value
 
     return input_values
@@ -346,6 +349,24 @@ def test_bias_gelu():
     )
 
     model = helper.make_model(graph, producer_name="bias_gelu_test")
+    check_correctness(model)
+
+
+def test_where():
+    where_node = helper.make_node("Where", ["a", "b", "c"], ["d"])
+
+    graph = helper.make_graph(
+        [where_node],
+        "where_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.BOOL, [32, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32]),
+        ],
+        outputs = [helper.make_tensor_value_info("d", TensorProto.FLOAT, [32, 32])],
+    )
+
+    model = helper.make_model(graph, producer_name="where_test")
     check_correctness(model)
 
 
