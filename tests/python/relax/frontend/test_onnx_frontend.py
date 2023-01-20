@@ -318,6 +318,37 @@ def test_unsqueeze():
     check_correctness(model)
 
 
+def test_gelu():
+    gelu_node = helper.make_node("Gelu", ["a"], ["b"], domain="com.microsoft")
+
+    graph = helper.make_graph(
+        [gelu_node],
+        "gelu_test",
+        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32])],
+        outputs = [helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32])]
+    )
+
+    model = helper.make_model(graph, producer_name="gelu_test")
+    check_correctness(model)
+
+
+def test_bias_gelu():
+    bias_gelu_node = helper.make_node("BiasGelu", ["a", "b"], ["c"], domain="com.microsoft")
+
+    graph = helper.make_graph(
+        [bias_gelu_node],
+        "bias_gelu_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32]),
+        ],
+        outputs = [helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])],
+    )
+
+    model = helper.make_model(graph, producer_name="bias_gelu_test")
+    check_correctness(model)
+
+
 if __name__ == "__main__":
     test_matmul()
     test_concat()

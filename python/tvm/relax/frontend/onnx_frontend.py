@@ -280,6 +280,43 @@ class Reshape(OnnxOpConverter):
 
         return bb.emit_te(topi.reshape, data, new_shape)
 
+class Gelu(OnnxOpConverter):
+    """Operator converter for Gelu from Microsoft onnxruntime contrib opset.
+
+    gelu(x) = 0.5x(1 + erf(x/sqrt(2)))
+    """
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        x = inputs[0]
+
+        # Declare constants
+        const_dtype = x.checked_type.dtype
+        half = relax.const(0.5, dtype=const_dtype)
+        one = relax.const(1.0, dtype=const_dtype)
+        sqrt2 = relax.const(math.sqrt(2.0), dtype=const_dtype)
+
+        # Compute gelu
+        term1 = bb.emit_te(topi.multiply, half, x)
+        erf  = bb.emit_te(topi.erf, bb.emit_te(topi.divide, x, sqrt2))
+        term2 = bb.emit_te(topi.add, one, erf)
+        return bb.emit_te(topi.multiply, term1, term2)
+
+class BiasGelu(OnnxOpConverter):
+    """Operator converter for BiasGelu from Microsoft onnxruntime contrib opset.
+
+    bias_gelu(x, b) = 0.5(x + b)(1 + erf((x + b)/sqrt(2)))
+    """
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        x = inputs[0]
+        b = inputs[1]
+
+        b_dims = b.checked_type.ndim
+        assert b_dims == 1, "BiasGelu bias term must be a 1D tensor."
+
+        inp = bb.emit_te(topi.add, x, b)
+        return Gelu._impl_v1(bb, [inp], attr)
+
 
 def _get_convert_map(opset):
     return {
@@ -296,6 +333,8 @@ def _get_convert_map(opset):
         "Softmax": Softmax.get_converter(opset),
         "Transpose": Transpose.get_converter(opset),
         "Unsqueeze": Unsqueeze.get_converter(opset),
+        "Gelu": Gelu.get_converter(opset),
+        "BiasGelu": BiasGelu.get_converter(opset),
     }
 
 
