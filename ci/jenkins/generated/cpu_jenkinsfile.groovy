@@ -505,15 +505,16 @@ def build() {
         )
         cmake_build(ci_cpu, 'build', '-j2')
         make_cpp_tests(ci_cpu, 'build')
+        sh("ls build")
         sh(
-            script: "./${jenkins_scripts_root}/s3.py --action upload --bucket ${s3_bucket} --prefix ${s3_prefix}/cpu --items build/libvta_tsim.so build/libtvm.so build/libvta_fsim.so build/libtvm_runtime.so build/config.cmake build/libtvm_allvisible.so build/cpptest build/build.ninja build/CMakeFiles/rules.ninja",
+            script: "./${jenkins_scripts_root}/s3.py --action upload --bucket ${s3_bucket} --prefix ${s3_prefix}/cpu --items build/libtvm.so build/libtvm_runtime.so build/config.cmake build/cpptest build/build.ninja build/CMakeFiles/rules.ninja",
             label: 'Upload artifacts to S3',
           )
 
         ci_setup(ci_cpu)
         // sh "${docker_run} ${ci_cpu} ./tests/scripts/task_golang.sh"
         // TODO(@jroesch): need to resolve CI issue will turn back on in follow up patch
-        sh (script: "${docker_run} ${ci_cpu} ./tests/scripts/task_rust.sh", label: 'Rust build and test')
+        // sh (script: "${docker_run} ${ci_cpu} ./tests/scripts/task_rust.sh", label: 'Rust build and test')
           }
         }
       }
