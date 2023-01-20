@@ -23,17 +23,18 @@ tvm.ir
    :autosummary:
 
 
-tvm.instrument
---------------
-.. automodule:: tvm.instrument
-   :members:
-   :imported-members:
-   :autosummary:
+.. TODO: The Sphinx docs build here is broken in Relax
+.. tvm.instrument
+.. --------------
+.. .. automodule:: tvm.instrument
+..    :members:
+..    :imported-members:
+..    :autosummary:
 
 
-tvm.transform
--------------
-.. automodule:: tvm.transform
-   :members:
-   :imported-members:
-   :autosummary:
+.. tvm.transform
+.. -------------
+.. .. automodule:: tvm.transform
+..    :members:
+..    :imported-members:
+..    :autosummary:

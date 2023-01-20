@@ -30,7 +30,7 @@
   )
   cmake_build(ci_cpu, 'build', '-j2')
   make_cpp_tests(ci_cpu, 'build')
-  {{ m.upload_artifacts(tag='cpu', filenames=tvm_multilib_tsim + tvm_allvisible + cpptest) }}
+  {{ m.upload_artifacts(tag='cpu', filenames=tvm_allvisible + cpptest) }}
   ci_setup(ci_cpu)
   // sh "${docker_run} ${ci_cpu} ./tests/scripts/task_golang.sh"
   // TODO(@jroesch): need to resolve CI issue will turn back on in follow up patch

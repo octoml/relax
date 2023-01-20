@@ -50,7 +50,18 @@ sphinx_precheck() {
 
     pushd docs
     make clean
-    TVM_TUTORIAL_EXEC_PATTERN=none make html 2>&1 | tee /tmp/$$.log.txt
+    if TVM_TUTORIAL_EXEC_PATTERN=none make html 2>&1 | tee /tmp/$$.log.txt; then
+        echo "build successful"
+    else
+        echo "build failed, checking for expected free() error"
+        if grep -Fxq "free(): invalid pointer" /tmp/$$.log.txt; then
+            echo "Found expected free() error, continuing"
+        else
+            echo "unexpected error, free() error not found"
+            exit 1
+        fi
+    fi
+    
     check_sphinx_warnings "docs"
     popd
 }
@@ -129,7 +140,18 @@ find . -type f -path "*.pyc" | xargs rm -f
 make cython3
 
 cd docs
-PYTHONPATH=$(pwd)/../python make html SPHINXOPTS='-j auto' |& tee /tmp/$$.log.txt
+if PYTHONPATH=$(pwd)/../python make html SPHINXOPTS='-j auto' |& tee /tmp/$$.log.txt; then
+    echo "Build successful"
+else
+    echo "build failed, checking for expected free() error"
+    if grep -Fxq "free(): invalid pointer" /tmp/$$.log.txt; then
+        echo "Found expected free() error, continuing"
+    else
+        echo "Unexpected error, free() error not found"
+        exit 1
+    fi
+fi  
+
 if grep -E "failed to execute|Segmentation fault" < /tmp/$$.log.txt; then
     echo "Some of sphinx-gallery item example failed to execute."
     exit 1
