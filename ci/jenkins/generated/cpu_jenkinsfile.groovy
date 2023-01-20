@@ -504,10 +504,9 @@ def build() {
           label: 'Create CPU cmake config',
         )
         cmake_build(ci_cpu, 'build', '-j2')
-        make_standalone_crt(ci_cpu, 'build')
         make_cpp_tests(ci_cpu, 'build')
         sh(
-            script: "./${jenkins_scripts_root}/s3.py --action upload --bucket ${s3_bucket} --prefix ${s3_prefix}/cpu --items build/libvta_tsim.so build/libtvm.so build/libvta_fsim.so build/libtvm_runtime.so build/config.cmake build/libtvm_allvisible.so build/crttest build/cpptest build/build.ninja build/CMakeFiles/rules.ninja build/standalone_crt build/build.ninja build/microtvm_template_projects",
+            script: "./${jenkins_scripts_root}/s3.py --action upload --bucket ${s3_bucket} --prefix ${s3_prefix}/cpu --items build/libvta_tsim.so build/libtvm.so build/libvta_fsim.so build/libtvm_runtime.so build/config.cmake build/libtvm_allvisible.so build/cpptest build/build.ninja build/CMakeFiles/rules.ninja",
             label: 'Upload artifacts to S3',
           )
 

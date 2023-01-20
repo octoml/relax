@@ -1231,10 +1231,10 @@ def deploy_docs() {
     script: '''
       set -eux
       rm -rf tvm-site
-      git clone -b $DOCS_DEPLOY_BRANCH --depth=1 https://github.com/apache/tvm-site
+      git clone -b main --depth=1 https://github.com/octoml/relax-site
       cd tvm-site
       git status
-      git checkout -B $DOCS_DEPLOY_BRANCH
+      git checkout -B main
 
       git ls-tree HEAD docs/ --name-only | grep -vP '^docs/v\\d' | xargs rm -rf
       mkdir -p docs
@@ -1243,23 +1243,23 @@ def deploy_docs() {
       git add .
       git config user.name tvm-bot
       git config user.email 95660001+tvm-bot@users.noreply.github.com
-      git commit -m"deploying docs (apache/tvm@$COMMIT)"
+      git commit -m"deploying docs (octoml/relax@$COMMIT)"
       git status
     ''',
     label: 'Unpack docs and update tvm-site'
   )
 
   withCredentials([string(
-    credentialsId: 'docs-push-token',
+    credentialsId: 'octoml-relax-docs-push-token',
     variable: 'GITHUB_TOKEN',
     )]) {
     sh(
       script: '''
         cd tvm-site
-        git remote add deploy https://$GITHUB_TOKEN:x-oauth-basic@github.com/apache/tvm-site.git
-        git push deploy $DOCS_DEPLOY_BRANCH || true
+        git remote add deploy https://$GITHUB_TOKEN:x-oauth-basic@github.com/octoml/relax-site.git
+        git push deploy main || true
       ''',
-      label: 'Upload docs to apache/tvm-site'
+      label: 'Upload docs to octoml/relax-site'
     )
   }
 }
