@@ -1226,7 +1226,7 @@ def deploy_docs() {
     script: '''
       set -eux
       rm -rf tvm-site
-      git clone -b main --depth=1 https://github.com/octoml/relax-site
+      git clone -b main --depth=1 https://github.com/octoml/relax-site tvm-site
       cd tvm-site
       git status
       git checkout -B main
