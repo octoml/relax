@@ -60,7 +60,7 @@
 // 'python3 jenkins/generate.py'
 // Note: This timestamp is here to ensure that updates to the Jenkinsfile are
 // always rebased on main before merging:
-// Generated at 2023-01-19T16:29:18.670815
+// Generated at 2023-01-23T10:52:05.612520
 
 import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
 // These are set at runtime from data in ci/jenkins/docker-images.yml, update
@@ -1226,7 +1226,7 @@ def deploy_docs() {
     script: '''
       set -eux
       rm -rf tvm-site
-      git clone -b main --depth=1 https://github.com/octoml/relax-site
+      git clone -b main --depth=1 https://github.com/octoml/relax-site tvm-site
       cd tvm-site
       git status
       git checkout -B main
