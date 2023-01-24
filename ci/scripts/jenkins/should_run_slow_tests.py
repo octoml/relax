@@ -60,7 +60,7 @@ if __name__ == "__main__":
     branch = git(["rev-parse", "--abbrev-ref", "HEAD"])
 
     # Don't skip slow tests on main or ci-docker-staging
-    skip_branches = {"main", "ci-docker-staging"}
+    skip_branches = {"main", "ci-docker-staging", "relax"}
     if branch in skip_branches:
         print(f"Branch {branch} is in {skip_branches}, running slow tests")
         exit(1)

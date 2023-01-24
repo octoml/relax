@@ -19,10 +19,10 @@
 
 set -eux
 
-if [ "${BRANCH_NAME}" == "main" ]; then
+if [ "${BRANCH_NAME}" == "relax" ]; then
     changed_files=$(git diff --no-commit-id --name-only -r HEAD~1)
 else
-    changed_files=$(git diff --no-commit-id --name-only -r origin/main)
+    changed_files=$(git diff --no-commit-id --name-only -r origin/relax)
 fi
 
 FILES_THAT_SHOULDNT_TRIGGER_REBUILDS=(
