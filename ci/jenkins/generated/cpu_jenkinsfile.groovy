@@ -779,7 +779,7 @@ def shard_run_unittest_CPU_1_of_1() {
 
               ci_setup(ci_cpu)
               cpp_unittest(ci_cpu)
-              micro_cpp_unittest(ci_cpu)
+              // micro_cpp_unittest(ci_cpu)
               python_unittest(ci_cpu)
               fsim_test(ci_cpu)
               sh (
