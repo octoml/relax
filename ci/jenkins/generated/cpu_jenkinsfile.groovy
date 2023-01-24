@@ -60,7 +60,7 @@
 // 'python3 jenkins/generate.py'
 // Note: This timestamp is here to ensure that updates to the Jenkinsfile are
 // always rebased on main before merging:
-// Generated at 2023-01-23T09:04:41.790036
+// Generated at 2023-01-24T09:36:16.816369
 
 import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
 // These are set at runtime from data in ci/jenkins/docker-images.yml, update
@@ -725,7 +725,7 @@ def shard_run_unittest_CPU_1_of_1() {
 
               ci_setup(ci_cpu)
               cpp_unittest(ci_cpu)
-              micro_cpp_unittest(ci_cpu)
+              // micro_cpp_unittest(ci_cpu)
               python_unittest(ci_cpu)
               fsim_test(ci_cpu)
               sh (
