@@ -54,7 +54,7 @@ if __name__ == "__main__":
         logging.info(f"Found title tags: {tags}")
         return "skip ci" in tags
 
-    if args.pr != "null" and args.pr.strip() != "" and branch != "main" and check_pr_title():
+    if args.pr != "null" and args.pr.strip() != "" and branch != "relax" and check_pr_title():
         logging.info("PR title starts with '[skip ci]', skipping...")
         exit(0)
     else:
