@@ -56,7 +56,7 @@ if __name__ == "__main__":
     if args.files is not None:
         diff = [x for x in args.files.split(",") if x.strip() != ""]
     else:
-        diff = git(["diff", "--no-commit-id", "--name-only", "-r", "origin/main"])
+        diff = git(["diff", "--no-commit-id", "--name-only", "-r", "origin/relax"])
         diff = diff.split("\n")
         diff = [d.strip() for d in diff]
         diff = [d for d in diff if d != ""]
