@@ -586,7 +586,7 @@ def _get_convert_map(opset):
         "Squeeze": Squeeze,
         "Constant": Constant,
         "Sub": Sub,
-        "LayerNormalization": RelayLayerNormalization,
+        "LayerNormalization": tvm.relay.frontend.onnx.LayerNormalization,
     }
 
 
@@ -784,7 +784,10 @@ class GraphProto:
             shape_values = []
             for shape_value in relax_var.struct_info.shape.values:
                 shape_values.append(int(shape_value))
-            relay_vars.append(relay.var(relax_var.name_hint, shape=shape_values, dtype=relax_var.checked_type.dtype))
+            if isinstance(relax_var, relax.Constant):
+                relay_vars.append(relay.const(relax_var.data, dtype=relax_var.checked_type.dtype))
+            else:
+                relay_vars.append(relay.var(relax_var.name_hint, shape=shape_values, dtype=relax_var.checked_type.dtype))
         return relay_vars
 
 
@@ -795,9 +798,9 @@ class GraphProto:
         associated call_tirs to the block builder in use.
         Parameters
         ----------
-        relax_inputs : list(relax.Var)
+        relax_inputs : list(relax.Var, relay.Constant)
                 The list of relax vars that are inputs to the relax op.
-        relay_inputs : list(relay.Var)
+        relay_inputs : list(relay.Var, relay.Constant)
                 The list of relay vars that are inputs to the relay op. This is
                 obtianed from the _relay_input_adapter function.
         relay_output : relay.Expr
@@ -811,7 +814,8 @@ class GraphProto:
             relay_output = relay_output.tuple_value
 
         # Create a Relay function with the body returned by the Relay op.
-        function = relay.Function(relay_inputs, relay_output)
+        relay_var_inputs = [input for input in relay_inputs if isinstance(input, relay.Var)]
+        function = relay.Function(relay_var_inputs, relay_output)
         # TODO Should we support passing a target into the frontend?
         target = Target("llvm")
         # Save the current in-use block builder. The translator uses its own block builder.
@@ -832,7 +836,8 @@ class GraphProto:
         # with the inputs.
         relax_input_dict = {}
         for relax_var in relax_inputs:
-            relax_input_dict[relax_var.name_hint] = relax_var
+            if (isinstance(relax_var, relax.Var)):
+                relax_input_dict[relax_var.name_hint] = relax_var
 
         # from tvm.relax.testing import dump_ast
         # print(relax_mod["main"])
@@ -889,10 +894,14 @@ class GraphProto:
         if op_name in convert_map:
             convert_class = convert_map[op_name]
             op_function = convert_class.get_converter(opset)
-            if convert_class.__bases__[0] == RelayOnnxOpConverter:
+            # If the op_function is a subclass of RelayOnnxOpConverter then it is a relay op.
+            if (convert_class.__bases__[0] == RelayOnnxOpConverter) or \
+                (hasattr(convert_class.__bases__[0], "__bases__") and convert_class.__bases__[0].__bases__[0] == RelayOnnxOpConverter):
                 relay_inputs = self._relay_input_adapter(inputs)
+                # The op_function might change the inputs to the relay op. Use a copy of the inputs.
+                relay_inputs_copy = [relay_input for relay_input in relay_inputs]
                 # TODO handle params passing
-                relay_output = op_function(relay_inputs, attrs, None)
+                relay_output = op_function(relay_inputs_copy, attrs, None)
                 sym = self._relay_output_adapter(inputs, relay_inputs, relay_output)
             else:
                 sym = op_function(self.bb, inputs, attrs)
