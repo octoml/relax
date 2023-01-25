@@ -556,14 +556,15 @@ class Sub(OnnxOpConverter):
 
 def _get_convert_map(opset):
     return {
-        "MatMul": MatMul,
+        "MatMul": tvm.relay.frontend.onnx.MatMul,
+        # "MatMul": MatMul,
         "Concat": Concat,
         "Add": Add,
         "Mul": Mul,
         "Cast": Cast,
         "Gather": Gather,
         "Gemm": Gemm,
-        "Reshape": Reshape,
+        "Reshape": tvm.relay.frontend.onnx.Reshape,
         "Div": Div,
         "Sigmoid": Sigmoid,
         "Softmax": Softmax,
@@ -783,7 +784,7 @@ class GraphProto:
         for relax_var in inputs:
             shape_values = []
             for shape_value in relax_var.struct_info.shape.values:
-                shape_values.append(int(shape_value))
+                shape_values.append(shape_value)
             if isinstance(relax_var, relax.Constant):
                 relay_vars.append(relay.const(relax_var.data, dtype=relax_var.checked_type.dtype))
             else:
@@ -901,7 +902,7 @@ class GraphProto:
                 # The op_function might change the inputs to the relay op. Use a copy of the inputs.
                 relay_inputs_copy = [relay_input for relay_input in relay_inputs]
                 # TODO handle params passing
-                relay_output = op_function(relay_inputs_copy, attrs, None)
+                relay_output = op_function(relay_inputs_copy, attrs, [])
                 sym = self._relay_output_adapter(inputs, relay_inputs, relay_output)
             else:
                 sym = op_function(self.bb, inputs, attrs)

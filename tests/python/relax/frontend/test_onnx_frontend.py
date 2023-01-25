@@ -122,6 +122,27 @@ def test_matmul():
     check_correctness(model)
 
 
+def test_dynamic_matmul():
+    matmul_node = helper.make_node("MatMul", ["a", "b"], ["c"])
+
+    graph = helper.make_graph(
+        [matmul_node],
+        "matmul_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, ["?", "?"]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, ["?", "?"]),
+        ],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, ["?", "?"])],
+    )
+
+    model = helper.make_model(graph, producer_name="matmul_test")
+    inputs = {
+        "a": np.random.normal(size=(32, 48)).astype("float32"),
+        "b": np.random.normal(size=(48, 64)).astype("float32")
+    }
+    check_correctness(model, inputs)
+
+
 def test_concat():
     concat_node = helper.make_node("Concat", ["a", "b"], ["ab"], axis=0)
 
@@ -228,6 +249,25 @@ def test_gemm():
 
     model = helper.make_model(graph, producer_name="gemm_test")
     check_correctness(model)
+
+
+def test_dynamic_reshape():
+    reshape_node = helper.make_node("Reshape", ["data", "shape"], ["reshaped"])
+
+    graph = helper.make_graph(
+        [reshape_node],
+        "reshape_test",
+        inputs=[
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, ["?", 32, 32, 8]),
+        ],
+        initializer=[helper.make_tensor("shape", TensorProto.INT64, [2], [-1, 8192])],
+        outputs=[helper.make_tensor_value_info("reshaped", TensorProto.FLOAT, ["?", "?"])],
+    )
+    input_values = {
+        "data": np.random.randn(7, 32, 32, 8).astype("float32"),
+    }
+    model = helper.make_model(graph, producer_name="reshape_test")
+    check_correctness(model, inputs=input_values)
 
 
 @pytest.mark.skip
