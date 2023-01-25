@@ -60,7 +60,7 @@
 // 'python3 jenkins/generate.py'
 // Note: This timestamp is here to ensure that updates to the Jenkinsfile are
 // always rebased on main before merging:
-// Generated at 2023-01-23T10:52:05.612520
+// Generated at 2023-01-24T16:26:02.370695
 
 import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
 // These are set at runtime from data in ci/jenkins/docker-images.yml, update
@@ -1167,6 +1167,52 @@ def shard_run_docs_GPU_1_of_1() {
 
 
 
+def shard_run_model_coverage_1_of_1() {
+  if (!skip_ci && is_docs_only_build != 1) {
+    node('GPU') {
+      ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/model-coverage") {
+        try {
+          init_git()
+          docker_init(ci_gpu)
+          timeout(time: max_time, unit: 'MINUTES') {
+            withEnv([
+              'PLATFORM=gpu',
+              'TEST_STEP_NAME=model coverage',
+              'TVM_NUM_SHARDS=1',
+              'TVM_SHARD_INDEX=0',
+              "SKIP_SLOW_TESTS=${skip_slow_tests}"], {
+              sh(
+                  script: "./${jenkins_scripts_root}/s3.py --action download --bucket ${s3_bucket} --prefix ${s3_prefix}/gpu",
+                  label: 'Download artifacts from S3',
+                )
+
+              ci_setup(ci_gpu)
+              sh (
+                script: "${docker_run} ${ci_gpu} ./tests/scripts/task_test_model_coverage.sh",
+                label: 'Run model coverage tests',
+              )
+            })
+          }
+        } finally {
+          try {
+            sh(
+            script: "./${jenkins_scripts_root}/s3.py --action upload --bucket ${s3_bucket} --prefix ${s3_prefix}/pytest-results/model_coverage --items build/pytest-results",
+            label: 'Upload JUnits to S3',
+          )
+
+            junit 'build/pytest-results/*.xml'
+          } catch (Exception e) {
+            echo 'Exception during JUnit upload: ' + e.toString()
+          }
+        }
+      }
+    }
+  } else {
+    Utils.markStageSkippedForConditional('model coverage 1 of 1')
+  }
+}
+
+
 def test() {
   stage('Test') {
     environment {
@@ -1211,6 +1257,9 @@ def test() {
     },
     'docs: GPU 1 of 1': {
       shard_run_docs_GPU_1_of_1()
+    },
+    'model coverage 1 of 1': {
+      shard_run_model_coverage_1_of_1()
     },
     )
   }

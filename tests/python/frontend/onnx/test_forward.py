@@ -128,6 +128,7 @@ def get_tvm_output(
     opset=None,
     opt_level=1,
     convert_config=None,
+    steps_record=None,
 ):
     """Generic function to execute and get tvm output"""
     # TODO: Resolve the issues and remove the following lines
@@ -136,9 +137,14 @@ def get_tvm_output(
     mod, params = relay.frontend.from_onnx(
         graph_def, shape_dict, opset=opset, convert_config=convert_config
     )
+    if steps_record is not None:
+        steps_record.append("IMPORTED")
 
     with tvm.transform.PassContext(opt_level=opt_level):
         graph, lib, params = relay.build(mod, target, params=params)
+
+    if steps_record is not None:
+        steps_record.append("COMPILED")
 
     m = graph_executor.create(graph, lib, dev)
     # set inputs
@@ -154,6 +160,9 @@ def get_tvm_output(
     m.set_input(**params)
     # execute
     m.run()
+
+    if steps_record is not None:
+        steps_record.append("RAN")
     # get outputs
     if isinstance(output_shape, list):
         tvm_output_list = []
@@ -168,7 +177,7 @@ def get_tvm_output(
 
 def get_onnxruntime_output(model, inputs):
     """Generic function to generate onnxruntime output"""
-    rep = onnxruntime.backend.prepare(model.SerializeToString(), "CPU")
+    rep = onnxruntime.backend.prepare(model.SerializeToString(), "GPU")
     if isinstance(inputs, list) and len(inputs) == 1:
         inp = inputs[0]
     else:
@@ -195,6 +204,7 @@ def verify_with_ort_with_inputs(
     apply_softmax=False,
     opt_level=1,
     convert_config=None,
+    steps_record=None,
 ):
     """verify_with_ort_with_inputs"""
     if opset is not None:
@@ -222,7 +232,11 @@ def verify_with_ort_with_inputs(
             opset=opset,
             opt_level=opt_level,
             convert_config=convert_config,
+            steps_record=steps_record,
         )
+    
+    if steps_record is not None:
+        steps_record.append("IMPORTED")
 
     if not isinstance(tvm_out, list):
         tvm_out = [tvm_out]
@@ -235,6 +249,8 @@ def verify_with_ort_with_inputs(
         tvm.testing.assert_allclose(ort_val, tvm_val, rtol=rtol, atol=atol)
         assert ort_val.dtype == tvm_val.dtype
 
+    if steps_record is not None:
+        steps_record.append("VERIFIED_RESULTS")
 
 def verify_with_ort(
     model,
@@ -248,6 +264,7 @@ def verify_with_ort(
     dtype="float32",
     rtol=1e-5,
     atol=1e-5,
+    steps_record=None,
 ):
     """verify_with_ort"""
     inputs = [np.random.uniform(size=ishape).astype(dtype) for ishape in input_shapes]
@@ -263,6 +280,7 @@ def verify_with_ort(
         dtype=dtype,
         rtol=rtol,
         atol=atol,
+        steps_record=steps_record,
     )
 
 
