@@ -135,9 +135,52 @@ class MatMul(OnnxOpConverter):
     def _impl_v13(cls, bb, inputs, attr):
         return bb.emit_te(topi.matmul, inputs[0], inputs[1])
 
+class Div(OnnxOpConverter):
+    """Converts an onnx Div node into an equivalent Relax expression."""
+    @classmethod
+    def _impl_v14(cls, bb, inputs, attr):
+        return bb.emit_te(topi.divide, inputs[0], inputs[1])
+
+class Sigmoid(OnnxOpConverter):
+    """Converts an onnx Sigmoid node into an equivalent Relax expression."""
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.emit_te(topi.sigmoid, inputs[0])
+
+
+class Softmax(OnnxOpConverter):
+    """Converts an onnx Softmax node into an equivalent Relax expression."""
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        axis = attr.get("axis", -1)
+        return bb.emit_te(topi.nn.softmax, inputs[0], axis=axis)
+
+class Transpose(OnnxOpConverter):
+    """Converts an onnx Transpose node into an equivalent Relax expression."""
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        perm = attr.get("perm", None)
+        return bb.emit_te(topi.transpose, inputs[0], axes=perm)
+
+class Unsqueeze(OnnxOpConverter):
+    """Converts an onnx Unsqueeze node into an equivalent Relax expression."""
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        input = inputs[0]
+        axes = inputs[1]
+
+        if (isinstance(axes, relax.Constant)):
+            constant_axes = list(axes.data.numpy())
+            constant_axes = list(map(int, constant_axes))
+            constant_axes = sorted(constant_axes)
+            for axis in constant_axes:
+                input = bb.emit_te(topi.expand_dims, input, axis=axis, num_newaxis=1)
+            return input
+
+        raise NotImplementedError("Unsqueeze with dynamic axes is not supported.")
 
 class Concat(OnnxOpConverter):
-    """Convert an onnx Concat node into an equivalent Relax expression."""        
+    """Convert an onnx Concat node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
@@ -146,7 +189,7 @@ class Concat(OnnxOpConverter):
 
 
 class Add(OnnxOpConverter):
-    """Convert an onnx Add node into an equivalent Relax expression."""        
+    """Convert an onnx Add node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
@@ -154,15 +197,15 @@ class Add(OnnxOpConverter):
 
 
 class Mul(OnnxOpConverter):
-    """Convert an onnx Mul node into an equivalent Relax expression."""        
+    """Convert an onnx Mul node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.multiply, inputs[0], inputs[1])        
+        return bb.emit_te(topi.multiply, inputs[0], inputs[1])
 
 
 class Cast(OnnxOpConverter):
-    """Convert an onnx Cast node into an equivalent Relax expression."""        
+    """Convert an onnx Cast node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
@@ -171,7 +214,7 @@ class Cast(OnnxOpConverter):
 
 
 class Gather(OnnxOpConverter):
-    """Convert an onnx Gather node into an equivalent Relax expression."""        
+    """Convert an onnx Gather node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
@@ -181,7 +224,7 @@ class Gather(OnnxOpConverter):
 
 
 class Gemm(OnnxOpConverter):
-    """Convert an onnx Gemm node into an equivalent Relax expression."""        
+    """Convert an onnx Gemm node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
@@ -205,16 +248,16 @@ class Gemm(OnnxOpConverter):
             if beta is not None:
                 C = bb.emit_te(topi.multiply, C, relax.const(beta, dtype=dtype))
             Y = bb.emit_te(topi.add, Y, C)
-        
-        return Y 
+
+        return Y
 
 
 class Reshape(OnnxOpConverter):
-    """Convert an onnx Reshape node into an equivalent Relax expression."""        
+    """Convert an onnx Reshape node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        from tvm.script import relax as R        
+        from tvm.script import relax as R
         data = inputs[0]
         # TODO We assume new_shape is a constant, need to enable tensor input to reshape
         # for full support.
@@ -222,23 +265,63 @@ class Reshape(OnnxOpConverter):
 
         # Convert -1 dims in new_shape into positive equivalent.
         if -1 in new_shape:
-            breakpoint()
-            data_shape = [dim.value for dim in data.shape.values] 
+            data_shape = [dim.value for dim in data.shape.values]
             total_elements = np.prod(data_shape)
             new_product = 1
             for dim in new_shape:
                 if dim > 0:
                     new_product *= dim
-            
+
             # Replace -1 with positive equivalent
             for i, dim in enumerate(new_shape):
                 if dim == -1:
                     new_shape[i] = int(total_elements / new_product)
-        
-        breakpoint()
+
 
         return bb.emit_te(topi.reshape, data, new_shape)
 
+class Gelu(OnnxOpConverter):
+    """Operator converter for Gelu from Microsoft onnxruntime contrib opset.
+
+    gelu(x) = 0.5x(1 + erf(x/sqrt(2)))
+    """
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        x = inputs[0]
+
+        # Declare constants
+        const_dtype = x.checked_type.dtype
+        half = relax.const(0.5, dtype=const_dtype)
+        one = relax.const(1.0, dtype=const_dtype)
+        sqrt2 = relax.const(math.sqrt(2.0), dtype=const_dtype)
+
+        # Compute gelu
+        term1 = bb.emit_te(topi.multiply, half, x)
+        erf  = bb.emit_te(topi.erf, bb.emit_te(topi.divide, x, sqrt2))
+        term2 = bb.emit_te(topi.add, one, erf)
+        return bb.emit_te(topi.multiply, term1, term2)
+
+class BiasGelu(OnnxOpConverter):
+    """Operator converter for BiasGelu from Microsoft onnxruntime contrib opset.
+
+    bias_gelu(x, b) = 0.5(x + b)(1 + erf((x + b)/sqrt(2)))
+    """
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        x = inputs[0]
+        b = inputs[1]
+
+        b_dims = b.checked_type.ndim
+        assert b_dims == 1, "BiasGelu bias term must be a 1D tensor."
+
+        inp = bb.emit_te(topi.add, x, b)
+        return Gelu._impl_v1(bb, [inp], attr)
+
+class Where(OnnxOpConverter):
+    """Convert an onnx Where node into an equivalent Relax expression."""
+    @classmethod
+    def _impl_v16(cls, bb, inputs, attr):
+        return bb.emit_te(topi.where, *inputs)
 
 def _get_convert_map(opset):
     return {
@@ -250,6 +333,14 @@ def _get_convert_map(opset):
         "Gather": Gather.get_converter(opset),
         "Gemm": Gemm.get_converter(opset),
         "Reshape": Reshape.get_converter(opset),
+        "Div": Div.get_converter(opset),
+        "Sigmoid": Sigmoid.get_converter(opset),
+        "Softmax": Softmax.get_converter(opset),
+        "Transpose": Transpose.get_converter(opset),
+        "Unsqueeze": Unsqueeze.get_converter(opset),
+        "Gelu": Gelu.get_converter(opset),
+        "BiasGelu": BiasGelu.get_converter(opset),
+        "Where": Where.get_converter(opset),
     }
 
 
