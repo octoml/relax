@@ -171,7 +171,6 @@ def test_mul():
 
     model = helper.make_model(graph, producer_name="mul_test")
     check_correctness(model)
-    check_correctness(model)
 
 
 def test_cast():
@@ -620,6 +619,26 @@ def test_sub():
     )
 
     model = helper.make_model(graph, producer_name="sub_test")
+    check_correctness(model)
+
+
+def test_layer_norm():
+    layer_norm_node = helper.make_node("LayerNormalization", ["a", "b", "c"], ["d", "mean", "std_dev"], epsilon=1e-12)
+
+    graph = helper.make_graph(
+        [layer_norm_node],
+        "layer_norm_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32]),
+            helper.make_tensor_value_info("c", TensorProto.FLOAT, [32]),
+        ],
+        outputs = [helper.make_tensor_value_info("d", TensorProto.FLOAT, [32, 32]),
+                   helper.make_tensor_value_info("mean", TensorProto.FLOAT, [32]),
+                   helper.make_tensor_value_info("std_dev", TensorProto.FLOAT, [32])],
+    )
+
+    model = helper.make_model(graph, producer_name="layer_norm_test")
     check_correctness(model)
 
 
