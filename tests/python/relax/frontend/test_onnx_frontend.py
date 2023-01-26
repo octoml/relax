@@ -105,41 +105,31 @@ def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] =
         tvm.testing.assert_allclose(tvm_out.numpy(), ort_out, atol=1e-5)
 
 
-def test_matmul():
+@pytest.mark.parametrize("dynamic", [True, False])
+def test_matmul(dynamic):
     matmul_node = helper.make_node("MatMul", ["a", "b"], ["c"])
+
+    tensor_size = [32, 32]
+    if dynamic:
+        tensor_size = ["?", "?"]
 
     graph = helper.make_graph(
         [matmul_node],
         "matmul_test",
         inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, tensor_size),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, tensor_size),
         ],
-        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, tensor_size)],
     )
 
     model = helper.make_model(graph, producer_name="matmul_test")
-    check_correctness(model)
-
-
-def test_dynamic_matmul():
-    matmul_node = helper.make_node("MatMul", ["a", "b"], ["c"])
-
-    graph = helper.make_graph(
-        [matmul_node],
-        "matmul_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, ["?", "?"]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, ["?", "?"]),
-        ],
-        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, ["?", "?"])],
-    )
-
-    model = helper.make_model(graph, producer_name="matmul_test")
-    inputs = {
-        "a": np.random.normal(size=(32, 48)).astype("float32"),
-        "b": np.random.normal(size=(48, 64)).astype("float32")
-    }
+    inputs = None
+    if dynamic:
+        inputs = {
+            "a": np.random.normal(size=(32, 48)).astype("float32"),
+            "b": np.random.normal(size=(48, 64)).astype("float32")
+        }
     check_correctness(model, inputs)
 
 
@@ -251,41 +241,24 @@ def test_gemm():
     check_correctness(model)
 
 
-def test_dynamic_reshape():
+@pytest.mark.parametrize("dynamic", [True, False])
+def test_reshape(dynamic):
     reshape_node = helper.make_node("Reshape", ["data", "shape"], ["reshaped"])
+
+    data_shape = ["?", 32, 32, 8] if dynamic else [7, 32, 32, 8]
+    output_shape = ["?", "?"] if dynamic else [7, 8192]
 
     graph = helper.make_graph(
         [reshape_node],
         "reshape_test",
         inputs=[
-            helper.make_tensor_value_info("data", TensorProto.FLOAT, ["?", 32, 32, 8]),
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, data_shape),
         ],
         initializer=[helper.make_tensor("shape", TensorProto.INT64, [2], [-1, 8192])],
-        outputs=[helper.make_tensor_value_info("reshaped", TensorProto.FLOAT, ["?", "?"])],
+        outputs=[helper.make_tensor_value_info("reshaped", TensorProto.FLOAT, output_shape)],
     )
     input_values = {
         "data": np.random.randn(7, 32, 32, 8).astype("float32"),
-    }
-    model = helper.make_model(graph, producer_name="reshape_test")
-    check_correctness(model, inputs=input_values)
-
-
-@pytest.mark.skip
-def test_reshape():
-    reshape_node = helper.make_node("Reshape", ["data", "shape"], ["reshaped"])
-
-    graph = helper.make_graph(
-        [reshape_node],
-        "reshape_test",
-        inputs=[
-            helper.make_tensor_value_info("data", TensorProto.FLOAT, [1, 32]),
-            helper.make_tensor_value_info("shape", TensorProto.INT64, [1]),
-        ],
-        initializer=[helper.make_tensor("shape", TensorProto.INT64, [1], [-1])],
-        outputs=[helper.make_tensor_value_info("reshaped", TensorProto.FLOAT, [32])],
-    )
-    input_values = {
-        "data": np.random.randn(1, 32).astype("float32"),
     }
     model = helper.make_model(graph, producer_name="reshape_test")
     check_correctness(model, inputs=input_values)
