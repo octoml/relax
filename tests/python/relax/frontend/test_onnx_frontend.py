@@ -32,14 +32,19 @@ from tvm import relax
 
 import onnx
 from onnx import helper
-from onnx import TensorProto, ModelProto
+from onnx import TensorProto, ModelProto, ValueInfoProto
 import onnxruntime
 
 
-def generate_random_inputs(model: ModelProto) -> Dict[str, np.array]:
+def generate_random_inputs(
+    model: ModelProto, inputs: Dict[str, np.array] = None
+) -> Dict[str, np.array]:
     input_values = {}
     # Iterate through model inputs and extract their shape.
     for i in model.graph.input:
+        if inputs is not None and i.name in inputs:
+            input_values[i.name] = inputs[i.name]
+            continue
         shape = []
         for dim in i.type.tensor_type.shape.dim:
             shape.append(dim.dim_value)
@@ -73,8 +78,7 @@ def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] =
     """
     # If inputs are not provided, extract them from the onnx graph and produce random
     # values that we'll use for testing.
-    if inputs is None:
-        inputs = generate_random_inputs(model)
+    inputs = generate_random_inputs(model, inputs)
 
     # Run the model through onnx to get the expected result.
     ort_session = onnxruntime.InferenceSession(model.SerializeToString())
@@ -544,6 +548,26 @@ def test_erf():
     check_correctness(model)
 
 
+def test_cumsum():
+    cumsum_node = helper.make_node("CumSum", ["x", "axis"], ["y"])
+    shape = [32, 32]
+    type_proto = onnx.TypeProto()
+    tensor_type_proto = type_proto.tensor_type
+    tensor_type_proto.elem_type = TensorProto.INT64
+    graph = helper.make_graph(
+        [cumsum_node],
+        "cumsum_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+            helper.make_tensor_value_info("axis", TensorProto.INT64, ()),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="cumsum_test")
+    check_correctness(model, {"axis": [1]})
+
+
 if __name__ == "__main__":
     test_matmul()
     test_concat()
@@ -570,3 +594,4 @@ if __name__ == "__main__":
     test_transpose()
     test_unsqueeze()
     # test_shape()
+    # test_cumsum()  # need axis as int

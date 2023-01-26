@@ -447,6 +447,25 @@ class Erf(OnnxOpConverter):
         return bb.emit_te(topi.erf, inputs[0])
 
 
+class CumSum(OnnxOpConverter):
+    """Converts an onnx CumSum node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        assert getattr(attr, "reverse", 0) == 0, "reverse is not supported yet"
+        if len(inputs) > 1:
+            # axis = int(infer_value(inputs[1], params).numpy())
+            axis = inputs[1]
+        else:
+            axis = None
+        return bb.emit_te(
+            topi.cumsum,
+            data=inputs[0],
+            axis=axis,
+            exclusive=attr.get("exclusive", None),
+        )
+
+
 def _get_convert_map(opset):
     return {
         "MatMul": MatMul.get_converter(opset),
@@ -475,6 +494,7 @@ def _get_convert_map(opset):
         "Conv": Conv.get_converter(opset),
         "Pow": Pow.get_converter(opset),
         "Erf": Erf.get_converter(opset),
+        "CumSum": CumSum.get_converter(opset),
     }
 
 
