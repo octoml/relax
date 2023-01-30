@@ -160,8 +160,8 @@ void ExprVisitor::VisitExpr_(const CallNode* op) {
   this->VisitSpan(op->span);
   this->VisitExpr(op->op);
 
-  for (Type ty_arg : op->type_args) {
-    this->VisitType(ty_arg);
+  for (StructInfo sinfo_arg : op->sinfo_args) {
+    this->VisitExprDepStructInfoField(sinfo_arg);
   }
 
   for (Expr arg : op->args) {
@@ -231,8 +231,6 @@ void ExprVisitor::VisitExpr_(const PrimValueNode* op) {
 void ExprVisitor::VisitExpr_(const StringImmNode* op) { this->VisitSpan(op->span); }
 
 void ExprVisitor::VisitExpr_(const DataTypeImmNode* op) { this->VisitSpan(op->span); }
-
-void ExprVisitor::VisitType(const Type& t) {}
 
 void ExprVisitor::VisitSpan(const Span& span) {}
 
@@ -420,11 +418,11 @@ Expr ExprMutatorBase::VisitExpr_(const CallNode* call_node) {
   Expr new_op = this->VisitExpr(call_node->op);
   bool unchanged = call_node->op.same_as(new_op);
 
-  tvm::Array<Type> ty_args;
-  for (Type ty_arg : call_node->type_args) {
-    Type new_ty_arg = this->VisitType(ty_arg);
-    ty_args.push_back(new_ty_arg);
-    unchanged &= new_ty_arg.same_as(ty_arg);
+  Array<StructInfo> sinfo_args;
+  for (StructInfo sinfo_arg : call_node->sinfo_args) {
+    StructInfo new_sinfo_arg = this->VisitExprDepStructInfoField(sinfo_arg);
+    sinfo_args.push_back(new_sinfo_arg);
+    unchanged &= new_sinfo_arg.same_as(sinfo_arg);
   }
 
   tvm::Array<Expr> call_args;
@@ -437,7 +435,7 @@ Expr ExprMutatorBase::VisitExpr_(const CallNode* call_node) {
   if (unchanged && VisitAndCheckStructInfoFieldUnchanged(call_node->struct_info_)) {
     return GetRef<Expr>(call_node);
   } else {
-    return Call(new_op, call_args, call_node->attrs, ty_args, call_node->span);
+    return Call(new_op, call_args, call_node->attrs, sinfo_args, call_node->span);
   }
 }
 
@@ -541,8 +539,6 @@ BindingBlock ExprMutatorBase::VisitBindingBlock(const BindingBlock& block) {
     return BindingBlock(bindings);
   }
 }
-
-Type ExprMutatorBase::VisitType(const Type& t) { return t; }
 
 PrimExpr ExprMutatorBase::VisitPrimExpr(const PrimExpr& expr) { return expr; }
 
@@ -828,11 +824,6 @@ TVM_REGISTER_GLOBAL("relax.ExprVisitorVisitVarDef")
       visitor->ExprVisitor::VisitVarDef(var);
     });
 
-TVM_REGISTER_GLOBAL("relax.ExprVisitorVisitType")
-    .set_body_typed([](PyExprVisitor visitor, const Type& type) {
-      visitor->ExprVisitor::VisitType(type);
-    });
-
 TVM_REGISTER_GLOBAL("relax.ExprVisitorVisitSpan")
     .set_body_typed([](PyExprVisitor visitor, const Span& span) {
       visitor->ExprVisitor::VisitSpan(span);
@@ -878,11 +869,6 @@ TVM_REGISTER_GLOBAL("relax.ExprMutatorVisitBindingBlock")
 TVM_REGISTER_GLOBAL("relax.ExprMutatorVisitVarDef")
     .set_body_typed([](PyExprMutator mutator, const Var& var) {
       return mutator->ExprMutator::VisitVarDef(var);
-    });
-
-TVM_REGISTER_GLOBAL("relax.ExprMutatorVisitType")
-    .set_body_typed([](PyExprMutator mutator, const Type& type) {
-      return mutator->ExprMutator::VisitType(type);
     });
 
 TVM_REGISTER_GLOBAL("relax.PyExprMutatorVisitExprPostOrder")

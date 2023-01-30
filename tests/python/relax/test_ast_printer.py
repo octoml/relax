@@ -362,7 +362,7 @@ def test_call_packed():
         t = R.add(w, z)
         sh: R.Shape = R.shape_of(t)
         o: R.Object = R.call_packed(
-            "contrib.tensor_array_stack", x, y, type_args=R.Object, test_attr=True
+            "contrib.tensor_array_stack", x, y, sinfo_args=R.Object(), test_attr=True
         )
         return o
 
@@ -393,7 +393,7 @@ def test_call_packed():
         {
             "op": 'ExternFunc(global_symbol="contrib.tensor_array_stack")',
             "args": '[Var(name_hint="x"), Var(name_hint="y")]',
-            "type_args": "[ObjectType()]",
+            "sinfo_args": "[ObjectStructInfo()]",
             "attrs": '{"test_attr": 1}',
         },
         extern_call_text,
@@ -425,7 +425,7 @@ def test_call_tir():
     @R.function
     def foo(x: R.Tensor(("m", "n"), "float32")):
         m, n = T.var("int64"), T.var("int64")
-        gv0 = R.call_tir("test.op.identity", (x,), (m, n), dtype="float32")
+        gv0 = R.call_tir("test.op.identity", (x,), R.Tensor((m, n), dtype="float32"))
         return gv0
 
     foo_str = strip_whitespace(
@@ -453,13 +453,19 @@ def test_call_tir():
             "op": 'Op(name="relax.call_tir")',
             "args": """[
                 ExternFunc(global_symbol="test.op.identity"),
-                Tuple(fields=[
-                    Var(name_hint="x")]),
-                    ShapeExpr(values=[PrimExpr(value=`m: int64`),
-                    PrimExpr(value=`n: int64`)
-                ])
+                Tuple(fields=[Var(name_hint="x")])
             ]""",
-            "type_args": "[DynTensorType(ndim=2, dtype=float32)]",
+            "sinfo_args": """[
+                TensorStructInfo(
+                    dtype=float32,
+                    shape=ShapeExpr(
+                        values=[
+                            PrimExpr(value=`m: int64`),
+                            PrimExpr(value=`n: int64`)
+                        ]
+                    )
+                )
+            ]""",
         },
         tir_call_text,
     )

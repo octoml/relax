@@ -71,51 +71,46 @@ StructInfo ReturnShapeStructInfo(const Call& call, const BlockBuilder& ctx) {
 
 // call_tir
 
-StructInfo CallTIRStructInfoFromShapeType(Expr shape, Type type) {
-  if (auto* tuple = shape.as<TupleNode>()) {
-    auto* ptr_type = type.as<TupleTypeNode>();
-    ICHECK(ptr_type != nullptr) << "Expect tuple type and shape to be consistent.";
-    ICHECK_EQ(ptr_type->fields.size(), tuple->fields.size());
-    Array<StructInfo> arr;
-    for (size_t i = 0; i < ptr_type->fields.size(); ++i) {
-      arr.push_back(CallTIRStructInfoFromShapeType(tuple->fields[i], ptr_type->fields[i]));
-    }
-    return TupleStructInfo(arr);
-  } else {
-    auto* ptr_type = type.as<DynTensorTypeNode>();
-    ICHECK(ptr_type != nullptr) << "Expect singleton shape to correspond to DynTensorType.";
-    return TensorStructInfo(shape, ptr_type->dtype);
-  }
-}
-
 StructInfo InferStructInfoCallTIR(const Call& call, const BlockBuilder& ctx) {
-  Expr output_shape = call->args[2];
-  if (call->type_args.size() != 1) {
-    ctx->ReportFatal(Diagnostic::Error(call) << "type_args should have exact 1 output type.");
+  if (call->sinfo_args.size() != 1) {
+    ctx->ReportFatal(Diagnostic::Error(call)
+                     << "sinfo_args should have exact 1 output struct info.");
   }
-  Type output_type = call->type_args[0];
-  return CallTIRStructInfoFromShapeType(output_shape, output_type);
+  return call->sinfo_args[0];
 }
 
 RELAY_REGISTER_OP("relax.call_tir")
-    .set_num_inputs(4)
+    .set_num_inputs(3)
     .add_argument("func", "Expr", "The destination-passing-style function.")
     .add_argument("args", "Tuple", "The input arguments.")
-    .add_argument("output_shape", "Expr", "The output shape.")
     .add_argument("packed_ints", "Expr",
                   "ShapeExpr representing a tuple of ints to unpack during runtime. Omitted from "
                   "args if unused")
     .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoCallTIR);
 
-Expr MakeCallTIR(Expr func, Tuple args, Expr output_shape, Type output_type,
+Expr MakeCallTIR(Expr func, Tuple args, Array<TensorStructInfo> out_sinfo_list,
                  Optional<Expr> packed_ints) {
+  for (const TensorStructInfo& sinfo : out_sinfo_list) {
+    const auto* shape = sinfo->shape.as<ShapeExprNode>();
+    CHECK(shape != nullptr) << "out_sinfo of call_tir should have defined ShapeExpr as shape. "
+                               "However, one given structure info is "
+                            << sinfo;
+  }
+
+  StructInfo out_sinfo{nullptr};
+  if (out_sinfo_list.size() == 1) {
+    out_sinfo = out_sinfo_list[0];
+  } else {
+    out_sinfo = TupleStructInfo({out_sinfo_list.begin(), out_sinfo_list.end()});
+  }
+
   static const Op& op = Op::Get("relax.call_tir");
   Call call;
   if (!packed_ints) {
     // don't use additional optional argument
-    call = Call(op, {func, args, output_shape}, {}, {output_type});
+    call = Call(op, {func, args}, {}, {out_sinfo});
   } else {
-    call = Call(op, {func, args, output_shape, packed_ints.value()}, {}, {output_type});
+    call = Call(op, {func, args, packed_ints.value()}, {}, {out_sinfo});
   }
   return call;
 }
@@ -124,12 +119,12 @@ TVM_REGISTER_GLOBAL("relax.op.call_tir").set_body_typed(MakeCallTIR);
 
 // call builtin
 StructInfo InferStructInfoCallBuiltin(const Call& call, const BlockBuilder& ctx) {
-  if (call->type_args.size() == 0) {
+  if (call->sinfo_args.size() == 0) {
     // by default return void.
     return TupleStructInfo(Array<StructInfo>());
   } else {
-    ICHECK(call->type_args[0].defined()) << call;
-    return StructInfoFromType(call->type_args[0]);
+    ICHECK_EQ(call->sinfo_args.size(), 1);
+    return call->sinfo_args[0];
   }
 }
 
@@ -139,7 +134,7 @@ TVM_REGISTER_OP("relax.call_builtin")
     .add_argument("args", "Tuple", "The input arguments.")
     .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoCallBuiltin);
 
-Expr MakeCallBuiltin(Expr func, Tuple args, Array<Type> type_args, Array<IntImm> int_args,
+Expr MakeCallBuiltin(Expr func, Tuple args, Array<StructInfo> sinfo_args, Array<IntImm> int_args,
                      DataType dtype_arg, Array<String> str_args, bool require_ctx) {
   auto attrs = make_object<BuiltinFuncAttrs>();
   attrs->int_args = int_args.Map([](IntImm value) {
@@ -153,7 +148,7 @@ Expr MakeCallBuiltin(Expr func, Tuple args, Array<Type> type_args, Array<IntImm>
   attrs->str_args = std::move(str_args);
   attrs->require_ctx = require_ctx;
   static const Op& op = Op::Get("relax.call_builtin");
-  return Call(op, {func, args}, Attrs(attrs), type_args);
+  return Call(op, {func, args}, Attrs(attrs), sinfo_args);
 }
 
 TVM_REGISTER_GLOBAL("relax.op.call_builtin").set_body_typed(MakeCallBuiltin);
@@ -251,12 +246,12 @@ TVM_REGISTER_GLOBAL("relax.op.make_closure").set_body_typed(MakeClosure);
 // invoke_closure
 
 StructInfo InferStructInfoInvokeClosure(const Call& call, const BlockBuilder& ctx) {
-  if (call->type_args.empty()) {
+  if (call->sinfo_args.empty()) {
     return ObjectStructInfo();
-  } else if (call->type_args.size() == 1) {
-    return StructInfoFromType(call->type_args[0]);
+  } else if (call->sinfo_args.size() == 1) {
+    return call->sinfo_args[0];
   } else {
-    return StructInfoFromType(TupleType(call->type_args));
+    return TupleStructInfo(call->sinfo_args);
   }
 }
 
@@ -266,9 +261,9 @@ RELAY_REGISTER_OP("relax.invoke_closure")
     .add_argument("args", "Tuple", "The captured variables.")
     .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoInvokeClosure);
 
-Expr InvokeClosure(Expr closure, Tuple args, Array<Type> type_args) {
+Expr InvokeClosure(Expr closure, Tuple args, Array<StructInfo> sinfo_args) {
   static const Op& op = Op::Get("relax.invoke_closure");
-  return Call(op, {closure, args}, {}, type_args);
+  return Call(op, {closure, args}, {}, sinfo_args);
 }
 
 TVM_REGISTER_GLOBAL("relax.op.invoke_closure").set_body_typed(InvokeClosure);

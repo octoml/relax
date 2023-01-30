@@ -24,8 +24,9 @@ from tvm.runtime.object import Object
 from . import _ffi_api
 from ..expr import Expr, ShapeExpr, Call, ExternFunc
 from ..expr import Tuple as RxTuple
-from ..ty import DynTensorType, TupleType
-from ...ir import Array, Type, PrimExpr
+from ..struct_info import StructInfo, TensorStructInfo
+from ...ir import PrimExpr
+from ..utils import args_converter
 
 
 py_print = print  # pylint: disable=invalid-name
@@ -42,11 +43,11 @@ def null_value() -> Call:
     return _ffi_api.null_value()  # type: ignore
 
 
+@args_converter.auto
 def call_tir(
     func: Union[str, Expr],
-    args: Union[Expr, List[Expr]],
-    shape: Union[RxTuple, ShapeExpr, List[int]],
-    dtype: Union[str, List[str]],
+    args: Expr,
+    out_sinfo: Union[TensorStructInfo, List[TensorStructInfo]],
     tir_vars: Optional[Union[ShapeExpr, Tuple[PrimExpr], List[PrimExpr]]] = None,
 ) -> Call:
     """
@@ -57,14 +58,13 @@ def call_tir(
     func : Union[str, Expr]
         The destination-passing-style function, can be ExternFunc or PrimFunc.
 
-    args : Union[Expr, List[Expr]]
+    args : Expr
         The input arguments.
 
-    shape: Union[RxTuple, ShapeExpr, List[int]]
-        The output shape. Tuple(ShapeExpr) if multiple outputs, ShapeExpr if single output.
-
-    dtype: Union[str, List[str]]
-        The output dtype. List[str] if multiple outputs, str if single output.
+    out_sinfo : Union[TensorStructInfo, List[TensorStructInfo]]
+        The structure info of the call_tir output.
+        It should be a single or a list of TensorStructInfo. Each one denotes the
+        structure info of a returned tensor.
 
     tir_vars : Optional[Union[ShapeExpr, Tuple[PrimExpr], List[PrimExpr]]]
         ShapeExpr representing a tuple of integers to unpack when calling func. Is null if not used
@@ -77,62 +77,24 @@ def call_tir(
     if isinstance(func, str):
         func = ExternFunc(func)
 
-    def _create_shape(shape: List[Union[int, PrimExpr]]) -> ShapeExpr:
-        shape_array = []
-        for x in shape:
-            if isinstance(x, int):
-                shape_array.append(tvm.tir.IntImm("int64", x))
-            elif isinstance(x, tvm.tir.IntImm):
-                shape_array.append(x if x.dtype == "int64" else tvm.tir.IntImm("int64", x.value))
-            elif isinstance(x, PrimExpr):
-                if x.dtype != "int64":
-                    raise TypeError("Expect int64 dtype for shape")
-                shape_array.append(x)
-            else:
-                raise TypeError("Expect int or PrimExpr for shape")
-        return ShapeExpr(shape_array)
-
-    if isinstance(shape, (list, tuple, Array)):
-        if all([not isinstance(x, (list, tuple, Array, ShapeExpr)) for x in shape]):
-            shape = _create_shape(shape)  # type: ignore
-        elif all([isinstance(x, (list, tuple, Array, ShapeExpr)) for x in shape]):
-            shape = RxTuple(
-                [
-                    _create_shape(x) if not isinstance(x, ShapeExpr) else x  # type: ignore
-                    for x in shape
-                ]
-            )
-        else:
-            raise TypeError(
-                f"The shape is expected to be ShapeExpr or Tuple[ShapeExpr], bot got: f{shape}"
-            )
-
     if isinstance(args, Expr) and not isinstance(args, RxTuple):  # type: ignore
         args = RxTuple((args,))
 
-    if isinstance(args, (list, tuple)):
-        args = RxTuple(args)
-
-    if isinstance(dtype, str):
-        output_type = DynTensorType(len(shape), dtype)
-    elif isinstance(dtype, (list, tuple)):
-        if len(shape) != len(dtype):
-            raise ValueError("The number of output_shape and output_dtype of call_tir mismatch")
-        output_type = TupleType([DynTensorType(len(x), y) for x, y in zip(shape, dtype)])
-    else:
-        raise TypeError("Not supported dtype for call_tir: " + str(type(dtype)))
+    if not isinstance(out_sinfo, list):
+        out_sinfo = [out_sinfo]
 
     if isinstance(tir_vars, (list, tuple)):
         tir_vars = ShapeExpr(tir_vars)
 
-    return _ffi_api.call_tir(func, args, shape, output_type, tir_vars)  # type: ignore
+    return _ffi_api.call_tir(func, args, out_sinfo, tir_vars)  # type: ignore
 
 
+@args_converter.auto
 def call_builtin(
     func: Union[str, Expr],
-    args: Union[RxTuple, List[Expr]],
+    args: Expr,
     *,
-    type_args: Optional[Union[Type, List[Type]]] = None,
+    sinfo_args: Optional[Union[StructInfo, List[StructInfo]]] = None,
     int_args: Optional[List[int]] = None,
     dtype_arg: Optional[str] = None,
     str_args: Optional[List[str]] = None,
@@ -145,11 +107,11 @@ def call_builtin(
     func : Expr
         The builtin function to be called.
 
-    args : Union[RxTuple, List[Expr]]
+    args : Expr
         The input arguments.
 
-    type_args: Optional[Union[Type, List[Type]]]
-        The type arguments to the call node.
+    sinfo_args: Optional[Union[StructInfo, List[StructInfo]]]
+        The struct info arguments to the call node.
 
     int_args: Optional[List[int]]
         List of additional int arguments passed to the builtin.
@@ -171,20 +133,18 @@ def call_builtin(
     if isinstance(func, str):
         func = ExternFunc(func)
 
-    if isinstance(args, (list, tuple)):
-        args = RxTuple(args)
-
-    if type_args is not None and not isinstance(type_args, (list, tuple)):
-        type_args = [type_args]
+    if sinfo_args is not None and not isinstance(sinfo_args, (list, tuple)):
+        sinfo_args = [sinfo_args]
 
     return _ffi_api.call_builtin(  # type: ignore
-        func, args, type_args, int_args, dtype_arg, str_args, require_ctx  # type: ignore
+        func, args, sinfo_args, int_args, dtype_arg, str_args, require_ctx  # type: ignore
     )
 
 
+@args_converter.auto
 def make_closure(
     func: Expr,
-    args: Union[RxTuple, List[Expr]],
+    args: Expr,
 ) -> Object:
     """
     Create a closure with free variables and return the closure.
@@ -194,7 +154,7 @@ def make_closure(
     func : Expr
         The closure, can be ExternFunc or PrimFunc.
 
-    args : Union[Tuple, List[Expr]]
+    args : Expr
         The input arguments.
 
 
@@ -204,16 +164,14 @@ def make_closure(
         The VMClosure.
     """
 
-    if isinstance(args, (list, tuple)):
-        args = RxTuple(args)
-
     return _ffi_api.make_closure(func, args)  # type: ignore
 
 
+@args_converter.auto
 def invoke_closure(
     closure: Expr,
-    args: Union[RxTuple, List[Expr]],
-    type_args: Union[List[Type], Type],
+    args: Expr,
+    sinfo_args: Union[List[StructInfo], StructInfo],
 ) -> Object:
     """
     Invoke a closure.
@@ -223,11 +181,11 @@ def invoke_closure(
     closure : Expr
         The VMClosure object.
 
-    args : Union[Tuple, List[Expr]]
+    args : Expr
         The input arguments.
 
-    type_args: Union[Tuple[Type], Type]
-        The type_args of the CallNode
+    type_args: Union[List[StructInfo], StructInfo]
+        The structure info arguments of the CallNode
 
     Returns
     -------
@@ -235,12 +193,10 @@ def invoke_closure(
         The result.
     """
 
-    if isinstance(args, (list, tuple)):
-        args = RxTuple(args)
-    if not isinstance(type_args, (list, tuple)):
-        type_args = (type_args,)
+    if not isinstance(sinfo_args, (list, tuple)):
+        sinfo_args = [sinfo_args]
 
-    return _ffi_api.invoke_closure(closure, args, type_args)  # type: ignore
+    return _ffi_api.invoke_closure(closure, args, sinfo_args)  # type: ignore
 
 
 def render_object(val: tvm.Object) -> str:

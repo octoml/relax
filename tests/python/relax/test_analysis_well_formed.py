@@ -16,6 +16,7 @@
 # under the License.
 import pytest
 import tvm
+import tvm.testing
 from tvm import tir
 from tvm import relax as rx
 from tvm.script import relax as R
@@ -95,6 +96,21 @@ def test_dataflow_var():
     blocks = [rx.BindingBlock(bindings)]
     func = build_function(blocks)
     mod = tvm.IRModule({rx.GlobalVar("foo"): func})
+    assert not rx.analysis.well_formed(mod, check_struct_info=False)
+
+
+def test_param_var():
+    v0 = rx.Var("v0", R.Tensor([m, n], "float32"))
+    v1 = rx.Var("v1", R.Tensor([m, n], "float32"))
+    v2 = rx.Var("v2", R.Tensor([m, n], "float32"))
+    bb = rx.BlockBuilder()
+    with bb.function("func1", [v0, v1]):
+        gv0 = bb.emit(rx.op.add(v0, v1))
+        bb.emit_func_output(gv0)
+    with bb.function("func2", [v0, v2]):
+        gv0 = bb.emit(rx.op.add(v2, v1))
+        bb.emit_func_output(gv0)
+    mod = bb.get()
     assert not rx.analysis.well_formed(mod, check_struct_info=False)
 
 
@@ -398,5 +414,25 @@ def test_nested_dataflow():
     assert rx.analysis.well_formed(normalized)
 
 
+def test_sinfo_args_tir_var_used_before_define_call_packed():
+    # Error: Symbolic Var m1, n1 are not defined
+    m1 = tir.Var("m1", "int64")
+    n1 = tir.Var("n1", "int64")
+    call = R.call_packed("my_func", x, sinfo_args=R.Tensor((m1, n1), "float32"))
+    func = build_function([rx.BindingBlock([rx.VarBinding(rx.Var("gv"), call)])])
+    mod = rx.transform.Normalize()(tvm.IRModule.from_expr(func))
+    assert not rx.analysis.well_formed(mod, check_struct_info=False)
+
+
+def test_sinfo_args_tir_var_used_before_define_call_tir():
+    # Error: Symbolic Var m1, n1 are not defined
+    m1 = tir.Var("m1", "int64")
+    n1 = tir.Var("n1", "int64")
+    call = R.call_tir("my_func", x, out_sinfo=R.Tensor((m1, n1), "float32"))
+    func = build_function([rx.BindingBlock([rx.VarBinding(rx.Var("gv"), call)])])
+    mod = rx.transform.Normalize()(tvm.IRModule.from_expr(func))
+    assert not rx.analysis.well_formed(mod, check_struct_info=False)
+
+
 if __name__ == "__main__":
-    pytest.main([__file__])
+    tvm.testing.main()

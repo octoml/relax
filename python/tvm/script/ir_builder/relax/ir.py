@@ -17,27 +17,25 @@
 # pylint: disable=redefined-builtin, wrong-import-order, no-member, invalid-name
 """IRBuilder for Relax dialect"""
 
+import builtins
 import functools
 import inspect
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import tvm
-
-from tvm import relax, DataType
-from tvm.ir import Type, PrimExpr
-from tvm.relax import (
-    Call,
-    Expr,
-    ExternFunc,
-    TupleGetItem,
-    Var,
-    const,
-)
-
-from tvm.relax.analysis import get_static_type
+from tvm import DataType, relax
+from tvm.ir import PrimExpr
+from tvm.relax import Call, Expr, ExternFunc, TupleGetItem, Var, const
 
 ############################### Operators ###############################
 from tvm.relax.op import (
+    abs,
+    acos,
+    acosh,
+    asin,
+    asinh,
+    atan,
+    atanh,
     add,
     assert_op,
     astype,
@@ -45,14 +43,17 @@ from tvm.relax.op import (
     builtin,
     call_builtin,
     call_tir,
+    ceil,
     concat,
     cos,
+    cosh,
     divide,
     equal,
     ewise_fma,
     exp,
     expand_dims,
     flatten,
+    floor,
     floor_divide,
     full,
     full_like,
@@ -60,6 +61,9 @@ from tvm.relax.op import (
     greater_equal,
     image,
     invoke_closure,
+    isfinite,
+    isinf,
+    isnan,
     less,
     less_equal,
     log,
@@ -80,10 +84,14 @@ from tvm.relax.op import (
     print,
     prod,
     reshape,
+    round,
     shape_of,
     sigmoid,
+    sign,
     sin,
+    sinh,
     split,
+    square,
     sqrt,
     squeeze,
     std,
@@ -91,6 +99,7 @@ from tvm.relax.op import (
     subtract,
     sum,
     take,
+    tan,
     tanh,
     tril,
     triu,
@@ -102,7 +111,7 @@ from tvm.relax.op import (
     zeros_like,
 )
 from tvm.relax.struct_info import StructInfo
-from tvm.relax.utils import convert_to_expr
+from tvm.relax.utils import args_converter
 from tvm.runtime import Object as tvm_Object
 from tvm.runtime import ObjectGeneric
 
@@ -110,7 +119,7 @@ from . import _ffi_api, frame
 
 ##################### Python Native Function Alias ######################
 
-py_print = print
+py_print = builtins.print
 py_tuple = tuple
 py_str = str
 
@@ -212,11 +221,12 @@ def output(*vars: Tuple[Var]) -> None:
 ################################## Ops #################################
 
 
+@args_converter.auto
 def call_packed(
     func: str,
-    *args: List[Expr],
-    type_args: Optional[Union[StructInfo, List[StructInfo]]] = None,
-    **kwargs: Dict[str, Expr],
+    *args: Expr,
+    sinfo_args: Union[StructInfo, List[StructInfo]],
+    **kwargs: Any,
 ) -> Call:
     """Create a relax Call, which calls a packed function.
     Parameters
@@ -225,9 +235,9 @@ def call_packed(
         The name of extern function.
     args : List[Expr]
         The arguments.
-    type_args: Optional[Union[StructInfo, List[StructInfo]]]
-        List of Types
-    kwargs: Dict[str, Expr]
+    sinfo_args: Union[StructInfo, List[StructInfo]]
+        The list of structure info arguments.
+    kwargs: Expr
         The keyword arguments.
 
     Returns
@@ -236,28 +246,19 @@ def call_packed(
         The created Relax Call
     """
     op = ExternFunc(func)
-    args = [convert_to_expr(arg) for arg in args]
-    if type_args is None:
+    if sinfo_args is None:
         raise ValueError("R.call_packed is required to have type_args")
-    if isinstance(type_args, py_tuple):
-        type_args = list(type_args)
-    elif not isinstance(type_args, list):
-        type_args = [type_args]
-    for i, argument in enumerate(type_args):
-        if callable(argument):
-            argument = argument()
+    if isinstance(sinfo_args, py_tuple):
+        sinfo_args = list(sinfo_args)
+    elif not isinstance(sinfo_args, list):
+        sinfo_args = [sinfo_args]
+    for i, sinfo_arg in enumerate(sinfo_args):
+        if callable(sinfo_arg):
+            sinfo_arg = sinfo_arg()
         # Convert possible StructInfoProxy to StructInfo
-        if isinstance(argument, ObjectGeneric):
-            argument = argument.asobject()
-        if isinstance(argument, StructInfo):
-            type_args[i] = get_static_type(argument)
-        elif isinstance(argument, Type):
-            type_args[i] = argument
-        else:
-            raise TypeError(
-                "call_packed `type_args` is expected to be list of StructInfo/Type, "
-                f"but got {type(arg)}"
-            )
+        if isinstance(sinfo_arg, ObjectGeneric):
+            sinfo_arg = sinfo_arg.asobject()
+        sinfo_args[i] = sinfo_arg
 
     is_default = False
     if "attrs_type_key" in kwargs:
@@ -270,11 +271,11 @@ def call_packed(
     if kwargs or not is_default:
         attrs = tvm.ir.attrs.make_node(attrs_type_key, **kwargs)
 
-    return Call(op, args, attrs=attrs, type_args=type_args)
+    return Call(op, args, attrs=attrs, sinfo_args=sinfo_args)
 
 
-def _tensor_type_wrapper(func):
-    """A wrapper to convert StructInfo to relax.DynTensorType"""
+def _sinfo_arg_wrapper(func):
+    """A wrapper to convert StructInfoProxies to StructInfo for builtin operators with sinfo_args"""
 
     def _convert_tensor_type(args):
         if isinstance(args, (list, py_tuple)):
@@ -286,7 +287,7 @@ def _tensor_type_wrapper(func):
             args = args()
         if isinstance(args, ObjectGeneric):
             args = args.asobject()
-        return get_static_type(args) if isinstance(args, StructInfo) else args
+        return args
 
     @functools.wraps(func)
     def wrapped(*args, **kwargs):
@@ -295,9 +296,9 @@ def _tensor_type_wrapper(func):
     return wrapped  # type: ignore
 
 
-invoke_closure = _tensor_type_wrapper(invoke_closure)  # pylint: disable=invalid-name
+invoke_closure = _sinfo_arg_wrapper(invoke_closure)  # pylint: disable=invalid-name
 
-call_builtin = _tensor_type_wrapper(call_builtin)  # pylint: disable=invalid-name
+call_builtin = _sinfo_arg_wrapper(call_builtin)  # pylint: disable=invalid-name
 
 ############################### Bindings ###############################
 
@@ -447,6 +448,13 @@ __all__ = [
     "If",
     "Then",
     "TupleGetItem",
+    "abs",
+    "acos",
+    "acosh",
+    "asin",
+    "asinh",
+    "atan",
+    "atanh",
     "add",
     "arg",
     "assert_op",
@@ -456,7 +464,9 @@ __all__ = [
     "call_packed",
     "call_tir",
     "call_builtin",
+    "ceil",
     "cos",
+    "cosh",
     "concat",
     "const",
     "dataflow",
@@ -469,6 +479,7 @@ __all__ = [
     "exp",
     "expand_dims",
     "flatten",
+    "floor",
     "floor_divide",
     "full",
     "full_like",
@@ -481,6 +492,9 @@ __all__ = [
     "greater_equal",
     "image",
     "invoke_closure",
+    "isfinite",
+    "isinf",
+    "isnan",
     "less",
     "less_equal",
     "log",
@@ -503,10 +517,14 @@ __all__ = [
     "print",
     "prod",
     "reshape",
+    "round",
     "shape_of",
     "sigmoid",
+    "sign",
     "sin",
+    "sinh",
     "split",
+    "square",
     "sqrt",
     "squeeze",
     "std",
@@ -515,6 +533,7 @@ __all__ = [
     "subtract",
     "sum",
     "take",
+    "tan",
     "tanh",
     "tril",
     "triu",

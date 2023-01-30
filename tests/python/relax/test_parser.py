@@ -27,12 +27,13 @@ from tvm.script import tir as T, relax as R
 #       c.f. tests/python/unittest/test_tvmscript_error_report.py
 
 
-def check_call(call, op, args):
+def check_call(call, op, args, sinfo_args=[]):
     assert isinstance(call, relax.Call)
     if isinstance(op, str):
         op = relay.op.get(op)
     assert call.op == op
     assert_structural_equal(call.args, args)
+    assert_structural_equal(call.sinfo_args, sinfo_args)
 
 
 def test_annotations():
@@ -48,7 +49,7 @@ def test_annotations():
         q: R.Tensor(ndim=2) = R.add(w, w)
         t = R.add(w, z)
         sh: R.Shape = R.shape_of(t)
-        o: R.Object = R.call_packed("contrib.tensor_array_stack", x, y, type_args=R.Object)
+        o: R.Object = R.call_packed("contrib.tensor_array_stack", x, y, sinfo_args=R.Object)
         return o
 
     x, y, r = f.params
@@ -87,7 +88,7 @@ def test_annotations():
     assert isinstance(f.ret_struct_info, relax.ObjectStructInfo)
 
     assert isinstance(o._checked_type_, relax.ty.ObjectType)
-    assert len(o_call_packed.type_args) == 1
+    assert len(o_call_packed.sinfo_args) == 1
 
 
 def test_mismatch_cast_dims_and_ndim():
@@ -147,7 +148,7 @@ def test_unexpected_tir_cast_args():
         @R.function
         def f(x: R.Tensor(("m",), "float32")):
             m = T.var("int64")
-            return R.call_tir("foo", (x,), (T.cast("int32", m, 1),), dtype="float32")
+            return R.call_tir("foo", (x,), R.Tensor((T.cast("int32", m, 1),), dtype="float32"))
 
 
 def test_unexpected_tir_max_args():
@@ -157,7 +158,7 @@ def test_unexpected_tir_max_args():
         @R.function
         def f(x: R.Tensor(("m", "n"), "float32")):
             m = T.var("int64")
-            return relax.call_tir("foo", (x,), (T.max(m),), dtype="float32")
+            return relax.call_tir("foo", (x,), R.Tensor((T.max(m),), dtype="float32"))
 
 
 def test_match_cast():
@@ -469,13 +470,18 @@ def test_call_tir():
     @R.function
     def foo(x: R.Tensor(("m", "n"), "float32")):
         m, n = T.var("int64"), T.var("int64")
-        gv0 = relax.call_tir("test.op.identity", (x,), (m, n), dtype="float32")
+        gv0 = relax.call_tir("test.op.identity", (x,), R.Tensor((m, n), dtype="float32"))
         return gv0
 
     call_tir_node = foo.body.blocks[0].bindings[0].value
     assert call_tir_node.attrs is None
-    assert_structural_equal(
-        call_tir_node.type_args[0], relax.DynTensorType(ndim=2, dtype="float32")
+    (x,) = foo.params
+    m, n = x.struct_info.shape
+    check_call(
+        call_tir_node,
+        "relax.call_tir",
+        [relax.ExternFunc("test.op.identity"), relax.Tuple([x])],
+        sinfo_args=[R.Tensor((m, n), dtype="float32")],
     )
 
 
@@ -496,7 +502,7 @@ def test_inline_tir():
                     C[vi, vj] += A[vi, vk] * B[vj, vk]
 
         B = T.var("int64")
-        z = R.call_tir(my_matmul, (x, y), (B, 128), dtype="float32")
+        z = R.call_tir(my_matmul, (x, y), R.Tensor((B, 128), dtype="float32"))
         return z
 
     x, y = f.params
@@ -509,7 +515,8 @@ def test_inline_tir():
     check_call(
         z_bind.value,
         "relax.call_tir",
-        [mm_bind.var, relax.Tuple([x, y]), relax.ShapeExpr([B, tir.IntImm("int64", 128)])],
+        [mm_bind.var, relax.Tuple([x, y])],
+        sinfo_args=[R.Tensor((B, 128), dtype="float32")],
     )
 
 
@@ -522,7 +529,7 @@ def test_call_packed():
             x,
             x,
             mp=False,
-            type_args=(R.Tensor(ndim=2, dtype="float32")),
+            sinfo_args=(R.Tensor(ndim=2, dtype="float32")),
         )
 
         w = R.call_packed(
@@ -530,16 +537,16 @@ def test_call_packed():
             x,
             dtype="int32",
             attrs_type_key="relay.attrs.ShapeOfAttrs",
-            type_args=(R.Shape),
+            sinfo_args=(R.Shape),
         )
 
-        o = R.call_packed("contrib.tensor_array_stack", x, z, type_args=(R.Object))
+        o = R.call_packed("contrib.tensor_array_stack", x, z, sinfo_args=(R.Object))
 
         k = R.call_packed(
             "contrib.construct_tuple",
             x,
             x,
-            type_args=(R.Tuple(R.Tuple(R.Tensor(ndim=2, dtype="float32"), R.Tensor), R.Tensor)),
+            sinfo_args=(R.Tuple(R.Tuple(R.Tensor(ndim=2, dtype="float32"), R.Tensor), R.Tensor)),
         )
         return k
 
@@ -552,31 +559,34 @@ def test_call_packed():
     assert z_value.op.global_symbol == "contrib.my_matmul"
     assert "mp" in z_value.attrs and z_value.attrs["mp"] == False
     assert_structural_equal(z_value.args, [x, x])
-    assert len(z_value.type_args) == 1
-    assert_structural_equal(z_value.type_args[0], relax.ty.DynTensorType(2, "float32"))
+    assert len(z_value.sinfo_args) == 1
+    assert_structural_equal(z_value.sinfo_args[0], relax.TensorStructInfo(ndim=2, dtype="float32"))
 
     w_value = w_bind.value
     assert isinstance(w_value.attrs, relay.op.op_attrs.ShapeOfAttrs)
-    assert_structural_equal(w_value.type_args[0], relax.ty.ShapeType())
+    assert_structural_equal(w_value.sinfo_args[0], relax.ShapeStructInfo())
 
     o_value = o_bind.value
-    assert_structural_equal(o_value.type_args[0], relax.ty.ObjectType())
+    assert_structural_equal(o_value.sinfo_args[0], relax.ObjectStructInfo())
 
     k_value = k_bind.value
     assert_structural_equal(
-        k_value.type_args[0],
-        relax.ty.TupleType(
+        k_value.sinfo_args[0],
+        relax.TupleStructInfo(
             [
-                relax.TupleType(
-                    [relax.ty.DynTensorType(2, "float32"), relax.ty.DynTensorType(-1, None)]
+                relax.TupleStructInfo(
+                    [
+                        relax.TensorStructInfo(ndim=2, dtype="float32"),
+                        relax.TensorStructInfo(dtype=""),
+                    ]
                 ),
-                relax.ty.DynTensorType(-1, None),
+                relax.TensorStructInfo(dtype=""),
             ]
         ),
     )
 
 
-def test_call_packed_no_type_args_fail():
+def test_call_packed_no_sinfo_args_fail():
     with pytest.raises(tvm.error.DiagnosticError):
 
         @R.function
@@ -586,13 +596,13 @@ def test_call_packed_no_type_args_fail():
             return z
 
 
-def test_call_packed_wrong_type_args_fail():
+def test_call_packed_wrong_sinfo_args_fail():
     with pytest.raises(tvm.error.DiagnosticError):
 
         @R.function
         def f(x: R.Tensor((3, 3), "float32")):
             z: R.Tensor((n, m), "float32") = relax.call_packed(
-                "contrib.my_matmul", x, x, type_args=(Tuple)
+                "contrib.my_matmul", x, x, sinfo_args=(Tuple)
             )
             return z
 
@@ -624,7 +634,7 @@ def test_primexpr_arithmetic():
     def f(x: R.Tensor(("n", "m"), "float32")):
         n, m = T.var("int64"), T.var("int64")
         z: R.Tensor((n * m,), "float32") = R.call_packed(
-            "my_flatten", (x,), type_args=(R.Tensor(ndim=1, dtype="float32"))
+            "my_flatten", (x,), sinfo_args=(R.Tensor(ndim=1, dtype="float32"))
         )
         sh: R.Shape = (n + m, n // m)
         return z
@@ -640,7 +650,7 @@ def test_primexpr_arithmetic():
 def test_call_tir_extern():
     @R.function
     def f(x: R.Tensor) -> R.Tensor:
-        z = R.call_tir("my_extern", (x,), (10,), dtype="float32")
+        z = R.call_tir("my_extern", (x,), R.Tensor((10,), dtype="float32"))
         return z
 
     x = f.params[0]
@@ -649,11 +659,8 @@ def test_call_tir_extern():
     check_call(
         z_bind.value,
         "relax.call_tir",
-        [
-            relax.ExternFunc("my_extern"),
-            relax.Tuple([x]),
-            relax.ShapeExpr([tir.IntImm("int64", 10)]),
-        ],
+        [relax.ExternFunc("my_extern"), relax.Tuple([x])],
+        sinfo_args=[R.Tensor((10,), dtype="float32")],
     )
 
 
@@ -669,7 +676,7 @@ def test_empty_shape():
             with T.block("add"):
                 C[()] = A[()] + B[()]
 
-        z = relax.call_tir(scalar_add, (x, y), (), dtype="float32")
+        z = relax.call_tir(scalar_add, (x, y), R.Tensor((), dtype="float32"))
         return z
 
     x, y = f.params
@@ -681,7 +688,8 @@ def test_empty_shape():
     check_call(
         z_bind.value,
         "relax.call_tir",
-        [add_bind.var, relax.Tuple([x, y]), relax.ShapeExpr([])],
+        [add_bind.var, relax.Tuple([x, y])],
+        sinfo_args=[R.Tensor((), dtype="float32")],
     )
 
 
@@ -708,13 +716,13 @@ def test_class_irmodule():
         @R.function
         def g(y: R.Tensor(("n", "n"))) -> R.Tensor:
             n = T.var("int64")
-            return R.call_tir(my_matmul, (y, y), (n, n), dtype="float32")
+            return R.call_tir(my_matmul, (y, y), R.Tensor((n, n), dtype="float32"))
 
         @R.function
         def j(y: R.Tensor(("n", "n"))) -> R.Tensor:
             n = T.var("int64")
             with R.dataflow():
-                gv = R.call_tir(my_matmul, (y, y), (n, n), dtype="float32")
+                gv = R.call_tir(my_matmul, (y, y), R.Tensor((n, n), dtype="float32"))
                 gv1 = (gv, gv)
                 gv2 = gv1[1]
                 R.output(gv2)
@@ -722,7 +730,7 @@ def test_class_irmodule():
 
         @R.function
         def k(x: R.Tensor((32, 32), "float32"), w: R.Tensor((32, 32), "float32")) -> R.Tensor:
-            gv0 = R.call_packed("test.vm.mul", x, w, type_args=(R.Tensor(ndim=2, dtype="float32")))
+            gv0 = R.call_packed("test.vm.mul", x, w, sinfo_args=(R.Tensor(ndim=2, dtype="float32")))
             return gv0
 
     my_module = MyModule
@@ -837,7 +845,7 @@ def test_function_attrs():
         ) -> R.Tensor:
             R.func_attr({"global_symbol": "main"})
             m, n, k = T.var("int64"), T.var("int64"), T.var("int64")
-            gv0 = R.call_tir("tir_matmul", (x, w), (m, k), dtype="float32")
+            gv0 = R.call_tir("tir_matmul", (x, w), R.Tensor((m, k), dtype="float32"))
             return gv0
 
     assert InputModule["main"].attrs["global_symbol"] == "main"
