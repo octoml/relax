@@ -32,14 +32,19 @@ from tvm import relax
 
 import onnx
 from onnx import helper
-from onnx import TensorProto, ModelProto
+from onnx import TensorProto, ModelProto, ValueInfoProto
 import onnxruntime
 
 
-def generate_random_inputs(model: ModelProto) -> Dict[str, np.array]:
+def generate_random_inputs(
+    model: ModelProto, inputs: Dict[str, np.array] = None
+) -> Dict[str, np.array]:
     input_values = {}
     # Iterate through model inputs and extract their shape.
     for i in model.graph.input:
+        if inputs is not None and i.name in inputs:
+            input_values[i.name] = inputs[i.name]
+            continue
         shape = []
         for dim in i.type.tensor_type.shape.dim:
             shape.append(dim.dim_value)
@@ -73,8 +78,7 @@ def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] =
     """
     # If inputs are not provided, extract them from the onnx graph and produce random
     # values that we'll use for testing.
-    if inputs is None:
-        inputs = generate_random_inputs(model)
+    inputs = generate_random_inputs(model, inputs)
 
     # Run the model through onnx to get the expected result.
     ort_session = onnxruntime.InferenceSession(model.SerializeToString())
@@ -167,6 +171,7 @@ def test_mul():
 
     model = helper.make_model(graph, producer_name="mul_test")
     check_correctness(model)
+    check_correctness(model)
 
 
 def test_cast():
@@ -257,7 +262,7 @@ def test_div():
             helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
             helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
         ],
-        outputs = [helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])]
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])],
     )
 
     model = helper.make_model(graph, producer_name="div_test")
@@ -271,7 +276,7 @@ def test_sigmoid():
         [sigmoid_node],
         "sigmoid_test",
         inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32])],
-        outputs = [helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32])]
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32])],
     )
 
     model = helper.make_model(graph, producer_name="sigmoid_test")
@@ -285,7 +290,7 @@ def test_softmax():
         [softmax_node],
         "softmax_test",
         inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32, 32])],
-        outputs = [helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32, 32])]
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32, 32])],
     )
 
     model = helper.make_model(graph, producer_name="softmax_test")
@@ -299,7 +304,7 @@ def test_transpose():
         [transpose_node],
         "transpose_test",
         inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32, 32])],
-        outputs = [helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32, 32])]
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32, 32])],
     )
 
     model = helper.make_model(graph, producer_name="transpose_test")
@@ -314,7 +319,7 @@ def test_unsqueeze():
         "unsqueeze",
         inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32])],
         initializer=[helper.make_tensor("axes", TensorProto.INT64, [3], vals=[0, 2, 3])],
-        outputs = [helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32, 1, 1, 32])]
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32, 1, 1, 32])],
     )
 
     model = helper.make_model(graph, producer_name="unsqueeze_test")
@@ -328,7 +333,7 @@ def test_gelu():
         [gelu_node],
         "gelu_test",
         inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32])],
-        outputs = [helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32])]
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32])],
     )
 
     model = helper.make_model(graph, producer_name="gelu_test")
@@ -345,7 +350,7 @@ def test_bias_gelu():
             helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
             helper.make_tensor_value_info("b", TensorProto.FLOAT, [32]),
         ],
-        outputs = [helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])],
     )
 
     model = helper.make_model(graph, producer_name="bias_gelu_test")
@@ -363,11 +368,204 @@ def test_where():
             helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
             helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32]),
         ],
-        outputs = [helper.make_tensor_value_info("d", TensorProto.FLOAT, [32, 32])],
+        outputs=[helper.make_tensor_value_info("d", TensorProto.FLOAT, [32, 32])],
     )
 
     model = helper.make_model(graph, producer_name="where_test")
     check_correctness(model)
+
+
+def test_clip():
+    clip_node = helper.make_node("Clip", ["input", "min", "max"], ["output"])
+
+    graph = helper.make_graph(
+        [clip_node],
+        "clip_test",
+        inputs=[
+            helper.make_tensor_value_info("input", TensorProto.FLOAT, [32, 64]),
+            helper.make_tensor_value_info("min", TensorProto.FLOAT, ()),
+            helper.make_tensor_value_info("max", TensorProto.FLOAT, ()),
+        ],
+        outputs=[helper.make_tensor_value_info("output", TensorProto.FLOAT, [32, 64])],
+    )
+
+    model = helper.make_model(graph, producer_name="clip_test")
+    check_correctness(model)
+
+
+def test_equal():
+    equal_node = helper.make_node("Equal", ["a", "b"], ["output"])
+
+    graph = helper.make_graph(
+        [equal_node],
+        "equal_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
+        ],
+        outputs=[helper.make_tensor_value_info("output", TensorProto.BOOL, [32, 32])],
+    )
+
+    model = helper.make_model(graph, producer_name="equal_test")
+    check_correctness(
+        model, {"a": np.zeros([32, 32], dtype="float32"), "b": np.zeros([32, 32], dtype="float32")}
+    )
+    check_correctness(
+        model, {"a": np.ones([32, 32], dtype="float32"), "b": np.zeros([32, 32], dtype="float32")}
+    )
+    check_correctness(model)
+
+
+def test_shape():
+    shape_node = helper.make_node("Shape", ["data"], ["output"])
+
+    graph = helper.make_graph(
+        [shape_node],
+        "shape_test",
+        inputs=[
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, [3, 4, 5, 6]),
+        ],
+        outputs=[helper.make_tensor_value_info("output", TensorProto.INT64, [4])],
+    )
+
+    model = helper.make_model(graph, producer_name="shape_test")
+    check_correctness(model)
+
+
+def test_not():
+    not_node = helper.make_node("Not", ["x"], ["y"])
+    shape = [3, 4, 5, 6]
+    graph = helper.make_graph(
+        [not_node],
+        "not_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.BOOL, shape),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.BOOL, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="not_test")
+    check_correctness(model, {"x": np.zeros(shape, dtype="bool")})
+    check_correctness(model, {"x": np.ones(shape, dtype="bool")})
+
+
+def test_tanh():
+    tanh_node = helper.make_node("Tanh", ["x"], ["y"])
+    shape = [9, 8, 7, 6]
+    graph = helper.make_graph(
+        [tanh_node],
+        "tanh_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="tanh_test")
+    check_correctness(model)
+
+
+def test_sqrt():
+    sqrt_node = helper.make_node("Sqrt", ["x"], ["y"])
+    shape = [32, 32]
+    graph = helper.make_graph(
+        [sqrt_node],
+        "sqrt_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="sqrt_test")
+    check_correctness(model)
+
+
+def test_relu():
+    relu_node = helper.make_node("Relu", ["x"], ["y"])
+    shape = [32, 32]
+    graph = helper.make_graph(
+        [relu_node],
+        "relu_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="relu_test")
+    check_correctness(model)
+
+
+def test_conv():
+    conv_node = helper.make_node("Conv", ["x", "w", "b"], ["y"])
+    nchw_shape = [3, 12, 32, 32]
+    graph = helper.make_graph(
+        [conv_node],
+        "conv_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, nchw_shape),
+            helper.make_tensor_value_info("w", TensorProto.FLOAT, [4, 12, 3, 3]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [4]),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 4, 30, 30])],
+    )
+
+    model = helper.make_model(graph, producer_name="conv_test")
+    check_correctness(model)
+
+
+def test_pow():
+    pow_node = helper.make_node("Pow", ["x", "y"], ["z"])
+    shape = [32, 32]
+    graph = helper.make_graph(
+        [pow_node],
+        "pow_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+            helper.make_tensor_value_info("y", TensorProto.FLOAT, shape),
+        ],
+        outputs=[helper.make_tensor_value_info("z", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="pow_test")
+    check_correctness(model)
+
+
+def test_erf():
+    erf_node = helper.make_node("Erf", ["x"], ["y"])
+    shape = [32, 32]
+    graph = helper.make_graph(
+        [erf_node],
+        "erf_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="erf_test")
+    check_correctness(model)
+
+
+def test_cumsum():
+    cumsum_node = helper.make_node("CumSum", ["x", "axis"], ["y"])
+    shape = [32, 32]
+    type_proto = onnx.TypeProto()
+    tensor_type_proto = type_proto.tensor_type
+    tensor_type_proto.elem_type = TensorProto.INT64
+    graph = helper.make_graph(
+        [cumsum_node],
+        "cumsum_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+            helper.make_tensor_value_info("axis", TensorProto.INT64, ()),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="cumsum_test")
+    check_correctness(model, {"axis": [1]})
 
 
 if __name__ == "__main__":
@@ -378,10 +576,22 @@ if __name__ == "__main__":
     test_cast()
     test_gather()
     test_gemm()
+    test_equal()
+    test_not()
+    test_tanh()
+    test_sqrt()
+    test_relu()
+    test_clip()
+    test_conv()
+    test_pow()
+    test_erf()
+
     # TODO, still has issues
-    #test_reshape()
+    # test_reshape()
     test_div()
     test_sigmoid()
     test_softmax()
     test_transpose()
     test_unsqueeze()
+    # test_shape()
+    # test_cumsum()  # need axis as int
