@@ -37,7 +37,7 @@ import onnxruntime
 
 
 def generate_random_inputs(
-    model: ModelProto, inputs: Dict[str, np.array] = None
+    model: ModelProto, inputs: Optional[Dict[str, np.array]] = None
 ) -> Dict[str, np.array]:
     input_values = {}
     # Iterate through model inputs and extract their shape.
@@ -559,13 +559,13 @@ def test_cumsum():
         "cumsum_test",
         inputs=[
             helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-            helper.make_tensor_value_info("axis", TensorProto.INT64, ()),
         ],
+        initializer=[helper.make_tensor("axis", TensorProto.INT64, (), [1])],
         outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
     )
 
     model = helper.make_model(graph, producer_name="cumsum_test")
-    check_correctness(model, {"axis": [1]})
+    check_correctness(model)
 
 
 if __name__ == "__main__":
@@ -585,6 +585,7 @@ if __name__ == "__main__":
     test_conv()
     test_pow()
     test_erf()
+    test_cumsum()
 
     # TODO, still has issues
     # test_reshape()
@@ -594,4 +595,3 @@ if __name__ == "__main__":
     test_transpose()
     test_unsqueeze()
     # test_shape()
-    # test_cumsum()  # need axis as int
