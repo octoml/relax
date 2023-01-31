@@ -31,8 +31,7 @@ import tvm.testing
 from tvm import relax
 
 import onnx
-from onnx import helper
-from onnx import TensorProto, ModelProto, ValueInfoProto
+from onnx import helper, TensorProto, ModelProto, ValueInfoProto, mapping
 import onnxruntime
 
 
@@ -65,7 +64,7 @@ def generate_random_inputs(
     return input_values
 
 
-def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] = None) -> None:
+def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] = None, opset: int = None) -> None:
     """Run an onnx model in both onnxruntime and TVM through our importer
        confirm that the results match. Otherwise, an exception will be raised.
 
@@ -75,7 +74,12 @@ def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] =
         The input onnx model that should be tested.
     inputs: Optional[Dict[str, np.array]]
         An optional dictionary containing values for each input in the onnx model.
+    opset: int
+        The opset version to use for the onnx importer.
     """
+    if opset is not None:
+        model.opset_import[0].version = opset
+
     # If inputs are not provided, extract them from the onnx graph and produce random
     # values that we'll use for testing.
     inputs = generate_random_inputs(model, inputs)
@@ -85,7 +89,7 @@ def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] =
     ort_output = ort_session.run([], inputs)
 
     # Convert the onnx model into relax through the onnx importer.
-    tvm_model = relax.from_onnx(model)
+    tvm_model = relax.from_onnx(model, opset=opset)
     # Compile the relax graph into a VM then run.
     with tvm.transform.PassContext(opt_level=3):
         # TODO add target configuration.
@@ -659,6 +663,816 @@ def test_layer_norm():
     check_correctness(model)
 
 
+@pytest.mark.skip
+@pytest.mark.parametrize("dynamic", [True, False])
+def test_skiplayernormalization(dynamic):
+    """test_skiplayernormalization"""
+
+    def verify_skiplayernormalization(input_, skip, gamma, beta, bias):
+        node = onnx.helper.make_node(
+            "SkipLayerNormalization",
+            inputs=["input", "skip", "gamma", "beta", "bias"],
+            outputs=["output", "mean", "std_dev"],
+            domain="com.microsoft",
+        )
+
+        node.attribute.append(onnx.helper.make_attribute("epsilon", 1e-4))
+
+        input_shape = list(input_.shape)
+        skip_shape = list(skip.shape)
+        gamma_shape = list(gamma.shape)
+        beta_shape = list(beta.shape)
+        bias_shape = list(bias.shape)
+        output_shape = list(input_.shape)
+        mean_shape = list([1])
+        std_dev_shape = list([1])
+        if dynamic:
+            input_shape = ["?" for _ in range(len(input_.shape))]
+            skip_shape = ["?" for _ in range(len(skip.shape))]
+            gamma_shape = ["?" for _ in range(len(gamma.shape))]
+            beta_shape = ["?" for _ in range(len(beta.shape))]
+            bias_shape = ["?" for _ in range(len(bias.shape))]
+            output_shape = ["?" for _ in range(len(input_.shape))]
+
+        graph = helper.make_graph(
+            [node],
+            "skiplayernormalization_test",
+            inputs=[
+                helper.make_tensor_value_info("input", TensorProto.FLOAT, input_shape),
+                helper.make_tensor_value_info("skip", TensorProto.FLOAT, skip_shape),
+                helper.make_tensor_value_info("gamma", TensorProto.FLOAT, gamma_shape),
+                helper.make_tensor_value_info("beta", TensorProto.FLOAT, beta_shape),
+                helper.make_tensor_value_info("bias", TensorProto.FLOAT, bias_shape),
+            ],
+            outputs=[
+                helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape),
+                helper.make_tensor_value_info("mean", TensorProto.FLOAT, mean_shape),
+                helper.make_tensor_value_info("std_dev", TensorProto.FLOAT, std_dev_shape)
+            ],
+        )
+
+        model = helper.make_model(graph, producer_name="skiplayernormalization_test")
+        # verify_with_ort_with_inputs(
+        #     model, [input_, skip, gamma, beta, bias], [input_.shape], target=target, dev=dev
+        # )
+        check_correctness(model, inputs={"input": input_, "skip": skip, "gamma": gamma, "beta": beta, "bias": bias})
+
+    hidden_size = 384
+    batch_size = 4
+    sequence_length = 4
+
+    dtype = "float32"
+    input_array = np.random.random((batch_size, sequence_length, hidden_size)).astype(dtype)
+    skip = np.random.random((batch_size, sequence_length, hidden_size)).astype(dtype)
+    gamma = np.random.uniform(0.5, 0.7, hidden_size).astype(dtype)
+    beta = np.random.randn(hidden_size).astype(dtype) * 0.1
+    bias = np.random.randn(hidden_size).astype(dtype)
+
+    verify_skiplayernormalization(input_array, skip, gamma, beta, bias)
+
+
+@pytest.mark.skip
+def test_embedlayernormalization():
+    """test_embedlayernormalization"""
+
+    def verify_embedlayernormalization(
+            input_ids,
+            segment_ids,
+            word_embedding,
+            position_embedding,
+            segment_embedding,
+            gamma,
+            beta,
+    ):
+        node = onnx.helper.make_node(
+            "EmbedLayerNormalization",
+            inputs=[
+                "input_ids",
+                "" if segment_ids is None else "segment_ids",
+                "word_embedding",
+                "position_embedding",
+                "" if segment_embedding is None else "segment_embedding",
+                "gamma",
+                "beta",
+            ],
+            outputs=["output", "mask_index"],
+            domain="com.microsoft",
+        )
+
+        node.attribute.append(onnx.helper.make_attribute("epsilon", 1e-4))
+
+        segment_ids_shape = [] if segment_ids is None else segment_ids.shape
+        segment_embedding_shape = [] if segment_embedding is None else segment_embedding.shape
+
+        graph = helper.make_graph(
+            [node],
+            "embedlayernormalization_test",
+            inputs=[
+                helper.make_tensor_value_info(
+                    "input_ids", TensorProto.INT32, list(input_ids.shape)
+                ),
+                helper.make_tensor_value_info("segment_ids", TensorProto.INT32, segment_ids_shape),
+                helper.make_tensor_value_info(
+                    "word_embedding", TensorProto.FLOAT, list(word_embedding.shape)
+                ),
+                helper.make_tensor_value_info(
+                    "position_embedding", TensorProto.FLOAT, list(position_embedding.shape)
+                ),
+                helper.make_tensor_value_info(
+                    "segment_embedding", TensorProto.FLOAT, segment_embedding_shape
+                ),
+                helper.make_tensor_value_info("gamma", TensorProto.FLOAT, list(gamma.shape)),
+                helper.make_tensor_value_info("beta", TensorProto.FLOAT, list(beta.shape)),
+            ],
+            outputs=[
+                helper.make_tensor_value_info(
+                    "output", TensorProto.FLOAT, list((batch_size, sequence_length, hidden_size))
+                ),
+                helper.make_tensor_value_info("mask_index", TensorProto.INT32, [batch_size]),
+            ],
+        )
+
+        model = helper.make_model(graph, producer_name="embedlayernormalization_test")
+
+        inputs = {
+            "input_ids": input_ids,
+            "segment_ids": segment_ids,
+            "word_embedding": word_embedding,
+            "position_embedding": position_embedding,
+            "segment_embedding": segment_embedding,
+            "gamma": gamma,
+            "beta": beta
+        }
+        check_correctness(model, inputs=inputs)
+
+        # TODO(@anwang2009): onnxruntime v1.9.0 requires empty list for optional argument,
+        # but v1.10.0+ requires None instead.
+        # verify_with_ort_with_inputs(
+        #     model,
+        #     [
+        #         input_ids,
+        #         np.empty(0, dtype="int32") if segment_ids is None else segment_ids,
+        #         word_embedding,
+        #         position_embedding,
+        #         np.empty(0, dtype="float32") if segment_embedding is None else segment_embedding,
+        #         gamma,
+        #         beta,
+        #     ],
+        #     [
+        #         (batch_size, sequence_length, hidden_size),
+        #         batch_size,
+        #     ],
+        #     target=target,
+        #     dev=dev,
+        #     rtol=1e-4,
+        #     atol=1e-4,
+        # )
+
+    hidden_size = 384
+    batch_size = 4
+    sequence_length = 3
+    vocab_size = 5
+
+    input_ids = np.full((batch_size, sequence_length), 3).astype("int32")
+    segment_ids = np.zeros((batch_size, sequence_length)).astype("int32")
+    word_embedding = np.full((vocab_size, hidden_size), 1).astype("float32")
+    position_embedding = np.full((sequence_length, hidden_size), 2).astype("float32")
+    segment_embedding = np.full((vocab_size, hidden_size), 3).astype("float32")
+
+    gamma = np.random.uniform(0.5, 0.7, hidden_size).astype("float32")
+    beta = np.random.randn(hidden_size).astype("float32") * 0.1
+
+    verify_embedlayernormalization(
+        input_ids, segment_ids, word_embedding, position_embedding, segment_embedding, gamma, beta
+    )
+
+    # Test with undefined segment embedding
+    verify_embedlayernormalization(
+        input_ids, None, word_embedding, position_embedding, None, gamma, beta
+    )
+
+
+def create_reduce_test_parameters():
+    output = []
+    for value in [True, False]:
+        output.append(("ReduceMax", value))
+        output.append(("ReduceMean", value))
+        output.append(("ReduceMin", value))
+        output.append(("ReduceProd", value))
+        output.append(("ReduceSum", value))
+        output.append(("ReduceSumSquare", value))
+        output.append(("ReduceLogSum", value))
+        output.append(("ReduceLogSumExp", value))
+        output.append(("ReduceL1", value))
+        output.append(("ReduceL2", value))
+    return output
+
+
+@pytest.mark.parametrize("func, dynamic", create_reduce_test_parameters())
+def test_all_reduce_funcs(func, dynamic):
+    """test_all_reduce_funcs"""
+
+    def verify_reduce_func(func, data, axis, keepdims):
+        inshape = data.shape
+        outshape = np.sum(data, axis=axis, keepdims=keepdims == 1).shape
+
+        if axis:
+            node = onnx.helper.make_node(
+                func, inputs=["x"], outputs=["y"], axes=axis, keepdims=keepdims
+            )
+        else:
+            node = onnx.helper.make_node(func, inputs=["x"], outputs=["y"], keepdims=keepdims)
+
+        if dynamic:
+            in_list = ["?" for _ in range(len(inshape))]
+            out_list = ["?" for _ in range(len(outshape))]
+        else:
+            in_list = list(inshape)
+            out_list = list(outshape)
+        graph = helper.make_graph(
+            [node],
+            "reduce_test",
+            inputs=[helper.make_tensor_value_info("x", TensorProto.FLOAT, in_list)],
+            outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, out_list)]
+        )
+
+        model = helper.make_model(graph, producer_name="reduce_test")
+
+        inputs_dict = {"x": data}
+        check_correctness(model, inputs_dict, opset=11)
+
+    verify_reduce_func(func, np.array(1.0).astype(np.float32), axis=None, keepdims=False)
+
+    for keepdims in [True, False]:
+        verify_reduce_func(
+            func, np.random.randn(3, 2, 2).astype(np.float32), axis=None, keepdims=keepdims
+        )
+
+        verify_reduce_func(
+            func, np.random.randn(3, 2, 3).astype(np.float32), axis=None, keepdims=keepdims
+        )
+
+        verify_reduce_func(
+            func, np.random.randn(3, 3, 3).astype(np.float32), axis=(1,), keepdims=keepdims
+        )
+
+        verify_reduce_func(
+            func, np.random.randn(3, 3, 3, 1).astype(np.float32), axis=(1, 2), keepdims=keepdims
+        )
+
+        verify_reduce_func(
+            func, np.random.randn(3, 3, 3, 1).astype(np.float32), axis=(1,), keepdims=keepdims
+        )
+
+        verify_reduce_func(
+            func, np.random.randn(1, 3, 4, 1).astype(np.float32), axis=(1,), keepdims=keepdims
+        )
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_expand(dynamic):
+    """test_expand"""
+    if dynamic:
+        # TODO: Support dynamic shape for Expand
+        pytest.skip("Dynamic expand is not supported yet")
+
+    def _test_expand(name, data, shape, ref_data):
+        shape_array = np.array(shape)
+        shape_node = onnx.helper.make_node(
+            "Constant",
+            inputs=[],
+            outputs=["shape"],
+            value=onnx.helper.make_tensor(
+                name="const_tensor",
+                data_type=onnx.TensorProto.INT64,
+                dims=shape_array.shape,
+                vals=shape_array.flatten().astype("int64"),
+            ),
+        )
+        expand_node = helper.make_node("Expand", ["in", "shape"], ["out"])
+
+        in_shape = list(data.shape)
+        out_shape = list(ref_data.shape)
+        if dynamic:
+            in_shape = ["?" for _ in range(len(in_shape))]
+            out_shape = ["?" for _ in range(len(out_shape))]
+        graph = helper.make_graph(
+            [shape_node, expand_node],
+            "expand_teint64st",
+            inputs=[helper.make_tensor_value_info("in", TensorProto.FLOAT, in_shape)],
+            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, out_shape)],
+        )
+
+        model = helper.make_model(graph, producer_name=name)
+        check_correctness(model, inputs={"in": data})
+
+    in_shape = (3, 1)
+    shape = (3, 4)
+    data = np.random.uniform(size=in_shape).astype(np.float32)
+    ref_data = np.tile(data, 4)
+    _test_expand("expand_with_dim_unchanged_test", data, shape, ref_data)
+
+    in_shape = (3, 1)
+    shape = (2, 1, 6)
+    data = np.random.uniform(size=in_shape).astype(np.float32)
+    ref_data = data * np.ones(shape, dtype=np.float32)
+    _test_expand("expand_larger_target_shape_test", data, shape, ref_data)
+
+    in_shape = (1, 1)
+    shape = (3,)
+    data = np.random.uniform(size=in_shape).astype(np.float32)
+    ref_data = data * np.ones(shape, dtype=np.float32)
+    _test_expand("expand_smaller_target_shape_test", data, shape, ref_data)
+
+
+@pytest.mark.skip
+def test_constantofshape():
+    """test_constantofshape"""
+
+    def verify_constantofshape(input_dim, value, dtype):
+        fill_node = helper.make_node(
+            "ConstantOfShape",
+            ["input"],
+            ["output"],
+            value=helper.make_tensor(
+                "value", mapping.NP_TYPE_TO_TENSOR_TYPE[np.dtype(dtype)], (1,), (value,)
+            ),
+        )
+
+        inputs = [helper.make_tensor_value_info("input", TensorProto.INT64, [len(input_dim)])]
+
+        graph = helper.make_graph(
+            [fill_node],
+            "fill_test",
+            inputs,
+            outputs=[
+                helper.make_tensor_value_info(
+                    "output", mapping.NP_TYPE_TO_TENSOR_TYPE[np.dtype(dtype)], input_dim
+                )
+            ],
+        )
+
+        model = helper.make_model(graph, producer_name="fill_test")
+        input_np = np.array(input_dim).astype("int64")
+        check_correctness(model, inputs={"input": input_np})
+
+    verify_constantofshape((2, 3, 4, 5), 10, "float32")
+    verify_constantofshape((3, 3), 0, "int32")
+    verify_constantofshape((1, 2, 3), -1, "float32")
+
+
+@pytest.mark.skip
+def test_slice():
+    """test_slice"""
+
+    def _test_slice_iteration_v1(indata, outdata, starts, ends, axes=None):
+        if axes:
+            y = helper.make_node("Slice", ["in"], ["out"], axes=axes, starts=starts, ends=ends)
+        else:
+            y = helper.make_node("Slice", ["in"], ["out"], starts=starts, ends=ends)
+
+        graph = helper.make_graph(
+            [y],
+            "slice_test",
+            inputs=[helper.make_tensor_value_info("in", TensorProto.FLOAT, list(indata.shape))],
+            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, list(outdata.shape))],
+        )
+
+        model = helper.make_model(graph, producer_name="slice_test")
+        check_correctness(model, inputs={"in": indata}, opset=1)
+        # verify_with_ort_with_inputs(
+        #     model, [indata], [outdata.shape], opset=1, target=target, dev=dev
+        # )
+
+    def _test_slice_iteration_v10(indata, outdata, **attrs):
+        starts = attrs["starts"]
+        ends = attrs["ends"]
+        axes = None if "axes" not in attrs else attrs["axes"]
+        steps = None if "steps" not in attrs else attrs["steps"]
+        starts = np.asarray(starts)
+        ends = np.asarray(ends)
+        inputs = [
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, list(indata.shape)),
+            helper.make_tensor_value_info("starts", TensorProto.INT64, list(starts.shape)),
+            helper.make_tensor_value_info("ends", TensorProto.INT64, list(ends.shape)),
+        ]
+        initializer = [
+            helper.make_tensor("starts", TensorProto.INT64, list(starts.shape), starts),
+            helper.make_tensor("ends", TensorProto.INT64, list(ends.shape), ends),
+        ]
+        nodes = []
+
+        if "add_noop_to_input_attrs" in attrs:
+
+            def add_noop_to_input_attr(attr_name, attr):
+                output_name = attr_name + "_output"
+
+                ref_shape = list(np.array(attr).shape)
+                ref_shape.insert(0, 1)
+                ref_shape = tuple(ref_shape)
+                ref_array = np.array(ref_shape)
+                ref_node = onnx.helper.make_node(
+                    "Constant",
+                    inputs=[],
+                    outputs=["ref_in_" + attr_name],
+                    value=onnx.helper.make_tensor(
+                        name="const_tensor__1_" + attr_name,
+                        data_type=onnx.TensorProto.INT64,
+                        dims=ref_array.shape,
+                        vals=ref_array.flatten().astype(int),
+                    ),
+                )
+                in_shape = np.array(attr).shape
+                in_array = np.array(in_shape)
+                ref_node2 = onnx.helper.make_node(
+                    "Constant",
+                    inputs=[],
+                    outputs=["input_shape_" + attr_name],
+                    value=onnx.helper.make_tensor(
+                        name="const_tensor__2_" + attr_name,
+                        data_type=onnx.TensorProto.INT64,
+                        dims=in_array.shape,
+                        vals=in_array.flatten().astype(int),
+                    ),
+                )
+
+                reshape1_node = helper.make_node(
+                    "Reshape", [attr_name, "ref_in_" + attr_name], ["reshape_" + attr_name]
+                )
+                reshape2_node = helper.make_node(
+                    "Reshape", ["reshape_" + attr_name, "input_shape_" + attr_name], [output_name]
+                )
+                return [ref_node, ref_node2, reshape1_node, reshape2_node]
+
+        slice_inputs = []
+        for attr_name in ["starts", "ends", "axes", "steps"]:
+            if attr_name not in attrs:
+                continue
+            if "add_noop_to_input_attrs" in attrs and attr_name in attrs["add_noop_to_input_attrs"]:
+                nodes.extend(add_noop_to_input_attr(attr_name, attrs[attr_name]))
+                slice_inputs.append(attr_name + "_output")
+            else:
+                slice_inputs.append(attr_name)
+
+        if axes:
+            axes = np.asarray(axes)
+            inputs.append(
+                helper.make_tensor_value_info("axes", TensorProto.INT64, list(axes.shape))
+            )
+            initializer.append(
+                helper.make_tensor("axes", TensorProto.INT64, list(axes.shape), axes)
+            )
+
+        if steps:
+            assert axes is not None and len(axes) == len(steps)
+            steps = np.asarray(steps)
+            inputs.append(
+                helper.make_tensor_value_info("steps", TensorProto.INT64, list(axes.shape))
+            )
+            initializer.append(
+                helper.make_tensor("steps", TensorProto.INT64, list(steps.shape), steps)
+            )
+
+        y = helper.make_node("Slice", ["data", *slice_inputs], ["out"])
+
+        nodes.append(y)
+        graph = helper.make_graph(
+            nodes,
+            "slice_test",
+            inputs=inputs,
+            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, list(outdata.shape))],
+            initializer=initializer,
+        )
+        model = helper.make_model(graph, producer_name="slice_test")
+        check_correctness(model, inputs={"data": indata}, opset=10)
+        # verify_with_ort_with_inputs(
+        #     model, [indata], opset=10, freeze_params=True, use_vm=True, target=target, dev=dev
+        # )
+
+    x = np.random.randn(20, 10, 5).astype(np.float32)
+    _test_slice_iteration_v1(x, x[0:3, 0:10], starts=(0, 0), ends=(3, 10), axes=(0, 1))
+    _test_slice_iteration_v1(x, x[0:3, 0:10], starts=(0, 0), ends=(10, 3), axes=(1, 0))
+    _test_slice_iteration_v1(x, x[:, :, 3:4], starts=(0, 0, 3), ends=(20, 10, 4))
+    _test_slice_iteration_v1(x, x[:, 1:1000], starts=(1,), ends=(1000,), axes=(1,))
+    _test_slice_iteration_v1(x, x[:, 0:-1], starts=(0,), ends=(-1,), axes=(1,))
+    _test_slice_iteration_v10(x, x[0:3, 0:10], starts=(0, 0), ends=(3, 10), axes=(0, 1))
+    _test_slice_iteration_v10(x, x[0:3, 0:10], starts=(0, 0), ends=(10, 3), axes=(1, 0))
+    _test_slice_iteration_v10(x, x[:, :, 3:4], starts=(0, 0, 3), ends=(20, 10, 4))
+    _test_slice_iteration_v10(x, x[:, 1:1000], starts=(1,), ends=(1000,), axes=(1,))
+    _test_slice_iteration_v10(x, x[:, 0:-1], starts=(0,), ends=(-1,), axes=(1,))
+    _test_slice_iteration_v10(x, x[:, 0:-1], starts=(0,), ends=(-1,), axes=(-1,))
+    _test_slice_iteration_v10(
+        x,
+        x[0:3, 0:10],
+        starts=(0, 0),
+        ends=(3, 10),
+        axes=(0, 1),
+        add_noop_to_input_attrs=["starts"],
+    )
+    _test_slice_iteration_v10(
+        x, x[:, :, 3:4], starts=(0, 0, 3), ends=(20, 10, 4), add_noop_to_input_attrs=["ends"]
+    )
+    _test_slice_iteration_v10(
+        x, x[:, 1:1000], starts=(1,), ends=(1000,), axes=(1,), add_noop_to_input_attrs=["axes"]
+    )
+    _test_slice_iteration_v10(
+        x,
+        x[:, 0:-1],
+        starts=(0,),
+        ends=(-1,),
+        axes=(1,),
+        add_noop_to_input_attrs=["starts", "ends"],
+    )
+    _test_slice_iteration_v10(
+        x,
+        x[0:3, 0:10],
+        starts=(0, 0),
+        ends=(3, 10),
+        axes=(0, 1),
+        add_noop_to_input_attrs=["ends", "axes"],
+    )
+    _test_slice_iteration_v10(
+        x,
+        x[:, :, 3:4],
+        starts=(0, 0, 3),
+        ends=(20, 10, 4),
+        add_noop_to_input_attrs=["starts", "axes"],
+    )
+    _test_slice_iteration_v10(
+        x,
+        x[:, 1:1000],
+        starts=(1,),
+        ends=(1000,),
+        axes=(1,),
+        add_noop_to_input_attrs=["starts", "ends", "axes"],
+    )
+    x = np.random.randn(1, 1, 1, 128).astype(np.float32)
+    _test_slice_iteration_v10(
+        x, x, starts=(0, 0), ends=(9223372036854775807, 9223372036854775807), axes=(0, 3)
+    )
+
+    x = np.random.randn(4, 4).astype(np.float32)
+    _test_slice_iteration_v10(
+        x, x[:, 1::2], starts=(1,), ends=(9223372036854775807,), axes=(1,), steps=(2,)
+    )
+    _test_slice_iteration_v10(
+        x,
+        x[0::1, 1::2],
+        starts=(0, 1),
+        ends=(4, 4),
+        axes=(0, 1),
+        steps=(1, 2),
+    )
+
+
+@pytest.mark.skip
+@pytest.mark.parametrize("dynamic", [True, False])
+def test_attention(dynamic):
+    """test_attention"""
+
+    def verify_attention(input_, weight, bias, mask_index, num_heads):
+        node = onnx.helper.make_node(
+            "Attention",
+            inputs=["input", "weight", "bias", "mask_index"],
+            outputs=["output", "present"],
+            domain="com.microsoft",
+            num_heads=num_heads,
+        )
+
+        present_output_shape = (2, batch_size, num_heads, sequence_length, head_size)
+
+        input_shape = list(input_.shape)
+        weight_shape = list(weight.shape)
+        bias_shape = list(bias.shape)
+        mask_shape = list(mask_index.shape)
+        output_shape = list(input_.shape)
+        present_shape = list(present_output_shape)
+        if dynamic:
+            input_shape = ["?" for _ in range(len(input_.shape))]
+            weight_shape = ["?" for _ in range(len(weight.shape))]
+            bias_shape = ["?" for _ in range(len(bias.shape))]
+            mask_shape = ["?" for _ in range(len(mask_index.shape))]
+            output_shape = ["?" for _ in range(len(input_.shape))]
+            present_shape = ["?" for _ in range(len(present_output_shape))]
+
+        graph = helper.make_graph(
+            [node],
+            "attention_test",
+            inputs=[
+                helper.make_tensor_value_info("input", TensorProto.FLOAT, input_shape),
+                helper.make_tensor_value_info("weight", TensorProto.FLOAT, weight_shape),
+                helper.make_tensor_value_info("bias", TensorProto.FLOAT, bias_shape),
+                helper.make_tensor_value_info(
+                    "mask_index", TensorProto.INT32, mask_shape
+                ),
+            ],
+            outputs=[
+                helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape),
+                helper.make_tensor_value_info(
+                    "present", TensorProto.FLOAT, present_shape
+                ),
+            ],
+        )
+
+        model = helper.make_model(graph, producer_name="attention_test")
+
+        check_correctness(model, inputs={"input": input_, "weight": weight, "bias": bias, "mask_index": mask_index})
+        # "present" output should be nullptr when the "past" input isn't included,
+        # but ort requires an output shape to be specified?
+        # verify_with_ort_with_inputs(
+        #     model,
+        #     [input_, weight, bias, mask_index],
+        #     [input_.shape, present_output_shape],
+        #     target=target,
+        #     dev=dev,
+        #     rtol=1e-4,
+        #     atol=1e-4,
+        # )
+
+    hidden_size = 384
+    batch_size = 4
+    sequence_length = 4
+    num_heads = 12
+    head_size = 32
+
+    dtype = "float32"
+    input_array = np.random.random((batch_size, sequence_length, hidden_size)).astype(dtype)
+    weight = np.random.normal(size=(hidden_size, 3 * hidden_size)).astype(dtype) * 0.1
+    bias = np.random.randn(3 * hidden_size).astype(dtype)
+    mask_index = np.full((batch_size, sequence_length), 1).astype("int32")
+
+    verify_attention(input_array, weight, bias, mask_index, num_heads)
+
+
+@pytest.mark.skip
+def test_pad_constant_value():
+    """test_pad_constant_value"""
+
+    def verify_pad_constant_value(constant_value):
+        tensor_shape = [1, 2, 257, 126]
+        output_shape = [1, 2, 257, 128]
+        tensor_values = [np.random.uniform(size=tensor_shape).astype("float32")]
+        graph_inputs = [helper.make_tensor_value_info("input", TensorProto.FLOAT, tensor_shape)]
+        graph_outputs = [helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)]
+        pads_values = [0, 0, 0, 2, 0, 0, 0, 0]
+        pads = helper.make_tensor("pads", TensorProto.INT64, [8], pads_values)
+        pad_node = helper.make_node(
+            "Pad", ["input", "pads", constant_value], ["output"], mode="constant"
+        )
+        graph_nodes = [pad_node]
+        graph = helper.make_graph(
+            graph_nodes,
+            "test_pad_constant_value",
+            inputs=graph_inputs,
+            outputs=graph_outputs,
+            initializer=[pads],
+        )
+        model = helper.make_model(
+            graph,
+            producer_name="test_pad_constant_value",
+        )
+        check_correctness(model, inputs={"input": tensor_values[0]})
+        # verify_with_ort_with_inputs(model, tensor_values, target=target, dev=dev)
+
+    verify_pad_constant_value("")
+
+
+@pytest.mark.skip
+def test_split():
+    """test_split"""
+
+    def verify_split(indata, outdatas, split, axis=0, pass_split=True, opset=11):
+        indata = np.array(indata).astype(np.float32)
+        outdatas = [np.array(o).astype(np.float32) for o in outdatas]
+        inputs = [helper.make_tensor_value_info("input", TensorProto.FLOAT, list(indata.shape))]
+        input_names = ["input"]
+        initializer = []
+
+        if split:
+            split_index = range(len(split))
+        else:
+            split_index = range(len(outdatas))
+
+        if pass_split:
+            if opset >= 13:
+                input_names.append("split")
+                np_split = np.array(split).astype(np.int64)
+                # inputs.append(
+                #     helper.make_tensor_value_info("split", TensorProto.INT64, list(np_split.shape))
+                # )
+                # TODO(mbrookhart): Support dynamic split, edit this test case to remove split from
+                # the initializer and add it back to the input data
+                indata = [indata]  # , np_split]
+                initializer.append(
+                    helper.make_tensor("split", TensorProto.INT64, list(np_split.shape), np_split)
+                )
+        node = helper.make_node(
+            "Split",
+            inputs=input_names,
+            outputs=[f"output_{i}" for i in range(len(split_index))],
+            axis=axis,
+        )
+
+        if pass_split and opset < 13:
+            split_attr = helper.make_attribute("split", split)
+            node.attribute.append(split_attr)
+
+        graph = helper.make_graph(
+            [node],
+            "split_test",
+            inputs=inputs,
+            initializer=initializer,
+            outputs=[
+                helper.make_tensor_value_info(
+                    f"output_{i}", TensorProto.FLOAT, list(outdatas[i].shape)
+                )
+                for i in range(len(split_index))
+            ],
+        )
+        model = helper.make_model(graph, producer_name="split_test")
+        check_correctness(model, inputs={"input": indata}, opset=opset)
+        # verify_with_ort_with_inputs(
+        #     model,
+        #     indata,
+        #     out_shape=list(range(len(split_index))),
+        #     opset=opset,
+        #     target=target,
+        #     dev=dev,
+        #     use_vm=True,
+        #     freeze_params=(opset >= 13),
+        # )
+
+    # 1D
+    verify_split([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], [2, 2, 2], 0)
+    verify_split(
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], [2, 2, 2], 0, False
+    )
+    verify_split([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [[1.0, 2.0], [3.0], [4.0, 5.0, 6.0]], [2, 1, 3], 0)
+    verify_split(
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [[1.0, 2.0], [3.0], [4.0, 5.0, 6.0]], [2, 1, 3], 0, opset=13
+    )
+    # 2D
+    verify_split(
+        [[1.0, 2.0, 3.0, 4.0], [7.0, 8.0, 9.0, 10.0]],
+        [[[1.0, 2.0], [7.0, 8.0]], [[3.0, 4.0], [9.0, 10.0]]],
+        [2, 2],
+        1,
+    )
+    verify_split(
+        [[1.0, 2.0, 3.0, 4.0], [7.0, 8.0, 9.0, 10.0]],
+        [[[1.0, 2.0], [7.0, 8.0]], [[3.0, 4.0], [9.0, 10.0]]],
+        [2, 2],
+        1,
+        opset=13,
+    )
+    # Split evenly (unstack)
+    verify_split([1, 2, 3], [[1], [2], [3]], False, 0, False)
+    # Split a single value to a single value
+    verify_split([1], [[1]], [1], pass_split=True)
+    # Test that the default case modifies nothing when split list has length one
+    verify_split([[1.0, 2.0]], [[1.0, 2.0]], [2], 1)
+    verify_split([[1.0, 2.0]], [[1.0, 2.0]], [1], 0)
+
+
+@pytest.mark.skip
+@pytest.mark.parametrize("dynamic", [True, False])
+def test_tile(dynamic):
+    """test_tile"""
+
+    def verify_tile_v6(indata, repeats, outdata):
+        node = helper.make_node("Tile", inputs=["input", "repeats"], outputs=["out"])
+
+        indata_shape = list(indata.shape)
+        repeats_shape = list(repeats.shape)
+        outdata_shape = list(outdata.shape)
+        if dynamic:
+            indata_shape = ["?" for _ in range(len(indata_shape))]
+            repeats_shape = ["?" for _ in range(len(repeats_shape))]
+            outdata_shape = ["?" for _ in range(len(outdata_shape))]
+
+        graph = helper.make_graph(
+            [node],
+            "tile_test",
+            inputs=[
+                helper.make_tensor_value_info("input", TensorProto.FLOAT, indata_shape),
+                helper.make_tensor_value_info("repeats", TensorProto.INT64, repeats_shape)
+            ],
+            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, outdata_shape)],
+        )
+
+        model = helper.make_model(graph, producer_name="tile_test")
+        check_correctness(model, inputs={"input": indata, "repeats": repeats}, opset=6)
+        # verify_with_ort_with_inputs(
+        #     model, [indata, repeats], use_vm=True, opset=6, target=target, dev=dev
+        # )
+
+    x = np.random.rand(2, 3, 4, 5).astype(np.float32)
+    repeats = np.random.randint(low=1, high=10, size=(np.ndim(x),)).astype(np.int64)
+    z_array = np.tile(x, repeats)
+    verify_tile_v6(x, repeats, z_array)
+
+
+
 if __name__ == "__main__":
     test_matmul()
     test_concat()
@@ -680,9 +1494,7 @@ if __name__ == "__main__":
     test_squeeze()
     test_const()
     test_sub()
-
-    # TODO, still has issues
-    # test_reshape()
+    test_reshape()
     test_div()
     test_sigmoid()
     test_softmax()
