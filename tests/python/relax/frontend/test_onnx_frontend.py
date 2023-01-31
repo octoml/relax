@@ -585,25 +585,47 @@ def test_squeeze():
     check_correctness(model)
 
 
+def test_const():
+    shape = [32, 32]
+    const_node = helper.make_node(
+        "Constant",
+        [],
+        ["y"],
+        value=helper.make_tensor(
+            "value", TensorProto.FLOAT, shape, np.random.rand(*shape).astype(np.float32).flatten()
+        ),
+    )
+    graph = helper.make_graph(
+        [const_node],
+        "const_test",
+        inputs=[],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="const_test")
+    check_correctness(model)
+
+
 if __name__ == "__main__":
-    test_matmul()
-    test_concat()
-    test_add()
-    test_mul()
-    test_cast()
-    test_gather()
-    test_gemm()
-    test_equal()
-    test_not()
-    test_tanh()
-    test_sqrt()
-    test_relu()
-    test_clip()
-    test_conv()
-    test_pow()
-    test_erf()
-    test_cumsum()
-    test_squeeze()
+    # test_matmul()
+    # test_concat()
+    # test_add()
+    # test_mul()
+    # test_cast()
+    # test_gather()
+    # test_gemm()
+    # test_equal()
+    # test_not()
+    # test_tanh()
+    # test_sqrt()
+    # test_relu()
+    # test_clip()
+    # test_conv()
+    # test_pow()
+    # test_erf()
+    # test_cumsum()
+    # test_squeeze()
+    test_const()
 
     # TODO, still has issues
     # test_reshape()
