@@ -587,6 +587,26 @@ def _get_convert_map(opset):
         "Constant": Constant,
         "Sub": Sub,
         "LayerNormalization": relay.frontend.onnx.LayerNormalization,
+        "SkipLayerNormalization": relay.frontend.onnx.SkipLayerNormalization,
+        "EmbedLayerNormalization": relay.frontend.onnx.EmbedLayerNormalization,
+        # defs/reduction
+        "ReduceMax": relay.frontend.onnx.ReduceMax,
+        "ReduceMin": relay.frontend.onnx.ReduceMin,
+        "ReduceSum": relay.frontend.onnx.ReduceSum,
+        "ReduceMean": relay.frontend.onnx.ReduceMean,
+        "ReduceProd": relay.frontend.onnx.ReduceProd,
+        "ReduceLogSumExp": relay.frontend.onnx.ReduceLogSumExp,
+        "ReduceLogSum": relay.frontend.onnx.ReduceLogSum,
+        "ReduceSumSquare": relay.frontend.onnx.ReduceSumSquare,
+        "ReduceL1": relay.frontend.onnx.ReduceL1,
+        "ReduceL2": relay.frontend.onnx.ReduceL2,
+        "Expand": relay.frontend.onnx.Expand,
+        "ConstantOfShape": relay.frontend.onnx.ConstantOfShape,
+        "Slice": relay.frontend.onnx.Slice,
+        "Attention": relay.frontend.onnx.Attention,
+        "Pad": relay.frontend.onnx.Pad,
+        "Split": relay.frontend.onnx.Split,
+        "Tile": relay.frontend.onnx.Tile,
     }
 
 
@@ -780,7 +800,7 @@ class GraphProto:
 
     def _relay_input_adapter(self, inputs):
         """Creates equivalent input Relay vars from the input Relax vars"""
-        relay_vars = []
+        relay_vars = onnx_input()
         for relax_var in inputs:
             shape_values = []
             for shape_value in relax_var.struct_info.shape.values:
@@ -896,7 +916,9 @@ class GraphProto:
             if issubclass(convert_class, RelayOnnxOpConverter):
                 relay_inputs = self._relay_input_adapter(inputs)
                 # The op_function might change the inputs to the relay op. Use a copy of the inputs.
-                relay_inputs_copy = [relay_input for relay_input in relay_inputs]
+                relay_inputs_copy = onnx_input()
+                for relay_input in relay_inputs:
+                    relay_inputs_copy.append(relay_input)
                 # TODO handle params passing
                 relay_output = op_function(relay_inputs_copy, attrs, params=[])
                 sym = self._relay_output_adapter(inputs, relay_inputs, relay_output)
