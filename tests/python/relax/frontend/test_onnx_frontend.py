@@ -568,6 +568,61 @@ def test_cumsum():
     check_correctness(model)
 
 
+def test_squeeze():
+    squeeze_node = helper.make_node("Squeeze", ["x", "axis"], ["y"])
+    shape = [1, 32, 1, 32]
+    graph = helper.make_graph(
+        [squeeze_node],
+        "squeeze_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+        ],
+        initializer=[helper.make_tensor("axis", TensorProto.INT64, [2], [0, 2])],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [32, 32])],
+    )
+
+    model = helper.make_model(graph, producer_name="squeeze_test")
+    check_correctness(model)
+
+
+def test_const():
+    shape = [32, 32]
+    const_node = helper.make_node(
+        "Constant",
+        [],
+        ["y"],
+        value=helper.make_tensor(
+            "value", TensorProto.FLOAT, shape, np.random.rand(*shape).astype(np.float32).flatten()
+        ),
+    )
+    graph = helper.make_graph(
+        [const_node],
+        "const_test",
+        inputs=[],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="const_test")
+    check_correctness(model)
+
+
+def test_sub():
+    sub_node = helper.make_node("Sub", ["x", "y"], ["z"])
+    shape = [32, 16]
+    graph = helper.make_graph(
+        [sub_node],
+        "sub_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+            helper.make_tensor_value_info("y", TensorProto.FLOAT, shape),
+        ],
+        outputs=[helper.make_tensor_value_info("z", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="sub_test")
+    check_correctness(model)
+
+
 if __name__ == "__main__":
     test_matmul()
     test_concat()
@@ -586,6 +641,9 @@ if __name__ == "__main__":
     test_pow()
     test_erf()
     test_cumsum()
+    test_squeeze()
+    test_const()
+    test_sub()
 
     # TODO, still has issues
     # test_reshape()
