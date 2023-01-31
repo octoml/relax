@@ -454,8 +454,7 @@ class CumSum(OnnxOpConverter):
     def _impl_v13(cls, bb, inputs, attr):
         assert getattr(attr, "reverse", 0) == 0, "reverse is not supported yet"
         if len(inputs) > 1:
-            # axis = int(infer_value(inputs[1], params).numpy())
-            axis = inputs[1]
+            axis = int(inputs[1].data.numpy())
         else:
             axis = None
         return bb.emit_te(
