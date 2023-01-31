@@ -128,7 +128,7 @@ def test_matmul(dynamic):
     if dynamic:
         inputs = {
             "a": np.random.normal(size=(32, 48)).astype("float32"),
-            "b": np.random.normal(size=(48, 64)).astype("float32")
+            "b": np.random.normal(size=(48, 64)).astype("float32"),
         }
     check_correctness(model, inputs)
 
@@ -636,7 +636,9 @@ def test_sub():
 
 
 def test_layer_norm():
-    layer_norm_node = helper.make_node("LayerNormalization", ["a", "b", "c"], ["d", "mean", "std_dev"], epsilon=1e-12)
+    layer_norm_node = helper.make_node(
+        "LayerNormalization", ["a", "b", "c"], ["d", "mean", "std_dev"], epsilon=1e-12
+    )
 
     graph = helper.make_graph(
         [layer_norm_node],
@@ -646,9 +648,11 @@ def test_layer_norm():
             helper.make_tensor_value_info("b", TensorProto.FLOAT, [32]),
             helper.make_tensor_value_info("c", TensorProto.FLOAT, [32]),
         ],
-        outputs = [helper.make_tensor_value_info("d", TensorProto.FLOAT, [32, 32]),
-                   helper.make_tensor_value_info("mean", TensorProto.FLOAT, [32]),
-                   helper.make_tensor_value_info("std_dev", TensorProto.FLOAT, [32])],
+        outputs=[
+            helper.make_tensor_value_info("d", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("mean", TensorProto.FLOAT, [32]),
+            helper.make_tensor_value_info("std_dev", TensorProto.FLOAT, [32]),
+        ],
     )
 
     model = helper.make_model(graph, producer_name="layer_norm_test")

@@ -788,9 +788,12 @@ class GraphProto:
             if isinstance(relax_var, relax.Constant):
                 relay_vars.append(relay.const(relax_var.data, dtype=relax_var.checked_type.dtype))
             else:
-                relay_vars.append(relay.var(relax_var.name_hint, shape=shape_values, dtype=relax_var.checked_type.dtype))
+                relay_vars.append(
+                    relay.var(
+                        relax_var.name_hint, shape=shape_values, dtype=relax_var.checked_type.dtype
+                    )
+                )
         return relay_vars
-
 
     def _relay_output_adapter(self, relax_inputs, relay_inputs, relay_output):
         """Given the output of a relay op from the Onnx relay frontend,
@@ -829,25 +832,25 @@ class GraphProto:
         # in the relax_mod with global_vars registered with the in-use block builder.
         global_var_dict = {}
         for gv, func in relax_mod.functions.items():
-            if (gv.name_hint != "main"):
+            if gv.name_hint != "main":
                 global_var_dict[gv] = self.bb.add_func(func, gv.name_hint)
 
         # This dict is used by the Mapper mutator to replace the relax vars
         # with the inputs.
         relax_input_dict = {}
         for relax_var in relax_inputs:
-            if (isinstance(relax_var, relax.Var)):
+            if isinstance(relax_var, relax.Var):
                 relax_input_dict[relax_var.name_hint] = relax_var
 
         @relax.expr_functor.mutator
         class Mapper(PyExprMutator):
             def visit_var_(self, var_node: Var):
-                if (var_node.name_hint in relax_input_dict):
+                if var_node.name_hint in relax_input_dict:
                     return relax_input_dict[var_node.name_hint]
                 return var_node
 
             def visit_global_var_(self, gv_node: GlobalVar):
-                if (gv_node in global_var_dict):
+                if gv_node in global_var_dict:
                     return global_var_dict[gv_node]
                 return gv_node
 
