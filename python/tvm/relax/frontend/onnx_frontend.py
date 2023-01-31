@@ -549,6 +549,14 @@ class Constant(OnnxOpConverter):
         return value
 
 
+class Sub(OnnxOpConverter):
+    """Converts an onnx Sub node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.emit_te(topi.subtract, inputs[0], inputs[1])
+
+
 def _get_convert_map(opset):
     return {
         "MatMul": MatMul.get_converter(opset),
@@ -580,6 +588,7 @@ def _get_convert_map(opset):
         "CumSum": CumSum.get_converter(opset),
         "Squeeze": Squeeze.get_converter(opset),
         "Constant": Constant.get_converter(opset),
+        "Sub": Sub.get_converter(opset),
     }
 
 

@@ -606,26 +606,44 @@ def test_const():
     check_correctness(model)
 
 
+def test_sub():
+    sub_node = helper.make_node("Sub", ["x", "y"], ["z"])
+    shape = [32, 16]
+    graph = helper.make_graph(
+        [sub_node],
+        "sub_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+            helper.make_tensor_value_info("y", TensorProto.FLOAT, shape),
+        ],
+        outputs=[helper.make_tensor_value_info("z", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="sub_test")
+    check_correctness(model)
+
+
 if __name__ == "__main__":
-    # test_matmul()
-    # test_concat()
-    # test_add()
-    # test_mul()
-    # test_cast()
-    # test_gather()
-    # test_gemm()
-    # test_equal()
-    # test_not()
-    # test_tanh()
-    # test_sqrt()
-    # test_relu()
-    # test_clip()
-    # test_conv()
-    # test_pow()
-    # test_erf()
-    # test_cumsum()
-    # test_squeeze()
+    test_matmul()
+    test_concat()
+    test_add()
+    test_mul()
+    test_cast()
+    test_gather()
+    test_gemm()
+    test_equal()
+    test_not()
+    test_tanh()
+    test_sqrt()
+    test_relu()
+    test_clip()
+    test_conv()
+    test_pow()
+    test_erf()
+    test_cumsum()
+    test_squeeze()
     test_const()
+    test_sub()
 
     # TODO, still has issues
     # test_reshape()
