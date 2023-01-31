@@ -568,6 +568,23 @@ def test_cumsum():
     check_correctness(model)
 
 
+def test_squeeze():
+    squeeze_node = helper.make_node("Squeeze", ["x", "axis"], ["y"])
+    shape = [1, 32, 1, 32]
+    graph = helper.make_graph(
+        [squeeze_node],
+        "squeeze_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+        ],
+        initializer=[helper.make_tensor("axis", TensorProto.INT64, [2], [0, 2])],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [32, 32])],
+    )
+
+    model = helper.make_model(graph, producer_name="squeeze_test")
+    check_correctness(model)
+
+
 if __name__ == "__main__":
     test_matmul()
     test_concat()
@@ -586,6 +603,7 @@ if __name__ == "__main__":
     test_pow()
     test_erf()
     test_cumsum()
+    test_squeeze()
 
     # TODO, still has issues
     # test_reshape()

@@ -452,17 +452,34 @@ class CumSum(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        assert getattr(attr, "reverse", 0) == 0, "reverse is not supported yet"
+        data = inputs[0]
         if len(inputs) > 1:
             axis = int(inputs[1].data.numpy())
         else:
             axis = None
-        return bb.emit_te(
+        if getattr(attr, "reverse", 0) != 0:
+            data = bb.emit_te(topi.flip, data, axis=axis if axis else 0)
+        data = bb.emit_te(
             topi.cumsum,
-            data=inputs[0],
+            data=data,
             axis=axis,
             exclusive=attr.get("exclusive", None),
         )
+        if getattr(attr, "reverse", 0) != 0:
+            data = bb.emit_te(topi.flip, data, axis=axis if axis else 0)
+        return data
+
+
+class Squeeze(OnnxOpConverter):
+    """Converts an onnx Squeeze node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        if len(inputs) > 1:
+            axis = [int(x) for x in inputs[1].data.numpy()]
+        else:
+            axis = None
+        return bb.emit_te(topi.squeeze, inputs[0], axis=axis)
 
 
 def _get_convert_map(opset):
@@ -494,6 +511,7 @@ def _get_convert_map(opset):
         "Pow": Pow.get_converter(opset),
         "Erf": Erf.get_converter(opset),
         "CumSum": CumSum.get_converter(opset),
+        "Squeeze": Squeeze.get_converter(opset),
     }
 
 
