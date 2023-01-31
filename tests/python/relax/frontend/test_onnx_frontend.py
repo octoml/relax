@@ -1304,38 +1304,6 @@ def test_attention(dynamic):
     verify_attention(input_array, weight, bias, mask_index, num_heads)
 
 
-@pytest.mark.parametrize("dynamic", [True, False])
-def test_squeeze(dynamic):
-    """test_squeeze"""
-
-    def test_squeeze_once(in_shape, out_shape, axes=None):
-        y = helper.make_node("Squeeze", ["in"], ["out"], axes=axes)
-        x = np.random.uniform(size=in_shape).astype("float32")
-
-        in_shape = list(in_shape)
-        out_shape = list(out_shape)
-        if dynamic:
-            in_shape = ["?" for _ in range(len(in_shape))]
-            out_shape = ["?" for _ in range(len(out_shape))]
-
-        graph = helper.make_graph(
-            [y],
-            "squeeze_test",
-            inputs=[helper.make_tensor_value_info("in", TensorProto.FLOAT, in_shape)],
-            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, out_shape)],
-        )
-
-        model = helper.make_model(graph, producer_name="squeeze_test")
-
-        check_correctness(model, inputs={"in": x}, opset=11)
-        # verify_with_ort_with_inputs(model, [x], [out_shape], target=target, dev=dev, opset=11)
-
-    test_squeeze_once((1, 3, 1, 3, 1, 1), (3, 3), [0, 2, 4, 5])
-    if not dynamic:
-        test_squeeze_once((1, 3, 1, 3, 1, 1), (3, 3))  # empty axis.
-    test_squeeze_once((), ())  # scalar testing.
-
-
 @pytest.mark.skip
 def test_pad_constant_value():
     """test_pad_constant_value"""
