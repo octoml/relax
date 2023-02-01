@@ -1355,8 +1355,7 @@ def test_split(fp_arith, dynamic):
         indata_shape = list(indata.shape)
         if dynamic:
             indata_shape = ["?" for _ in range(len(indata.shape))]
-            tmp = outdata_shapes
-            outdata_shapes = [["?" for _ in range(len(o))] for o in tmp]
+            outdata_shapes = [["?" for _ in range(len(o))] for o in outdata_shapes]
 
         inputs = [
             helper.make_tensor_value_info(
