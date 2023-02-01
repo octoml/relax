@@ -1337,32 +1337,36 @@ def test_pad_constant_value():
     verify_pad_constant_value("")
 
 
-@pytest.mark.skip
-def test_split():
+@pytest.mark.parametrize("fp_arith", [np.float16, np.float32])
+@pytest.mark.parametrize("dynamic", [True, False])
+def test_split(fp_arith, dynamic):
     """test_split"""
 
-    def verify_split(indata, outdatas, split, axis=0, pass_split=True, opset=11):
-        indata = np.array(indata).astype(np.float32)
-        outdatas = [np.array(o).astype(np.float32) for o in outdatas]
-        inputs = [helper.make_tensor_value_info("input", TensorProto.FLOAT, list(indata.shape))]
+    def verify_split(indata_shape, outdata_shapes, split, axis=0, pass_split=True, opset=11):
+        indata = np.random.normal(size=indata_shape).astype(fp_arith)
         input_names = ["input"]
         initializer = []
 
         if split:
             split_index = range(len(split))
         else:
-            split_index = range(len(outdatas))
+            split_index = range(len(outdata_shapes))
+
+        indata_shape = list(indata.shape)
+        if dynamic:
+            indata_shape = ["?" for _ in range(len(indata.shape))]
+            tmp = outdata_shapes
+            outdata_shapes = [["?" for _ in range(len(o))] for o in tmp]
+
+        inputs = [
+            helper.make_tensor_value_info(
+                "input", mapping.NP_TYPE_TO_TENSOR_TYPE[indata.dtype], indata_shape
+            )
+        ]
 
         if pass_split:
             if opset >= 13:
-                input_names.append("split")
                 np_split = np.array(split).astype(np.int64)
-                # inputs.append(
-                #     helper.make_tensor_value_info("split", TensorProto.INT64, list(np_split.shape))
-                # )
-                # TODO(mbrookhart): Support dynamic split, edit this test case to remove split from
-                # the initializer and add it back to the input data
-                indata = [indata]  # , np_split]
                 initializer.append(
                     helper.make_tensor("split", TensorProto.INT64, list(np_split.shape), np_split)
                 )
@@ -1384,54 +1388,44 @@ def test_split():
             initializer=initializer,
             outputs=[
                 helper.make_tensor_value_info(
-                    f"output_{i}", TensorProto.FLOAT, list(outdatas[i].shape)
+                    f"output_{i}", mapping.NP_TYPE_TO_TENSOR_TYPE[indata.dtype], list(outdata_shapes[i])
                 )
                 for i in range(len(split_index))
             ],
         )
         model = helper.make_model(graph, producer_name="split_test")
         check_correctness(model, inputs={"input": indata}, opset=opset)
-        # verify_with_ort_with_inputs(
-        #     model,
-        #     indata,
-        #     out_shape=list(range(len(split_index))),
-        #     opset=opset,
-        #     target=target,
-        #     dev=dev,
-        #     use_vm=True,
-        #     freeze_params=(opset >= 13),
-        # )
 
     # 1D
-    verify_split([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], [2, 2, 2], 0)
+    verify_split(6, [[2], [2], [2]], [2, 2, 2], 0)
     verify_split(
-        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], [2, 2, 2], 0, False
+        6, [[2], [2], [2]], [2, 2, 2], 0, False
     )
-    verify_split([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [[1.0, 2.0], [3.0], [4.0, 5.0, 6.0]], [2, 1, 3], 0)
+    verify_split(6, [[2], [1], [3]], [2, 1, 3], 0)
     verify_split(
-        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [[1.0, 2.0], [3.0], [4.0, 5.0, 6.0]], [2, 1, 3], 0, opset=13
+        6, [[2], [1], [3]], [2, 1, 3], 0, opset=13
     )
     # 2D
     verify_split(
-        [[1.0, 2.0, 3.0, 4.0], [7.0, 8.0, 9.0, 10.0]],
-        [[[1.0, 2.0], [7.0, 8.0]], [[3.0, 4.0], [9.0, 10.0]]],
+        (4, 4),
+        [[2, 2], [2, 2]],
         [2, 2],
         1,
     )
     verify_split(
-        [[1.0, 2.0, 3.0, 4.0], [7.0, 8.0, 9.0, 10.0]],
-        [[[1.0, 2.0], [7.0, 8.0]], [[3.0, 4.0], [9.0, 10.0]]],
+        (4, 4),
+        [[2, 2], [2, 2]],
         [2, 2],
         1,
         opset=13,
     )
     # Split evenly (unstack)
-    verify_split([1, 2, 3], [[1], [2], [3]], False, 0, False)
+    verify_split(3, [[1], [1], [1]], False, 0, False)
     # Split a single value to a single value
-    verify_split([1], [[1]], [1], pass_split=True)
+    verify_split(1, [[1]], [1], pass_split=True)
     # Test that the default case modifies nothing when split list has length one
-    verify_split([[1.0, 2.0]], [[1.0, 2.0]], [2], 1)
-    verify_split([[1.0, 2.0]], [[1.0, 2.0]], [1], 0)
+    verify_split((1, 2), [[2]], [2], 1)
+    verify_split((1, 2), [[2]], [1], 0)
 
 
 @pytest.mark.skip
