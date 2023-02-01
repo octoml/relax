@@ -83,6 +83,9 @@ def convert_to_expr(value: Any) -> Expr:
        which can be either `relax.StringImm` or `relax.PrimValue`.
     2. We regard empty tuple/list as `relax.Tuple` instead of `relax.ShapeExpr`
     """
+    if isinstance(value, int):
+        return PrimValue(tir.IntImm("int64", value))
+
     tvm_value = convert_to_object(value)
     # Case 1
     if isinstance(tvm_value, Expr):  # type: ignore
@@ -246,9 +249,9 @@ class _ArgsConverter:
 
         for param in sig.parameters.values():
             anno = param.annotation
-            if anno is Expr or anno is Optional[Expr]:
+            if anno in (Expr, Optional[Expr]):
                 args_to_expr.append(param.name)
-            elif anno is List[Expr] or anno is Optional[List[Expr]]:
+            if anno in (List[Expr], Optional[List[Expr]]):
                 args_to_list_expr.append(param.name)
 
         return _ArgsConverter.convert(args_to_expr, args_to_list_expr)(func)

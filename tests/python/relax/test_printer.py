@@ -208,7 +208,7 @@ def test_call_packed():
 def test_relax_base_op():
     @R.function
     def foo(x: R.Tensor((2, 4), dtype="float32")):
-        gv = R.call_builtin("test_intrin", [x], sinfo_args=R.Object)
+        gv = R.call_builtin_with_ctx("test_intrin", [x], sinfo_args=R.Object)
         return gv
 
     check_roundtrip(foo)
@@ -591,6 +591,21 @@ def test_seq_expr_pretty_print():
 def test_extern_func_pretty_print():
     extern_func = relax.ExternFunc("my_func")
     assert extern_func.__str__() == '"my_func"'
+
+
+def test_primvalue_pretty_print():
+    int_prim_value = relax.PrimValue(1)
+    assert int_prim_value.__str__() == "R.prim_value(1)"
+
+
+def test_stringimm_pretty_print():
+    strimm = relax.StringImm("test")
+    assert strimm.__str__() == 'R.str("test")'
+
+
+def test_dtypeimm_pretty_print():
+    dtypeimm = relax.DataTypeImm("float32")
+    assert dtypeimm.__str__() == 'R.dtype("float32")'
 
 
 if __name__ == "__main__":
