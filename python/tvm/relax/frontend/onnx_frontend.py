@@ -553,6 +553,46 @@ class Sub(OnnxOpConverter):
     def _impl_v13(cls, bb, inputs, attr):
         return bb.emit_te(topi.subtract, inputs[0], inputs[1])
 
+class Split(OnnxOpConverter):
+    """Converts an onnx Split node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        splits = attr.get("split", None)
+        if splits is not None and len(splits) > 1:
+            indices = []
+            index = 0
+            for i in splits[:-1]:
+                index += i
+                indices.append(index)
+        # When splits isnt specified divide evenly over axis.
+        else:
+            indices = attr["tvm_custom"]["num_outputs"]
+        output = bb.emit_te(topi.split, inputs[0], indices, attr.get("axis", 0))
+        return output
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        splits = inputs[1]
+        splits_rank = None
+        if splits is not None:
+            splits_rank = splits.checked_type.ndim
+        if splits is not None and splits_rank > 0:
+            if isinstance(splits, relax.Constant):
+                splits = splits.data.asnumpy()
+                indices = []
+                index = 0
+                for i in splits[:-1]:
+                    index += i
+                    indices.append(index)
+            else:
+                raise ValueError("Dynamic Split not yet supported")
+        # When splits isnt specified divide evenly over axis.
+        else:
+            indices = attr["tvm_custom"]["num_outputs"]
+        output = bb.emit_te(topi.split, inputs[0], indices, axis=attr.get("axis", 0))
+        return output
+
 
 def _get_convert_map(opset):
     return {
@@ -605,7 +645,7 @@ def _get_convert_map(opset):
         "Slice": relay.frontend.onnx.Slice,
         "Attention": relay.frontend.onnx.Attention,
         "Pad": relay.frontend.onnx.Pad,
-        "Split": relay.frontend.onnx.Split,
+        "Split": Split,
         "Tile": relay.frontend.onnx.Tile,
     }
 
@@ -747,7 +787,16 @@ class GraphProto:
             op = self._convert_operator(op_name, inputs, attr, self.opset)
 
             if not isinstance(op, relax.Tuple):
-                outputs_num = 1
+                if isinstance(op.checked_type, tvm.ir.type.TupleType):
+                    # This is a var bound to a tuple. We need to unpack it and create
+                    # a new tuple.
+                    tuple_items = []
+                    for i in range(len(op.checked_type.fields)):
+                        tuple_items.append(self.bb.emit(relax.TupleGetItem(op, i)))
+                    op = relax.Tuple(tuple_items)
+                    outputs_num = len(tuple_items)
+                else:
+                    outputs_num = 1
             else:
                 outputs_num = len(op)
 
