@@ -371,7 +371,12 @@ class Shape(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.shape, inputs[0], "int64")
+        # For simplicity, create a constant tensor with the output shape.
+        input_tensor = inputs[0]
+        if hasattr(inputs[0], "struct_info"):
+            input_tensor = input_tensor.struct_info
+        input_shape = [dim.value for dim in input_tensor.shape.values]
+        return relax.const(input_shape, "int64")
 
 
 class Not(OnnxOpConverter):
@@ -550,13 +555,16 @@ class ConstantOfShape(OnnxOpConverter):
     """Converts an onnx ConstantOfShape node into an equivalent Relax expression."""
     @classmethod
     def _impl_v9(cls, bb, inputs, attr):
-        # TODO Does not currently support dynamism.
-        if not isinstance(inputs[0], relax.Constant):
-            raise ValueError("Only constant shapes are currently supported for ConstantOfShape.")
-
-        tensor_shape = inputs[0].data.numpy().tolist()
-        value = get_numpy(attr.get("value", 0)).tolist()
-        return bb.emit_te(topi.full, tensor_shape, "int64", value[0])
+        tensor_shape = inputs[0]
+        # For now assume that tensor_shape is constant
+        assert isinstance(tensor_shape, relax.Constant)
+        tensor_shape = tensor_shape.data.numpy().tolist()
+        value = get_numpy(attr.get("value", 0))
+        if isinstance(value, _np.ndarray):
+            dtype = str(value.dtype)
+        else:
+            dtype="float32"
+        return bb.emit_te(topi.full, tensor_shape, dtype, value.tolist()[0])
 
 
 class Sub(OnnxOpConverter):
