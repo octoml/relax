@@ -1465,4 +1465,4 @@ def test_tile(dynamic):
 
 
 if __name__ == "__main__":
-    test_embedlayernormalization()
+    tvm.testing.main()
