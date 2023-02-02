@@ -594,7 +594,7 @@ class Split(OnnxOpConverter):
         return output
 
 
-class Slice(OnnxOpConverter):        
+class Slice(OnnxOpConverter):
     """Converts an onnx Splice node into an equivalent Relax expression."""
 
     @classmethod
@@ -615,6 +615,39 @@ class Slice(OnnxOpConverter):
         if steps is not None:
             steps = steps.data.numpy().tolist()
         return bb.emit_te(topi.strided_slice, data, starts, ends, strides=steps, axes=axes)
+
+class Pad(OnnxOpConverter):
+    """Converts an onnx Pad node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v11(cls, bb, inputs, attr):
+        pads = inputs[1]
+        if len(inputs) == 3 and inputs[2] is not None:
+            constant_value = inputs[2].data.numpy().item()
+        else:
+            constant_value = 0.0
+
+        if isinstance(pads, relax.Constant):
+            pad_before, pad_after = _np.split(pads.data.numpy(), 2)
+            pad_before = _np.ndarray.tolist(pad_before)
+            pad_after = _np.ndarray.tolist(pad_after)
+        else:
+            raise ValueError("Dynamic pads are not supported yet.")
+
+        pad_mode = attr.get("mode", b"constant").decode("utf-8")
+        if not pad_mode in ["constant", "edge", "reflect"]:
+            raise tvm.error.OpAttributeInvalid(
+                "Value " + pad_mode + ' in attribute "mode" is invalid for operator Pad.'
+            )
+
+        if pad_mode == "constant":
+            return bb.emit_te(topi.nn.pad, inputs[0], pad_before, pad_after, constant_value)
+        elif pad_mode == "reflect":
+            return bb.emit_te(topi.nn.mirror_pad, inputs[0], pad_before, pad_after, "REFLECT")
+        else:
+            # TODO(gigiblender) Support edge mode.
+            raise NotImplementedError("Pad mode {} not implemented".format(pad_mode))
+
 
 def _get_convert_map(opset):
     return {
@@ -666,7 +699,7 @@ def _get_convert_map(opset):
         "ConstantOfShape": relay.frontend.onnx.ConstantOfShape,
         "Slice": Slice,
         "Attention": relay.frontend.onnx.Attention,
-        "Pad": relay.frontend.onnx.Pad,
+        "Pad": Pad,
         "Split": Split,
         "Tile": relay.frontend.onnx.Tile,
     }
