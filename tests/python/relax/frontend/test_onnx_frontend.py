@@ -41,7 +41,7 @@ def generate_random_inputs(
     input_values = {}
     # Iterate through model inputs and extract their shape.
     for i in model.graph.input:
-        if inputs is not None and i.name in inputs:
+        if inputs is not None and i.name in inputs and inputs[i.name] is not None:
             input_values[i.name] = inputs[i.name]
             continue
         shape = []
@@ -106,7 +106,9 @@ def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] =
 
     for (tvm_out, ort_out) in zip(tvm_output, ort_output):
         # TODO Allow configurable tolerance.
-        tvm.testing.assert_allclose(tvm_out.numpy(), ort_out, atol=1e-5)
+        # Sometimes None is used to indicate an unused output.
+        if ort_out is not None:
+            tvm.testing.assert_allclose(tvm_out.numpy(), ort_out, atol=1e-5)
 
 
 @pytest.mark.parametrize("dynamic", [True, False])
@@ -663,8 +665,8 @@ def test_layer_norm():
     check_correctness(model)
 
 
-@pytest.mark.skip
-@pytest.mark.parametrize("dynamic", [True, False])
+# TODO Enable dynamism
+@pytest.mark.parametrize("dynamic", [False])
 def test_skiplayernormalization(dynamic):
     """test_skiplayernormalization"""
 
@@ -712,9 +714,6 @@ def test_skiplayernormalization(dynamic):
         )
 
         model = helper.make_model(graph, producer_name="skiplayernormalization_test")
-        # verify_with_ort_with_inputs(
-        #     model, [input_, skip, gamma, beta, bias], [input_.shape], target=target, dev=dev
-        # )
         check_correctness(model, inputs={"input": input_, "skip": skip, "gamma": gamma, "beta": beta, "bias": bias})
 
     hidden_size = 384
@@ -731,7 +730,6 @@ def test_skiplayernormalization(dynamic):
     verify_skiplayernormalization(input_array, skip, gamma, beta, bias)
 
 
-@pytest.mark.skip
 def test_embedlayernormalization():
     """test_embedlayernormalization"""
 
@@ -1467,30 +1465,4 @@ def test_tile(dynamic):
 
 
 if __name__ == "__main__":
-    test_matmul()
-    test_concat()
-    test_add()
-    test_mul()
-    test_cast()
-    test_gather()
-    test_gemm()
-    test_equal()
-    test_not()
-    test_tanh()
-    test_sqrt()
-    test_relu()
-    test_clip()
-    test_conv()
-    test_pow()
-    test_erf()
-    test_cumsum()
-    test_squeeze()
-    test_const()
-    test_sub()
-    test_reshape()
-    test_div()
-    test_sigmoid()
-    test_softmax()
-    test_transpose()
-    test_unsqueeze()
-    # test_shape()
+    test_embedlayernormalization()
