@@ -546,6 +546,19 @@ class Constant(OnnxOpConverter):
         return value
 
 
+class ConstantOfShape(OnnxOpConverter):
+    """Converts an onnx ConstantOfShape node into an equivalent Relax expression."""
+    @classmethod
+    def _impl_v9(cls, bb, inputs, attr):
+        # TODO Does not currently support dynamism.
+        if not isinstance(inputs[0], relax.Constant):
+            raise ValueError("Only constant shapes are currently supported for ConstantOfShape.")
+
+        tensor_shape = inputs[0].data.numpy().tolist()
+        value = get_numpy(attr.get("value", 0)).tolist()
+        return bb.emit_te(topi.full, tensor_shape, "int64", value[0])
+
+
 class Sub(OnnxOpConverter):
     """Converts an onnx Sub node into an equivalent Relax expression."""
 
@@ -651,7 +664,7 @@ class Pad(OnnxOpConverter):
 
 def _get_convert_map(opset):
     return {
-        "MatMul": MatMul,
+        "MatMul": relay.frontend.onnx.MatMul,
         "Concat": Concat,
         "Add": Add,
         "Mul": Mul,
@@ -696,7 +709,7 @@ def _get_convert_map(opset):
         "ReduceL1": relay.frontend.onnx.ReduceL1,
         "ReduceL2": relay.frontend.onnx.ReduceL2,
         "Expand": relay.frontend.onnx.Expand,
-        "ConstantOfShape": relay.frontend.onnx.ConstantOfShape,
+        "ConstantOfShape": ConstantOfShape,
         "Slice": Slice,
         "Attention": relay.frontend.onnx.Attention,
         "Pad": Pad,
@@ -854,8 +867,7 @@ class GraphProto:
                     outputs_num = 1
             else:
                 outputs_num = len(op)
-
-            assert len(outputs) == outputs_num, "Number of output mismatch {} vs {} in {}.".format(
+            assert len(outputs) <= outputs_num, "Missing outputs during conversion. Expected {} but Got {} in {}.".format(
                 len(outputs), outputs_num, op_name
             )
 
