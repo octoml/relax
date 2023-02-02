@@ -371,7 +371,7 @@ class Shape(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.shape, inputs[0], inputs[1])
+        return bb.emit_te(topi.shape, inputs[0], "int64")
 
 
 class Not(OnnxOpConverter):
@@ -852,16 +852,21 @@ class GraphProto:
         relay_vars = onnx_input()
         for relax_var in inputs:
             shape_values = []
-            for shape_value in relax_var.struct_info.shape.values:
-                shape_values.append(shape_value)
-            if isinstance(relax_var, relax.Constant):
-                relay_vars.append(relay.const(relax_var.data, dtype=relax_var.checked_type.dtype))
+            # Some inputs may be None to indicate that input isnt used.
+            if relax_var is None:
+                relay_vars.append(None)
+            # Otherwise construct a new relay variable mirroring the relax one.
             else:
-                relay_vars.append(
-                    relay.var(
-                        relax_var.name_hint, shape=shape_values, dtype=relax_var.checked_type.dtype
+                for shape_value in relax_var.struct_info.shape.values:
+                    shape_values.append(shape_value)
+                if isinstance(relax_var, relax.Constant):
+                    relay_vars.append(relay.const(relax_var.data, dtype=relax_var.checked_type.dtype))
+                else:
+                    relay_vars.append(
+                        relay.var(
+                            relax_var.name_hint, shape=shape_values, dtype=relax_var.checked_type.dtype
+                        )
                     )
-                )
         return relay_vars
 
     def _relay_output_adapter(self, relax_inputs, relay_inputs, relay_output):
