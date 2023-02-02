@@ -983,7 +983,6 @@ def test_expand(dynamic):
     _test_expand("expand_smaller_target_shape_test", data, shape, ref_data)
 
 
-@pytest.mark.skip
 def test_constantofshape():
     """test_constantofshape"""
 
@@ -1003,6 +1002,7 @@ def test_constantofshape():
             [fill_node],
             "fill_test",
             inputs,
+            initializer=[helper.make_tensor("input", TensorProto.INT64, [len(input_dim)], np.asarray(input_dim).astype("int64"))],
             outputs=[
                 helper.make_tensor_value_info(
                     "output", mapping.NP_TYPE_TO_TENSOR_TYPE[np.dtype(dtype)], input_dim
@@ -1071,7 +1071,7 @@ def test_slice():
     verify_slice([20, 10, 5], [19, 3, 2], starts=[20, 10, 4], ends=[0, 0, 1], steps=[-1, -3, -2], axes=[0, 1, 2])
 
 
-@pytest.mark.skip
+# TODO Enable dynamism
 @pytest.mark.parametrize("dynamic", [True, False])
 def test_attention(dynamic):
     """test_attention"""
