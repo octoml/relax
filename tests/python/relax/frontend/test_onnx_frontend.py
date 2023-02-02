@@ -1019,208 +1019,56 @@ def test_constantofshape():
     verify_constantofshape((1, 2, 3), -1, "float32")
 
 
-@pytest.mark.skip
 def test_slice():
-    """test_slice"""
+    def verify_slice(data_shape, output_shape, starts, ends, axes=None, steps=None):
+        if isinstance(starts, list):
+            starts = np.array(starts, "int64")
+        if isinstance(ends, list):
+            ends = np.array(ends, "int64")
+        if isinstance(axes, list):
+            axes = np.array(axes, "int64")
+        if isinstance(steps, list):
+            steps = np.array(steps, "int64")
 
-    def _test_slice_iteration_v1(indata, outdata, starts, ends, axes=None):
-        if axes:
-            y = helper.make_node("Slice", ["in"], ["out"], axes=axes, starts=starts, ends=ends)
-        else:
-            y = helper.make_node("Slice", ["in"], ["out"], starts=starts, ends=ends)
+        
+        slice_inputs=["x", "starts", "ends"]
+        initializer=[
+            helper.make_tensor("starts", TensorProto.INT64, starts.shape, starts),
+            helper.make_tensor("ends", TensorProto.INT64, ends.shape, ends),
+        ]
 
-        graph = helper.make_graph(
-            [y],
-            "slice_test",
-            inputs=[helper.make_tensor_value_info("in", TensorProto.FLOAT, list(indata.shape))],
-            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, list(outdata.shape))],
+        if axes is not None:
+            initializer.append(helper.make_tensor("axes", TensorProto.INT64, axes.shape, axes))
+            slice_inputs.append("axes")
+        if steps is not None:
+            initializer.append(helper.make_tensor("steps", TensorProto.INT64, steps.shape, steps))
+            slice_inputs.append("steps")
+
+        slice_node = helper.make_node(
+            "Slice",
+            inputs=slice_inputs,
+            outputs=["y"]
         )
 
-        model = helper.make_model(graph, producer_name="slice_test")
-        check_correctness(model, inputs={"in": indata}, opset=1)
-        # verify_with_ort_with_inputs(
-        #     model, [indata], [outdata.shape], opset=1, target=target, dev=dev
-        # )
-
-    def _test_slice_iteration_v10(indata, outdata, **attrs):
-        starts = attrs["starts"]
-        ends = attrs["ends"]
-        axes = None if "axes" not in attrs else attrs["axes"]
-        steps = None if "steps" not in attrs else attrs["steps"]
-        starts = np.asarray(starts)
-        ends = np.asarray(ends)
-        inputs = [
-            helper.make_tensor_value_info("data", TensorProto.FLOAT, list(indata.shape)),
-            helper.make_tensor_value_info("starts", TensorProto.INT64, list(starts.shape)),
-            helper.make_tensor_value_info("ends", TensorProto.INT64, list(ends.shape)),
-        ]
-        initializer = [
-            helper.make_tensor("starts", TensorProto.INT64, list(starts.shape), starts),
-            helper.make_tensor("ends", TensorProto.INT64, list(ends.shape), ends),
-        ]
-        nodes = []
-
-        if "add_noop_to_input_attrs" in attrs:
-
-            def add_noop_to_input_attr(attr_name, attr):
-                output_name = attr_name + "_output"
-
-                ref_shape = list(np.array(attr).shape)
-                ref_shape.insert(0, 1)
-                ref_shape = tuple(ref_shape)
-                ref_array = np.array(ref_shape)
-                ref_node = onnx.helper.make_node(
-                    "Constant",
-                    inputs=[],
-                    outputs=["ref_in_" + attr_name],
-                    value=onnx.helper.make_tensor(
-                        name="const_tensor__1_" + attr_name,
-                        data_type=onnx.TensorProto.INT64,
-                        dims=ref_array.shape,
-                        vals=ref_array.flatten().astype(int),
-                    ),
-                )
-                in_shape = np.array(attr).shape
-                in_array = np.array(in_shape)
-                ref_node2 = onnx.helper.make_node(
-                    "Constant",
-                    inputs=[],
-                    outputs=["input_shape_" + attr_name],
-                    value=onnx.helper.make_tensor(
-                        name="const_tensor__2_" + attr_name,
-                        data_type=onnx.TensorProto.INT64,
-                        dims=in_array.shape,
-                        vals=in_array.flatten().astype(int),
-                    ),
-                )
-
-                reshape1_node = helper.make_node(
-                    "Reshape", [attr_name, "ref_in_" + attr_name], ["reshape_" + attr_name]
-                )
-                reshape2_node = helper.make_node(
-                    "Reshape", ["reshape_" + attr_name, "input_shape_" + attr_name], [output_name]
-                )
-                return [ref_node, ref_node2, reshape1_node, reshape2_node]
-
-        slice_inputs = []
-        for attr_name in ["starts", "ends", "axes", "steps"]:
-            if attr_name not in attrs:
-                continue
-            if "add_noop_to_input_attrs" in attrs and attr_name in attrs["add_noop_to_input_attrs"]:
-                nodes.extend(add_noop_to_input_attr(attr_name, attrs[attr_name]))
-                slice_inputs.append(attr_name + "_output")
-            else:
-                slice_inputs.append(attr_name)
-
-        if axes:
-            axes = np.asarray(axes)
-            inputs.append(
-                helper.make_tensor_value_info("axes", TensorProto.INT64, list(axes.shape))
-            )
-            initializer.append(
-                helper.make_tensor("axes", TensorProto.INT64, list(axes.shape), axes)
-            )
-
-        if steps:
-            assert axes is not None and len(axes) == len(steps)
-            steps = np.asarray(steps)
-            inputs.append(
-                helper.make_tensor_value_info("steps", TensorProto.INT64, list(axes.shape))
-            )
-            initializer.append(
-                helper.make_tensor("steps", TensorProto.INT64, list(steps.shape), steps)
-            )
-
-        y = helper.make_node("Slice", ["data", *slice_inputs], ["out"])
-
-        nodes.append(y)
         graph = helper.make_graph(
-            nodes,
+            [slice_node],
             "slice_test",
-            inputs=inputs,
-            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, list(outdata.shape))],
+            inputs=[
+                helper.make_tensor_value_info("x", TensorProto.FLOAT, data_shape),
+            ],
+            outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, output_shape)],
             initializer=initializer,
         )
+
         model = helper.make_model(graph, producer_name="slice_test")
-        check_correctness(model, inputs={"data": indata}, opset=10)
-        # verify_with_ort_with_inputs(
-        #     model, [indata], opset=10, freeze_params=True, use_vm=True, target=target, dev=dev
-        # )
+        check_correctness(model)
 
-    x = np.random.randn(20, 10, 5).astype(np.float32)
-    _test_slice_iteration_v1(x, x[0:3, 0:10], starts=(0, 0), ends=(3, 10), axes=(0, 1))
-    _test_slice_iteration_v1(x, x[0:3, 0:10], starts=(0, 0), ends=(10, 3), axes=(1, 0))
-    _test_slice_iteration_v1(x, x[:, :, 3:4], starts=(0, 0, 3), ends=(20, 10, 4))
-    _test_slice_iteration_v1(x, x[:, 1:1000], starts=(1,), ends=(1000,), axes=(1,))
-    _test_slice_iteration_v1(x, x[:, 0:-1], starts=(0,), ends=(-1,), axes=(1,))
-    _test_slice_iteration_v10(x, x[0:3, 0:10], starts=(0, 0), ends=(3, 10), axes=(0, 1))
-    _test_slice_iteration_v10(x, x[0:3, 0:10], starts=(0, 0), ends=(10, 3), axes=(1, 0))
-    _test_slice_iteration_v10(x, x[:, :, 3:4], starts=(0, 0, 3), ends=(20, 10, 4))
-    _test_slice_iteration_v10(x, x[:, 1:1000], starts=(1,), ends=(1000,), axes=(1,))
-    _test_slice_iteration_v10(x, x[:, 0:-1], starts=(0,), ends=(-1,), axes=(1,))
-    _test_slice_iteration_v10(x, x[:, 0:-1], starts=(0,), ends=(-1,), axes=(-1,))
-    _test_slice_iteration_v10(
-        x,
-        x[0:3, 0:10],
-        starts=(0, 0),
-        ends=(3, 10),
-        axes=(0, 1),
-        add_noop_to_input_attrs=["starts"],
-    )
-    _test_slice_iteration_v10(
-        x, x[:, :, 3:4], starts=(0, 0, 3), ends=(20, 10, 4), add_noop_to_input_attrs=["ends"]
-    )
-    _test_slice_iteration_v10(
-        x, x[:, 1:1000], starts=(1,), ends=(1000,), axes=(1,), add_noop_to_input_attrs=["axes"]
-    )
-    _test_slice_iteration_v10(
-        x,
-        x[:, 0:-1],
-        starts=(0,),
-        ends=(-1,),
-        axes=(1,),
-        add_noop_to_input_attrs=["starts", "ends"],
-    )
-    _test_slice_iteration_v10(
-        x,
-        x[0:3, 0:10],
-        starts=(0, 0),
-        ends=(3, 10),
-        axes=(0, 1),
-        add_noop_to_input_attrs=["ends", "axes"],
-    )
-    _test_slice_iteration_v10(
-        x,
-        x[:, :, 3:4],
-        starts=(0, 0, 3),
-        ends=(20, 10, 4),
-        add_noop_to_input_attrs=["starts", "axes"],
-    )
-    _test_slice_iteration_v10(
-        x,
-        x[:, 1:1000],
-        starts=(1,),
-        ends=(1000,),
-        axes=(1,),
-        add_noop_to_input_attrs=["starts", "ends", "axes"],
-    )
-    x = np.random.randn(1, 1, 1, 128).astype(np.float32)
-    _test_slice_iteration_v10(
-        x, x, starts=(0, 0), ends=(9223372036854775807, 9223372036854775807), axes=(0, 3)
-    )
-
-    x = np.random.randn(4, 4).astype(np.float32)
-    _test_slice_iteration_v10(
-        x, x[:, 1::2], starts=(1,), ends=(9223372036854775807,), axes=(1,), steps=(2,)
-    )
-    _test_slice_iteration_v10(
-        x,
-        x[0::1, 1::2],
-        starts=(0, 1),
-        ends=(4, 4),
-        axes=(0, 1),
-        steps=(1, 2),
-    )
+    # Test with all parameters set.
+    verify_slice([20, 10, 5], [3, 10, 5], starts=[0, 0], ends=[3, 10], axes=[0, 1], steps=[1, 1])
+    # Test with default axes and steps.
+    verify_slice([20, 10, 5], [3, 10, 5], starts=[0, 0], ends=[3, 10])
+    # Test with negative steps.
+    verify_slice([20, 10, 5], [19, 3, 2], starts=[20, 10, 4], ends=[0, 0, 1], steps=[-1, -3, -2], axes=[0, 1, 2])
 
 
 @pytest.mark.skip

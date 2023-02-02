@@ -594,6 +594,28 @@ class Split(OnnxOpConverter):
         return output
 
 
+class Slice(OnnxOpConverter):        
+    """Converts an onnx Splice node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        # TODO (jwfromm) currently only supports constant parameters.
+        data = inputs[0]
+        starts = inputs[1]
+        ends = inputs[2]
+        axes = inputs[3]
+        steps = inputs[4]
+        if not all([(isinstance(param, relax.Constant) or param is None) for param in [starts, ends, axes, steps]]):
+            raise ValueError("Only constant Slice parameters are currently supported.")
+        # Convert parameters to constant lists.
+        starts = starts.data.numpy().tolist()
+        ends = ends.data.numpy().tolist()
+        if axes is not None:
+            axes = axes.data.numpy().tolist()
+        if steps is not None:
+            steps = steps.data.numpy().tolist()
+        return bb.emit_te(topi.strided_slice, data, starts, ends, strides=steps, axes=axes)
+
 def _get_convert_map(opset):
     return {
         "MatMul": MatMul,
@@ -642,7 +664,7 @@ def _get_convert_map(opset):
         "ReduceL2": relay.frontend.onnx.ReduceL2,
         "Expand": relay.frontend.onnx.Expand,
         "ConstantOfShape": relay.frontend.onnx.ConstantOfShape,
-        "Slice": relay.frontend.onnx.Slice,
+        "Slice": Slice,
         "Attention": relay.frontend.onnx.Attention,
         "Pad": relay.frontend.onnx.Pad,
         "Split": Split,
