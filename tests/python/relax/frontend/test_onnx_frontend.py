@@ -1150,20 +1150,85 @@ def test_attention(dynamic):
     verify_attention(input_array, weight, bias, mask_index, num_heads)
 
 
-@pytest.mark.skip
-def test_pad_constant_value():
+@pytest.mark.parametrize("dynamic", [True, False])
+def test_pad(dynamic):
+    """test_pad"""
+
+    if dynamic:
+        pytest.skip("Dynamic pad not supported")
+
+    def verify_pad(input_shape, pads, mode="constant", value=0.0):
+        indata = np.random.normal(size=input_shape).astype(np.float32)
+        #  numpy expect result
+        len_dim = len(pads) // 2
+        np_pads = [(pads[i], pads[i + len_dim]) for i in range(len_dim)]
+        pads = np.array(pads)
+        #  onnx graph
+        if mode in ["edge", "reflect"]:
+            outdata = np.pad(indata, pad_width=np_pads, mode=mode)
+            node = helper.make_node("Pad", inputs=["input", "pads"], outputs=["output"], mode=mode)
+            graph = helper.make_graph(
+                [node],
+                "pad_test",
+                inputs=[
+                    helper.make_tensor_value_info("input", TensorProto.FLOAT, list(indata.shape))
+                ],
+                initializer=[helper.make_tensor("pads", TensorProto.INT64, (len(pads),), pads)],
+                outputs=[
+                    helper.make_tensor_value_info("output", TensorProto.FLOAT, list(outdata.shape))
+                ],
+            )
+        else:
+            outdata = np.pad(indata, pad_width=np_pads, mode="constant", constant_values=value)
+            node = helper.make_node(
+                "Pad",
+                inputs=["input", "pads", "constant_value"],
+                outputs=["output"],
+                mode="constant",
+            )
+            graph = helper.make_graph(
+                [node],
+                "pad_test",
+                inputs=[
+                    helper.make_tensor_value_info("input", TensorProto.FLOAT, list(indata.shape))
+                ],
+                initializer=[
+                    helper.make_tensor("pads", TensorProto.INT64, (len(pads),), pads),
+                    helper.make_tensor("constant_value", TensorProto.FLOAT, (1,), [value]),
+                ],
+                outputs=[
+                    helper.make_tensor_value_info("output", TensorProto.FLOAT, list(outdata.shape))
+                ],
+            )
+        model = helper.make_model(graph, producer_name="pad_test")
+        check_correctness(model)
+
+    verify_pad((2, 2), [0, 1, 0, 0], "constant", 0.0)
+    verify_pad((2, 3), [1, 0, 0, 1], "constant", 0.0)
+    verify_pad((3, 2), [0, 0, 1, 0], "constant", 5.0)
+    verify_pad((1, 3, 4, 5), [0, 1, 1, 1, 0, 0, 1, 1], "reflect")
+
+
+@pytest.mark.parametrize("dynamic", [True, False])
+def test_pad_constant_value(dynamic):
     """test_pad_constant_value"""
+    if dynamic:
+        pytest.skip("Dynamic shape is not supported yet")
 
     def verify_pad_constant_value(constant_value):
         tensor_shape = [1, 2, 257, 126]
-        output_shape = [1, 2, 257, 128]
-        tensor_values = [np.random.uniform(size=tensor_shape).astype("float32")]
-        graph_inputs = [helper.make_tensor_value_info("input", TensorProto.FLOAT, tensor_shape)]
+        output_shape = [1, 2, 258, 128]
+        pad_values = [0, 0, 0, 2, 0, 0, 1, 0]
+        graph_inputs = [
+            helper.make_tensor_value_info("input", TensorProto.FLOAT, tensor_shape),
+        ]
+        initializer = [
+            helper.make_tensor("pads", TensorProto.INT64, dims=[len(pad_values)], vals=pad_values),
+            helper.make_tensor("constant_value", TensorProto.FLOAT, dims=[], vals=[constant_value])]
         graph_outputs = [helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)]
-        pads_values = [0, 0, 0, 2, 0, 0, 0, 0]
-        pads = helper.make_tensor("pads", TensorProto.INT64, [8], pads_values)
+
         pad_node = helper.make_node(
-            "Pad", ["input", "pads", constant_value], ["output"], mode="constant"
+            "Pad", ["input", "pads", "constant_value"], ["output"], mode="constant"
         )
         graph_nodes = [pad_node]
         graph = helper.make_graph(
@@ -1171,16 +1236,15 @@ def test_pad_constant_value():
             "test_pad_constant_value",
             inputs=graph_inputs,
             outputs=graph_outputs,
-            initializer=[pads],
+            initializer=initializer
         )
         model = helper.make_model(
             graph,
             producer_name="test_pad_constant_value",
         )
-        check_correctness(model, inputs={"input": tensor_values[0]})
-        # verify_with_ort_with_inputs(model, tensor_values, target=target, dev=dev)
+        check_correctness(model)
 
-    verify_pad_constant_value("")
+    verify_pad_constant_value(0)
 
 
 @pytest.mark.parametrize("fp_arith", [np.float16, np.float32])
