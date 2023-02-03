@@ -64,7 +64,9 @@ def generate_random_inputs(
     return input_values
 
 
-def check_correctness(model: ModelProto, inputs: Optional[Dict[str, np.array]] = None, opset: int = None) -> None:
+def check_correctness(
+    model: ModelProto, inputs: Optional[Dict[str, np.array]] = None, opset: int = None
+) -> None:
     """Run an onnx model in both onnxruntime and TVM through our importer
        confirm that the results match. Otherwise, an exception will be raised.
 
@@ -709,12 +711,15 @@ def test_skiplayernormalization(dynamic):
             outputs=[
                 helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape),
                 helper.make_tensor_value_info("mean", TensorProto.FLOAT, mean_shape),
-                helper.make_tensor_value_info("std_dev", TensorProto.FLOAT, std_dev_shape)
+                helper.make_tensor_value_info("std_dev", TensorProto.FLOAT, std_dev_shape),
             ],
         )
 
         model = helper.make_model(graph, producer_name="skiplayernormalization_test")
-        check_correctness(model, inputs={"input": input_, "skip": skip, "gamma": gamma, "beta": beta, "bias": bias})
+        check_correctness(
+            model,
+            inputs={"input": input_, "skip": skip, "gamma": gamma, "beta": beta, "bias": bias},
+        )
 
     hidden_size = 384
     batch_size = 4
@@ -734,13 +739,13 @@ def test_embedlayernormalization():
     """test_embedlayernormalization"""
 
     def verify_embedlayernormalization(
-            input_ids,
-            segment_ids,
-            word_embedding,
-            position_embedding,
-            segment_embedding,
-            gamma,
-            beta,
+        input_ids,
+        segment_ids,
+        word_embedding,
+        position_embedding,
+        segment_embedding,
+        gamma,
+        beta,
     ):
         node = onnx.helper.make_node(
             "EmbedLayerNormalization",
@@ -799,7 +804,7 @@ def test_embedlayernormalization():
             "position_embedding": position_embedding,
             "segment_embedding": segment_embedding,
             "gamma": gamma,
-            "beta": beta
+            "beta": beta,
         }
         check_correctness(model, inputs=inputs)
 
@@ -891,7 +896,7 @@ def test_all_reduce_funcs(func, dynamic):
             [node],
             "reduce_test",
             inputs=[helper.make_tensor_value_info("x", TensorProto.FLOAT, in_list)],
-            outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, out_list)]
+            outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, out_list)],
         )
 
         model = helper.make_model(graph, producer_name="reduce_test")
@@ -990,7 +995,14 @@ def test_constantofshape():
             [fill_node],
             "fill_test",
             inputs,
-            initializer=[helper.make_tensor("input", TensorProto.INT64, [len(input_dim)], np.asarray(input_dim).astype("int64"))],
+            initializer=[
+                helper.make_tensor(
+                    "input",
+                    TensorProto.INT64,
+                    [len(input_dim)],
+                    np.asarray(input_dim).astype("int64"),
+                )
+            ],
             outputs=[
                 helper.make_tensor_value_info(
                     "output", mapping.NP_TYPE_TO_TENSOR_TYPE[np.dtype(dtype)], input_dim
@@ -1018,9 +1030,8 @@ def test_slice():
         if isinstance(steps, list):
             steps = np.array(steps, "int64")
 
-        
-        slice_inputs=["x", "starts", "ends"]
-        initializer=[
+        slice_inputs = ["x", "starts", "ends"]
+        initializer = [
             helper.make_tensor("starts", TensorProto.INT64, starts.shape, starts),
             helper.make_tensor("ends", TensorProto.INT64, ends.shape, ends),
         ]
@@ -1032,11 +1043,7 @@ def test_slice():
             initializer.append(helper.make_tensor("steps", TensorProto.INT64, steps.shape, steps))
             slice_inputs.append("steps")
 
-        slice_node = helper.make_node(
-            "Slice",
-            inputs=slice_inputs,
-            outputs=["y"]
-        )
+        slice_node = helper.make_node("Slice", inputs=slice_inputs, outputs=["y"])
 
         graph = helper.make_graph(
             [slice_node],
@@ -1056,7 +1063,14 @@ def test_slice():
     # Test with default axes and steps.
     verify_slice([20, 10, 5], [3, 10, 5], starts=[0, 0], ends=[3, 10])
     # Test with negative steps.
-    verify_slice([20, 10, 5], [19, 3, 2], starts=[20, 10, 4], ends=[0, 0, 1], steps=[-1, -3, -2], axes=[0, 1, 2])
+    verify_slice(
+        [20, 10, 5],
+        [19, 3, 2],
+        starts=[20, 10, 4],
+        ends=[0, 0, 1],
+        steps=[-1, -3, -2],
+        axes=[0, 1, 2],
+    )
 
 
 # TODO Enable dynamism
@@ -1096,21 +1110,20 @@ def test_attention(dynamic):
                 helper.make_tensor_value_info("input", TensorProto.FLOAT, input_shape),
                 helper.make_tensor_value_info("weight", TensorProto.FLOAT, weight_shape),
                 helper.make_tensor_value_info("bias", TensorProto.FLOAT, bias_shape),
-                helper.make_tensor_value_info(
-                    "mask_index", TensorProto.INT32, mask_shape
-                ),
+                helper.make_tensor_value_info("mask_index", TensorProto.INT32, mask_shape),
             ],
             outputs=[
                 helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape),
-                helper.make_tensor_value_info(
-                    "present", TensorProto.FLOAT, present_shape
-                ),
+                helper.make_tensor_value_info("present", TensorProto.FLOAT, present_shape),
             ],
         )
 
         model = helper.make_model(graph, producer_name="attention_test")
 
-        check_correctness(model, inputs={"input": input_, "weight": weight, "bias": bias, "mask_index": mask_index})
+        check_correctness(
+            model,
+            inputs={"input": input_, "weight": weight, "bias": bias, "mask_index": mask_index},
+        )
         # "present" output should be nullptr when the "past" input isn't included,
         # but ort requires an output shape to be specified?
         # verify_with_ort_with_inputs(
@@ -1212,7 +1225,8 @@ def test_pad_constant_value(dynamic):
         ]
         initializer = [
             helper.make_tensor("pads", TensorProto.INT64, dims=[len(pad_values)], vals=pad_values),
-            helper.make_tensor("constant_value", TensorProto.FLOAT, dims=[], vals=[constant_value])]
+            helper.make_tensor("constant_value", TensorProto.FLOAT, dims=[], vals=[constant_value]),
+        ]
         graph_outputs = [helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)]
 
         pad_node = helper.make_node(
@@ -1224,7 +1238,7 @@ def test_pad_constant_value(dynamic):
             "test_pad_constant_value",
             inputs=graph_inputs,
             outputs=graph_outputs,
-            initializer=initializer
+            initializer=initializer,
         )
         model = helper.make_model(
             graph,
@@ -1285,7 +1299,9 @@ def test_split(fp_arith, dynamic):
             initializer=initializer,
             outputs=[
                 helper.make_tensor_value_info(
-                    f"output_{i}", mapping.NP_TYPE_TO_TENSOR_TYPE[indata.dtype], list(outdata_shapes[i])
+                    f"output_{i}",
+                    mapping.NP_TYPE_TO_TENSOR_TYPE[indata.dtype],
+                    list(outdata_shapes[i]),
                 )
                 for i in range(len(split_index))
             ],
@@ -1295,13 +1311,9 @@ def test_split(fp_arith, dynamic):
 
     # 1D
     verify_split(6, [[2], [2], [2]], [2, 2, 2], 0)
-    verify_split(
-        6, [[2], [2], [2]], [2, 2, 2], 0, False
-    )
+    verify_split(6, [[2], [2], [2]], [2, 2, 2], 0, False)
     verify_split(6, [[2], [1], [3]], [2, 1, 3], 0)
-    verify_split(
-        6, [[2], [1], [3]], [2, 1, 3], 0, opset=13
-    )
+    verify_split(6, [[2], [1], [3]], [2, 1, 3], 0, opset=13)
     # 2D
     verify_split(
         (4, 4),
@@ -1346,7 +1358,7 @@ def test_tile(dynamic):
             "tile_test",
             inputs=[
                 helper.make_tensor_value_info("input", TensorProto.FLOAT, indata_shape),
-                helper.make_tensor_value_info("repeats", TensorProto.INT64, repeats_shape)
+                helper.make_tensor_value_info("repeats", TensorProto.INT64, repeats_shape),
             ],
             outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, outdata_shape)],
         )
@@ -1361,7 +1373,6 @@ def test_tile(dynamic):
     repeats = np.random.randint(low=1, high=10, size=(np.ndim(x),)).astype(np.int64)
     z_array = np.tile(x, repeats)
     verify_tile_v6(x, repeats, z_array)
-
 
 
 if __name__ == "__main__":
