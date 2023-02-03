@@ -52,14 +52,14 @@ StructInfo InferStructInfoBroadcastTo(const Call& call, const BlockBuilder& ctx)
         << "broadcast_to requires the input data to be Tensor. However, the given one is "
         << call->args[0]->struct_info_->GetTypeKey());
   }
-   if (tgt_shape_sinfo == nullptr) {
+  if (tgt_shape_sinfo == nullptr) {
     ctx->ReportFatal(
         Diagnostic::Error(call)
         << "broadcast_to requires the input new shape to be Shape. However, the given one is "
         << call->args[1]->struct_info_->GetTypeKey());
   }
 
-   if (!data_sinfo->IsUnknownNdim() && !tgt_shape_sinfo->IsUnknownNdim() &&
+  if (!data_sinfo->IsUnknownNdim() && !tgt_shape_sinfo->IsUnknownNdim() &&
       tgt_shape_sinfo->ndim < data_sinfo->ndim) {
     ctx->ReportFatal(Diagnostic::Error(call)
                      << "broadcast_to expects the input shape to have the number of ndim at least"
@@ -69,12 +69,11 @@ StructInfo InferStructInfoBroadcastTo(const Call& call, const BlockBuilder& ctx)
   }
 
   // Trust the input target shape when there is no possibility to do any compile-time check.
-   if (!data_sinfo->shape.defined()) {
+  if (!data_sinfo->shape.defined()) {
     return TensorStructInfo(/*shape=*/call->args[1], data_sinfo->dtype);
   }
-   ShapeStructInfo shape_sinfo =
-   Downcast<ShapeStructInfo>(data_sinfo->shape.value()->struct_info_); if
-   (!shape_sinfo->values.defined() || !tgt_shape_sinfo->values.defined()) {
+  ShapeStructInfo shape_sinfo = Downcast<ShapeStructInfo>(data_sinfo->shape.value()->struct_info_);
+  if (!shape_sinfo->values.defined() || !tgt_shape_sinfo->values.defined()) {
     return TensorStructInfo(/*shape=*/call->args[1], data_sinfo->dtype);
   }
 
