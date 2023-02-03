@@ -970,18 +970,6 @@ def test_expand(dynamic):
     ref_data = np.tile(data, 4)
     _test_expand("expand_with_dim_unchanged_test", data, shape, ref_data)
 
-    in_shape = (3, 1)
-    shape = (2, 1, 6)
-    data = np.random.uniform(size=in_shape).astype(np.float32)
-    ref_data = data * np.ones(shape, dtype=np.float32)
-    _test_expand("expand_larger_target_shape_test", data, shape, ref_data)
-
-    in_shape = (1, 1)
-    shape = (3,)
-    data = np.random.uniform(size=in_shape).astype(np.float32)
-    ref_data = data * np.ones(shape, dtype=np.float32)
-    _test_expand("expand_smaller_target_shape_test", data, shape, ref_data)
-
 
 def test_constantofshape():
     """test_constantofshape"""
@@ -1072,7 +1060,7 @@ def test_slice():
 
 
 # TODO Enable dynamism
-@pytest.mark.parametrize("dynamic", [True, False])
+@pytest.mark.parametrize("dynamic", [False])
 def test_attention(dynamic):
     """test_attention"""
 

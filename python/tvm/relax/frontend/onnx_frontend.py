@@ -350,9 +350,9 @@ class Clip(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         results = inputs[0]
-        if len(inputs) >= 2:
+        if inputs[1] is not None:
             results = bb.emit_te(topi.maximum, results, inputs[1])
-        if len(inputs) >= 3:
+        if inputs[2] is not None:
             results = bb.emit_te(topi.minimum, results, inputs[2])
         return results
 
@@ -370,12 +370,7 @@ class Shape(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        # For simplicity, create a constant tensor with the output shape.
-        input_tensor = inputs[0]
-        if hasattr(inputs[0], "struct_info"):
-            input_tensor = input_tensor.struct_info
-        input_shape = [dim.value for dim in input_tensor.shape.values]
-        return relax.const(input_shape, "int64")
+        return bb.emit_te(topi.shape, inputs[0], "int64")
 
 
 class Not(OnnxOpConverter):
@@ -554,16 +549,23 @@ class ConstantOfShape(OnnxOpConverter):
     """Converts an onnx ConstantOfShape node into an equivalent Relax expression."""
     @classmethod
     def _impl_v9(cls, bb, inputs, attr):
-        tensor_shape = inputs[0]
-        # For now assume that tensor_shape is constant
-        assert isinstance(tensor_shape, relax.Constant)
-        tensor_shape = tensor_shape.data.numpy().tolist()
+        shape = inputs[0]
+        shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
         value = get_numpy(attr.get("value", 0))
         if isinstance(value, _np.ndarray):
             dtype = str(value.dtype)
         else:
             dtype="float32"
-        return bb.emit_te(topi.full, tensor_shape, dtype, value.tolist()[0])
+        # Create a constant for the new value.
+        const_value = relax.const(value, dtype)
+
+        # Broadcast the constant to the input shape.
+        shape_dataflow_var = bb.emit(relax.Call(relax.ExternFunc("vm.builtin.tensor_to_shape"), [shape], sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)]))
+        shape_vars = []
+        for i in range(shape_ndim):
+            shape_vars.append(tvm.tir.Var("x_%d" % i, "int64"))
+        bb.match_cast(shape_dataflow_var, R.Shape(shape_vars))
+        return bb.normalize(relax.op.broadcast_to(const_value, relax.ShapeExpr(shape_vars)))
 
 
 class Sub(OnnxOpConverter):
@@ -675,13 +677,14 @@ class Expand(OnnxOpConverter):
     def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
         shape = inputs[1]
-        data_shape = [dim.value for dim in data.struct_info.shape.values]
-        data_dtype = data.struct_info.dtype
         shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
-        shape_dtype = shape.struct_info.dtype
-        shape_var = bb.emit(relax.Call(relax.ExternFunc("vm.builtin.tensor_to_shape"), [shape]))
-        out = relax.op.broadcast_to(data, shape_var)
-        breakpoint()
+        shape_dataflow_var = bb.emit(relax.Call(relax.ExternFunc("vm.builtin.tensor_to_shape"), [shape], sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)]))
+
+        shape_vars = []
+        for i in range(shape_ndim):
+            shape_vars.append(tvm.tir.Var("x_%d" % i, "int64"))
+        bb.match_cast(shape_dataflow_var, R.Shape(shape_vars))
+        return bb.normalize(relax.op.broadcast_to(data, relax.ShapeExpr(shape_vars)))
 
 
 def _get_convert_map(opset):

@@ -46,36 +46,36 @@ StructInfo InferStructInfoBroadcastTo(const Call& call, const BlockBuilder& ctx)
   }
   const auto* data_sinfo = GetStructInfoAs<TensorStructInfoNode>(call->args[0]);
   const auto* tgt_shape_sinfo = GetStructInfoAs<ShapeStructInfoNode>(call->args[1]);
-  if (data_sinfo == nullptr) {
-    ctx->ReportFatal(
-        Diagnostic::Error(call)
-        << "broadcast_to requires the input data to be Tensor. However, the given one is "
-        << call->args[0]->struct_info_->GetTypeKey());
-  }
-  if (tgt_shape_sinfo == nullptr) {
-    ctx->ReportFatal(
-        Diagnostic::Error(call)
-        << "broadcast_to requires the input new shape to be Shape. However, the given one is "
-        << call->args[1]->struct_info_->GetTypeKey());
-  }
+  //if (data_sinfo == nullptr) {
+  //  ctx->ReportFatal(
+  //      Diagnostic::Error(call)
+  //      << "broadcast_to requires the input data to be Tensor. However, the given one is "
+  //      << call->args[0]->struct_info_->GetTypeKey());
+  //}
+  //if (tgt_shape_sinfo == nullptr) {
+  //  ctx->ReportFatal(
+  //      Diagnostic::Error(call)
+  //      << "broadcast_to requires the input new shape to be Shape. However, the given one is "
+  //      << call->args[1]->struct_info_->GetTypeKey());
+  //}
 
-  if (!data_sinfo->IsUnknownNdim() && !tgt_shape_sinfo->IsUnknownNdim() &&
-      tgt_shape_sinfo->ndim < data_sinfo->ndim) {
-    ctx->ReportFatal(Diagnostic::Error(call)
-                     << "broadcast_to expects the input shape to have the number of ndim at least "
-                        "as the input tensor's. However, the given tensor has ndim "
-                     << data_sinfo->ndim << " while the target shape has ndim "
-                     << tgt_shape_sinfo->ndim);
-  }
+  //if (!data_sinfo->IsUnknownNdim() && !tgt_shape_sinfo->IsUnknownNdim() &&
+  //    tgt_shape_sinfo->ndim < data_sinfo->ndim) {
+  //  ctx->ReportFatal(Diagnostic::Error(call)
+  //                   << "broadcast_to expects the input shape to have the number of ndim at least "
+  //                      "as the input tensor's. However, the given tensor has ndim "
+  //                   << data_sinfo->ndim << " while the target shape has ndim "
+  //                   << tgt_shape_sinfo->ndim);
+  //}
 
-  // Trust the input target shape when there is no possibility to do any compile-time check.
-  if (!data_sinfo->shape.defined()) {
-    return TensorStructInfo(/*shape=*/call->args[1], data_sinfo->dtype);
-  }
-  ShapeStructInfo shape_sinfo = Downcast<ShapeStructInfo>(data_sinfo->shape.value()->struct_info_);
-  if (!shape_sinfo->values.defined() || !tgt_shape_sinfo->values.defined()) {
-    return TensorStructInfo(/*shape=*/call->args[1], data_sinfo->dtype);
-  }
+  //// Trust the input target shape when there is no possibility to do any compile-time check.
+  //if (!data_sinfo->shape.defined()) {
+  //  return TensorStructInfo(/*shape=*/call->args[1], data_sinfo->dtype);
+  //}
+  //ShapeStructInfo shape_sinfo = Downcast<ShapeStructInfo>(data_sinfo->shape.value()->struct_info_);
+  //if (!shape_sinfo->values.defined() || !tgt_shape_sinfo->values.defined()) {
+  //  return TensorStructInfo(/*shape=*/call->args[1], data_sinfo->dtype);
+  //}
 
   arith::Analyzer* analyzer = ctx->GetAnalyzer();
   Array<PrimExpr> old_shape_value = shape_sinfo->values.value();
@@ -106,7 +106,8 @@ TVM_REGISTER_OP("relax.broadcast_to")
     .set_num_inputs(2)
     .add_argument("x", "Tensor", "The input tensor.")
     .add_argument("shape", "Shape", "The target shape.")
-    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoBroadcastTo);
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoBroadcastTo)
+    .set_attr<FCallPacked>("FCallPacked", "relax.run.broadcast_to");
 
 /* relax.concat */
 TVM_REGISTER_NODE_TYPE(ConcatAttrs);

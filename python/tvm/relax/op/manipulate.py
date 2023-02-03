@@ -17,6 +17,9 @@
 """Manipulation operators."""
 from typing import List, Optional, Tuple, Union, Callable
 
+import torch
+
+import tvm
 from tvm.ir.expr import PrimExpr
 from tvm.tir import IntImm, FloatImm, IndexMap
 
@@ -261,3 +264,19 @@ def squeeze(x: Expr, axis: Optional[Union[int, List[int]]] = None) -> Expr:
     if isinstance(axis, int):
         axis = [axis]
     return _ffi_api.squeeze(x, axis)  # type: ignore
+
+
+@tvm.register_func("relax.run.broadcast_to")
+def torch_broadcast_to(data: tvm.nd.array, shape: tvm.nd.array) -> tvm.nd.array:
+    # Convert inputs to dlpack then torch
+    data = data.to_dlpack()
+    data = torch.utils.dlpack.from_dlpack(data)
+    # Unpack shape into a list.
+    shape = [s for s in shape]
+
+    # Perform broadcast
+    output = torch.broadcast_to(data, shape).clone()
+
+    # Cast back to ndarray.
+    output = torch.utils.dlpack.to_dlpack(output)
+    return tvm.nd.from_dlpack(output)
