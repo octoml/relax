@@ -275,12 +275,13 @@ class Reshape(OnnxOpConverter):
         data = inputs[0]
         # TODO We assume new_shape is a constant, need to enable tensor input to reshape
         # for full support.
-        new_shape = inputs[1].data.numpy()
+        if not isinstance(inputs[1], relax.Constant):
+            return inputs[0]
+        new_shape = inputs[1].data.numpy().tolist()
 
         # Convert -1 dims in new_shape into positive equivalent.
         if -1 in new_shape:
-            breakpoint()
-            data_shape = [dim.value for dim in data.shape.values]
+            data_shape = [dim.value for dim in data.struct_info.shape.values]
             total_elements = _np.prod(data_shape)
             new_product = 1
             for dim in new_shape:
@@ -634,8 +635,12 @@ class Slice(OnnxOpConverter):
         ends = ends.data.numpy().tolist()
         if axes is not None:
             axes = axes.data.numpy().tolist()
+        else:
+            axes = [0]
         if steps is not None:
             steps = steps.data.numpy().tolist()
+        else:
+            steps = [1] * len(axes)
         return bb.emit_te(topi.strided_slice, data, starts, ends, strides=steps, axes=axes)
 
 class Pad(OnnxOpConverter):
@@ -696,7 +701,7 @@ def _get_convert_map(opset):
         "Cast": Cast,
         "Gather": Gather,
         "Gemm": Gemm,
-        "Reshape": relay.frontend.onnx.Reshape,
+        "Reshape": Reshape,
         "Div": Div,
         "Sigmoid": Sigmoid,
         "Softmax": Softmax,
@@ -712,7 +717,7 @@ def _get_convert_map(opset):
         "Tanh": Tanh,
         "Sqrt": Sqrt,
         "Relu": Relu,
-        "Conv": Conv,
+        "Conv": relay.frontend.onnx.Conv,
         "Pow": Pow,
         "Erf": Erf,
         "CumSum": CumSum,
@@ -740,6 +745,10 @@ def _get_convert_map(opset):
         "Pad": Pad,
         "Split": Split,
         "Tile": relay.frontend.onnx.Tile,
+        "BatchNormalization": relay.frontend.onnx.BatchNorm,
+        "GlobalAveragePool": relay.frontend.onnx.GlobalAveragePool,
+        "Flatten": relay.frontend.onnx.Flatten,
+        "MaxPool": relay.frontend.onnx.MaxPool,
     }
 
 
