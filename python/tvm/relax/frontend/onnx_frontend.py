@@ -32,6 +32,7 @@ from tvm._ffi import base as _base
 from tvm.runtime import ndarray as _nd
 from tvm.relay.expr import TupleWrapper, Var, GlobalVar
 from tvm.relay.frontend.onnx import OnnxOpConverter as RelayOnnxOpConverter
+from tvm.script import tir as T, relax as R
 
 
 def new_var(var_name, shape, dtype="float32"):
@@ -271,8 +272,6 @@ class Reshape(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        from tvm.script import relax as R
-
         data = inputs[0]
         # TODO We assume new_shape is a constant, need to enable tensor input to reshape
         # for full support.
@@ -670,6 +669,21 @@ class Pad(OnnxOpConverter):
             raise NotImplementedError("Pad mode {} not implemented".format(pad_mode))
 
 
+class Expand(OnnxOpConverter):
+    """Converts an onnx Expand node into an equivalent Relax expression."""
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        shape = inputs[1]
+        data_shape = [dim.value for dim in data.struct_info.shape.values]
+        data_dtype = data.struct_info.dtype
+        shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
+        shape_dtype = shape.struct_info.dtype
+        shape_var = bb.emit(relax.Call(relax.ExternFunc("vm.builtin.tensor_to_shape"), [shape]))
+        out = relax.op.broadcast_to(data, shape_var)
+        breakpoint()
+
+
 def _get_convert_map(opset):
     return {
         "MatMul": relay.frontend.onnx.MatMul,
@@ -716,7 +730,7 @@ def _get_convert_map(opset):
         "ReduceSumSquare": relay.frontend.onnx.ReduceSumSquare,
         "ReduceL1": relay.frontend.onnx.ReduceL1,
         "ReduceL2": relay.frontend.onnx.ReduceL2,
-        "Expand": relay.frontend.onnx.Expand,
+        "Expand": Expand,
         "ConstantOfShape": ConstantOfShape,
         "Slice": Slice,
         "Attention": relay.frontend.onnx.Attention,
