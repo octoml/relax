@@ -548,6 +548,7 @@ class Constant(OnnxOpConverter):
 
 class ConstantOfShape(OnnxOpConverter):
     """Converts an onnx ConstantOfShape node into an equivalent Relax expression."""
+
     @classmethod
     def _impl_v9(cls, bb, inputs, attr):
         shape = inputs[0]
@@ -556,12 +557,18 @@ class ConstantOfShape(OnnxOpConverter):
         if isinstance(value, _np.ndarray):
             dtype = str(value.dtype)
         else:
-            dtype="float32"
+            dtype = "float32"
         # Create a constant for the new value.
         const_value = relax.const(value, dtype)
 
         # Broadcast the constant to the input shape.
-        shape_dataflow_var = bb.emit(relax.Call(relax.ExternFunc("vm.builtin.tensor_to_shape"), [shape], sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)]))
+        shape_dataflow_var = bb.emit(
+            relax.Call(
+                relax.ExternFunc("vm.builtin.tensor_to_shape"),
+                [shape],
+                sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)],
+            )
+        )
         shape_vars = []
         for i in range(shape_ndim):
             shape_vars.append(tvm.tir.Var("x_%d" % i, "int64"))
@@ -575,6 +582,7 @@ class Sub(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         return bb.emit_te(topi.subtract, inputs[0], inputs[1])
+
 
 class Split(OnnxOpConverter):
     """Converts an onnx Split node into an equivalent Relax expression."""
@@ -628,7 +636,12 @@ class Slice(OnnxOpConverter):
         ends = inputs[2]
         axes = inputs[3]
         steps = inputs[4]
-        if not all([(isinstance(param, relax.Constant) or param is None) for param in [starts, ends, axes, steps]]):
+        if not all(
+            [
+                (isinstance(param, relax.Constant) or param is None)
+                for param in [starts, ends, axes, steps]
+            ]
+        ):
             raise ValueError("Only constant Slice parameters are currently supported.")
         # Convert parameters to constant lists.
         starts = starts.data.numpy().tolist()
@@ -642,6 +655,7 @@ class Slice(OnnxOpConverter):
         else:
             steps = [1] * len(axes)
         return bb.emit_te(topi.strided_slice, data, starts, ends, strides=steps, axes=axes)
+
 
 class Pad(OnnxOpConverter):
     """Converts an onnx Pad node into an equivalent Relax expression."""
@@ -678,12 +692,19 @@ class Pad(OnnxOpConverter):
 
 class Expand(OnnxOpConverter):
     """Converts an onnx Expand node into an equivalent Relax expression."""
+
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
         shape = inputs[1]
         shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
-        shape_dataflow_var = bb.emit(relax.Call(relax.ExternFunc("vm.builtin.tensor_to_shape"), [shape], sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)]))
+        shape_dataflow_var = bb.emit(
+            relax.Call(
+                relax.ExternFunc("vm.builtin.tensor_to_shape"),
+                [shape],
+                sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)],
+            )
+        )
 
         shape_vars = []
         for i in range(shape_ndim):
@@ -901,7 +922,9 @@ class GraphProto:
                     outputs_num = 1
             else:
                 outputs_num = len(op)
-            assert len(outputs) <= outputs_num, "Missing outputs during conversion. Expected {} but Got {} in {}.".format(
+            assert (
+                len(outputs) <= outputs_num
+            ), "Missing outputs during conversion. Expected {} but Got {} in {}.".format(
                 len(outputs), outputs_num, op_name
             )
 
@@ -961,11 +984,15 @@ class GraphProto:
                 for shape_value in relax_var.struct_info.shape.values:
                     shape_values.append(shape_value)
                 if isinstance(relax_var, relax.Constant):
-                    relay_vars.append(relay.const(relax_var.data, dtype=relax_var.checked_type.dtype))
+                    relay_vars.append(
+                        relay.const(relax_var.data, dtype=relax_var.checked_type.dtype)
+                    )
                 else:
                     relay_vars.append(
                         relay.var(
-                            relax_var.name_hint, shape=shape_values, dtype=relax_var.checked_type.dtype
+                            relax_var.name_hint,
+                            shape=shape_values,
+                            dtype=relax_var.checked_type.dtype,
                         )
                     )
         return relay_vars
