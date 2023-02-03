@@ -644,6 +644,19 @@ class Pad(OnnxOpConverter):
             raise NotImplementedError("Pad mode {} not implemented".format(pad_mode))
 
 
+class Tile(OnnxOpConverter):
+    """Converts an onnx Tile node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        reps = inputs[1]
+        if isinstance(reps, relax.Constant):
+            reps = reps.data.numpy().tolist()
+        else:
+            raise ValueError("Dynamic reps for Tile are supported yet.")
+        return bb.emit_te(topi.tile, inputs[0], reps)
+
+
 class Expand(OnnxOpConverter):
     """Converts an onnx Expand node into an equivalent Relax expression."""
 
@@ -719,7 +732,7 @@ def _get_convert_map(opset):
         "Attention": relay.frontend.onnx.Attention,
         "Pad": Pad,
         "Split": Split,
-        "Tile": relay.frontend.onnx.Tile,
+        "Tile": Tile,
         "BatchNormalization": relay.frontend.onnx.BatchNorm,
         "GlobalAveragePool": relay.frontend.onnx.GlobalAveragePool,
         "Flatten": relay.frontend.onnx.Flatten,

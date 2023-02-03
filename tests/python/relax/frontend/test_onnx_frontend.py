@@ -1337,42 +1337,41 @@ def test_split(fp_arith, dynamic):
     verify_split((1, 2), [[2]], [1], 0)
 
 
-@pytest.mark.skip
 @pytest.mark.parametrize("dynamic", [True, False])
 def test_tile(dynamic):
     """test_tile"""
 
-    def verify_tile_v6(indata, repeats, outdata):
+    def verify_tile(in_shape, repeats, out_shape):
         node = helper.make_node("Tile", inputs=["input", "repeats"], outputs=["out"])
 
-        indata_shape = list(indata.shape)
-        repeats_shape = list(repeats.shape)
-        outdata_shape = list(outdata.shape)
         if dynamic:
-            indata_shape = ["?" for _ in range(len(indata_shape))]
-            repeats_shape = ["?" for _ in range(len(repeats_shape))]
-            outdata_shape = ["?" for _ in range(len(outdata_shape))]
+            indata = np.random.normal(size=in_shape).astype(np.float32)
+            in_shape = ["?" for _ in range(len(in_shape))]
+            out_shape = ["?" for _ in range(len(out_shape))]
 
         graph = helper.make_graph(
             [node],
             "tile_test",
             inputs=[
-                helper.make_tensor_value_info("input", TensorProto.FLOAT, indata_shape),
-                helper.make_tensor_value_info("repeats", TensorProto.INT64, repeats_shape),
+                helper.make_tensor_value_info("input", TensorProto.FLOAT, in_shape),
             ],
-            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, outdata_shape)],
+            initializer=[
+                helper.make_tensor("repeats", TensorProto.INT64, list(repeats.shape), repeats)
+            ],
+            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, out_shape)],
         )
 
         model = helper.make_model(graph, producer_name="tile_test")
-        check_correctness(model, inputs={"input": indata, "repeats": repeats}, opset=6)
-        # verify_with_ort_with_inputs(
-        #     model, [indata, repeats], use_vm=True, opset=6, target=target, dev=dev
-        # )
+
+        if dynamic:
+            check_correctness(model, {"input": indata})
+        else:
+            check_correctness(model)
 
     x = np.random.rand(2, 3, 4, 5).astype(np.float32)
     repeats = np.random.randint(low=1, high=10, size=(np.ndim(x),)).astype(np.int64)
     z_array = np.tile(x, repeats)
-    verify_tile_v6(x, repeats, z_array)
+    verify_tile(x.shape, repeats, z_array.shape)
 
 
 if __name__ == "__main__":
