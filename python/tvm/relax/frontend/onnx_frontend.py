@@ -34,6 +34,17 @@ from tvm.relay.expr import TupleWrapper, Var, GlobalVar
 from tvm.relay.frontend.onnx import OnnxOpConverter as RelayOnnxOpConverter
 
 
+def print_partial_graph(bb, var):    # A debugging helper function that prints
+    # Start by getting list of input vars.
+    gp = GraphProto.current
+    param_list = [v for _, v in gp._inputs.items()]
+    output_var = bb.emit_output(var)
+    bb.emit_func_output(output_var, params=param_list)
+    result = bb.get()
+    print(result)
+    return result
+
+
 def new_var(var_name, shape, dtype="float32"):
     return testing.nn.Parameter(shape=shape, dtype=dtype, name=var_name)
 
@@ -670,6 +681,15 @@ class Pad(OnnxOpConverter):
             raise NotImplementedError("Pad mode {} not implemented".format(pad_mode))
 
 
+class Expand(OnnxOpConverter):
+    """Converts an onnx Expand node into an equivalent Relax expression."""            
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        output = bb.normalize(relax.op.broadcast_to(inputs[0], inputs[1]))
+        breakpoint()
+        return output
+
+
 def _get_convert_map(opset):
     return {
         "MatMul": relay.frontend.onnx.MatMul,
@@ -716,7 +736,7 @@ def _get_convert_map(opset):
         "ReduceSumSquare": relay.frontend.onnx.ReduceSumSquare,
         "ReduceL1": relay.frontend.onnx.ReduceL1,
         "ReduceL2": relay.frontend.onnx.ReduceL2,
-        "Expand": relay.frontend.onnx.Expand,
+        "Expand": Expand,
         "ConstantOfShape": ConstantOfShape,
         "Slice": Slice,
         "Attention": relay.frontend.onnx.Attention,
