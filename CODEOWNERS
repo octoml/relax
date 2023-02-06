@@ -1,0 +1,4 @@
+# Establish doc review assignments for https://github.com/orgs/octoml/teams/unity-docs
+/python/ @octoml/unity-docs
+/src/ @octoml/unity-docs
+/tests/ @octoml/unity-docs
