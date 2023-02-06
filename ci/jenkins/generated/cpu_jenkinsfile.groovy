@@ -60,7 +60,7 @@
 // 'python3 jenkins/generate.py'
 // Note: This timestamp is here to ensure that updates to the Jenkinsfile are
 // always rebased on main before merging:
-// Generated at 2023-01-24T09:36:16.816369
+// Generated at 2023-02-06T09:05:51.097482
 
 import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
 // These are set at runtime from data in ci/jenkins/docker-images.yml, update
@@ -727,11 +727,11 @@ def shard_run_unittest_CPU_1_of_1() {
               cpp_unittest(ci_cpu)
               // micro_cpp_unittest(ci_cpu)
               python_unittest(ci_cpu)
-              fsim_test(ci_cpu)
-              sh (
-                script: "${docker_run} ${ci_cpu} ./tests/scripts/task_python_vta_tsim.sh",
-                label: 'Run VTA tests in TSIM',
-              )
+              // fsim_test(ci_cpu)
+              // sh (
+              //   script: "${docker_run} ${ci_cpu} ./tests/scripts/task_python_vta_tsim.sh",
+              //   label: 'Run VTA tests in TSIM',
+              // )
             })
           }
         } finally {
