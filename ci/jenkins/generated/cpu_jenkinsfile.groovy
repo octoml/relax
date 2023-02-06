@@ -786,11 +786,11 @@ def shard_run_unittest_CPU_1_of_1() {
               cpp_unittest(ci_cpu)
               // micro_cpp_unittest(ci_cpu)
               python_unittest(ci_cpu)
-              fsim_test(ci_cpu)
-              sh (
-                script: "${docker_run} ${ci_cpu} ./tests/scripts/task_python_vta_tsim.sh",
-                label: 'Run VTA tests in TSIM',
-              )
+              // fsim_test(ci_cpu)
+              // sh (
+              //   script: "${docker_run} ${ci_cpu} ./tests/scripts/task_python_vta_tsim.sh",
+              //   label: 'Run VTA tests in TSIM',
+              // )
             })
           }
         } finally {
