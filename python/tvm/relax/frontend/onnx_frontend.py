@@ -128,7 +128,7 @@ class onnx_input(list):  # pylint: disable=invalid-name
         raise TypeError("list indices must be integers or slices, not %s" % type(item).__name__)
 
 
-# pylint: disable=invalid-name, import-self, len-as-condition, unused-argument, too-many-lines, redefined-builtin
+# pylint: disable=invalid-name, len-as-condition, unused-argument, too-many-lines, redefined-builtin
 class OnnxOpConverter(object):
     """A helper class for holding the common logic for ONNX op converters.
     Each converter maps to a single ONNX op and defines the equivalent
@@ -1316,6 +1316,14 @@ def from_onnx(
     params : dict of str to tvm.nd.NDArray
         The parameter dict to be used by relax
     """
+    # Error if the model version is below 1.1.0
+    if model.ir_version < 3:
+        raise ValueError(
+            "Model IR version {} not supported. Must be at least after 1.1.0.".format(
+                model.ir_version
+            )
+        )
+
     try:
         import onnx  # pylint: disable=import-outside-toplevel, redefined-outer-name
 
