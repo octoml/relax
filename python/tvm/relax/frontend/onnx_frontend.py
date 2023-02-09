@@ -14,12 +14,30 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-# pylint: disable=invalid-name, import-self, len-as-condition, unused-argument, too-many-lines
-# pylint: disable=import-outside-toplevel
-"""ONNX: Open Neural Network Exchange frontend for Relax."""
+"""ONNX: Open Neural Network Exchange importer for Relax.
+
+This module implemnets the required functionality to read ONNX models
+and convert them into equivalent Relax functions. The entry point that encapsulates
+this functionality is the function from_onnx.
+
+In order to extend the functionality of the importer, you can add new
+operators to the operator registry. The operator registry is a dictionary
+that maps operator names to operator converters. The registry is defined
+in the _get_converter_map function. To add a new operator, you can define
+a new class that inherits from the OnnxOpConverter class and implement
+the _impl method.
+
+By default, ONNX defines models in terms of dynamic shapes. The ONNX importer
+retains dynamic shapes upon import, and when possible, the compiler attempts to
+convert the model to use static shapes at compile time.
+If this fails, there may still be dynamic operations in the model.
+Not all TVM kernels currently support dynamic shapes, please file an issue on
+github.com/apache/tvm/issues if you hit an error with dynamic kernels.
+"""
 import math
 import warnings
-from typing import Union, Optional
+from typing import Union, List, Dict, Tuple, Any
+import onnx.onnx_ml_pb2
 
 import numpy as _np
 
@@ -28,18 +46,16 @@ from tvm import relax, topi, relay
 from tvm.target import Target
 from tvm.ir import IRModule
 from tvm.relax import testing, PyExprMutator
-from tvm._ffi import base as _base
-from tvm.runtime import ndarray as _nd
 from tvm.relay.expr import TupleWrapper, Var, GlobalVar
 from tvm.relay.frontend.onnx import OnnxOpConverter as RelayOnnxOpConverter
-from tvm.script import tir as T, relax as R
+from tvm.script import relax as R
 
 
-def new_var(var_name, shape, dtype="float32"):
+def new_var(var_name: str, shape: Tuple, dtype: str = "float32"):
     return testing.nn.Parameter(shape=shape, dtype=dtype, name=var_name)
 
 
-def get_type(elem_type):
+def get_type(elem_type: Union[str, int]) -> str:
     """Converts onnx integer datatype to numpy datatype"""
     # If a string was passed instead of a tensor type, it does not need
     # conversion and can be returned.
@@ -47,20 +63,26 @@ def get_type(elem_type):
         return elem_type
 
     try:
-        from onnx.mapping import TENSOR_TYPE_TO_NP_TYPE
-    except ImportError as e:
-        raise ImportError("Unable to import onnx which is required {}".format(e))
-
-    try:
-        from onnx import TensorProto
-    except ImportError as e:
-        raise ImportError("Unable to import TensorProto from onnx {}".format(e))
+        from onnx.mapping import TENSOR_TYPE_TO_NP_TYPE  # pylint: disable=import-outside-toplevel
+    except ImportError as exception:
+        raise ImportError("Unable to import onnx which is required {}".format(exception))
 
     return str(TENSOR_TYPE_TO_NP_TYPE[elem_type])
 
 
-def get_info(info_proto):
-    """Extract the shape from a ValueInfoProto."""
+def get_info(info_proto: onnx.onnx_ml_pb2.ValueInfoProto) -> Tuple[str, List, str, List]:
+    """Extract the shape from a ValueInfoProto.
+
+    Parameters
+    ----------
+    info_proto: onnx.onnx_ml_pb2.ValueInfoProto
+        The ValueInfoProto to extract the info from.
+
+    Returns
+    -------
+    Tuple[str, List, str, List]
+        The name, shape, type, and shape name of the ValueInfoProto.
+    """
     shape = []
     shape_name = []
     for dim in info_proto.type.tensor_type.shape.dim:
@@ -81,17 +103,17 @@ def get_info(info_proto):
     return name, shape, dtype, shape_name
 
 
-def get_numpy(tensor_proto):
+def get_numpy(tensor_proto: onnx.onnx_ml_pb2.TensorProto) -> _np.ndarray:
     """Grab data in TensorProto and convert to numpy array."""
     try:
-        from onnx.numpy_helper import to_array
-    except ImportError as e:
-        raise ImportError("Unable to import onnx which is required {}".format(e))
+        from onnx.numpy_helper import to_array  # pylint: disable=import-outside-toplevel
+    except ImportError as exception:
+        raise ImportError("Unable to import onnx which is required {}".format(exception))
     return to_array(tensor_proto)
 
 
-class onnx_input(list):
-    """A helper extension to list that returns None for out of bound indices."""
+class onnx_input(list):  # pylint: disable=invalid-name
+    """A list that returns None when out-of-bounds indices are accessed."""
 
     def __getitem__(self, item):
         if isinstance(item, slice):
@@ -106,8 +128,13 @@ class onnx_input(list):
         raise TypeError("list indices must be integers or slices, not %s" % type(item).__name__)
 
 
+# pylint: disable=invalid-name, import-self, len-as-condition, unused-argument, too-many-lines, redefined-builtin
 class OnnxOpConverter(object):
-    """A helper class for holding onnx op converters."""
+    """A helper class for holding the common logic for ONNX op converters.
+    Each converter maps to a single ONNX op and defines the equivalent
+    functionality using Relax expressions. The converter can define multiple versions
+    of the op and the version is selected based on the opset version of the model.
+    """
 
     @classmethod
     def get_converter(cls, opset):
@@ -281,6 +308,9 @@ class Reshape(OnnxOpConverter):
 
         # Convert -1 dims in new_shape into positive equivalent.
         if -1 in new_shape:
+            if new_shape.count(-1) != 1:
+                raise ValueError("Reshape with multiple -1 is not supported.")
+
             data_shape = [dim.value for dim in data.struct_info.shape.values]
             total_elements = _np.prod(data_shape)
             new_product = 1
@@ -455,7 +485,7 @@ class CumSum(OnnxOpConverter):
             axis = int(inputs[1].data.numpy())
         else:
             axis = None
-        if getattr(attr, "reverse", 0) != 0:
+        if attr.get("reverse", 0) != 0:
             data = bb.emit_te(topi.flip, data, axis=axis if axis else 0)
         data = bb.emit_te(
             topi.cumsum,
@@ -463,7 +493,7 @@ class CumSum(OnnxOpConverter):
             axis=axis,
             exclusive=attr.get("exclusive", None),
         )
-        if getattr(attr, "reverse", 0) != 0:
+        if attr.get("reverse", 0) != 0:
             data = bb.emit_te(topi.flip, data, axis=axis if axis else 0)
         return data
 
@@ -603,7 +633,7 @@ class Slice(OnnxOpConverter):
         if axes is not None:
             axes = axes.data.numpy().tolist()
         else:
-            axes = [0]
+            axes = list(range(len(starts)))
         if steps is not None:
             steps = steps.data.numpy().tolist()
         else:
@@ -833,7 +863,10 @@ class Attention(OnnxOpConverter):
         return relax.Tuple([output, present])
 
 
-def _get_convert_map(opset):
+# pylint: enable=invalid-name, import-self, len-as-condition, unused-argument, too-many-lines
+
+
+def _get_convert_map():
     return {
         "MatMul": relay.frontend.onnx.MatMul,
         "Concat": Concat,
@@ -893,20 +926,23 @@ def _get_convert_map(opset):
     }
 
 
-class GraphProto:
+class ONNXGraphImporter:
     """A helper class for handling Relax expression copying from pb2.GraphProto.
     Definition: https://github.com/onnx/onnx/blob/main/onnx/onnx.proto
-        Parameters
+
+    Parameters
     ----------
     shape : dict of str to tuple, optional
         The input shape to the graph
     dtype : str or dict of str to str
         The input types to the graph
+    target : tvm.target.Target
+        The target device of the compiled functions when using the translator.
     """
 
     current = None
 
-    def __init__(self, shape, dtype, target):
+    def __init__(self, shape: Dict[str, Tuple], dtype: Union[str, Dict[str, str]], target: Target):
         self._nodes = {}
         self._inputs = {}
         self._num_input = 0
@@ -915,16 +951,17 @@ class GraphProto:
         self._dtype = dtype
         self.opset = None
         self._target = target
-        self.bb = relax.BlockBuilder()
+        self.bb = relax.BlockBuilder()  # pylint: disable=invalid-name
 
-    def from_onnx(self, graph, opset) -> IRModule:
-        """Construct Relax expression from ONNX graph.
+    def from_onnx(
+        self, graph: onnx.onnx_ml_pb2.ModelProto, opset: int
+    ) -> Tuple[IRModule, Dict[str, tvm.nd.array]]:
+        """Construct Relax expressions from the ONNX graph.
         Onnx graph is a python protobuf object.
-        The companion parameters will be handled automatically.
-        However, the input names from onnx graph is vague, mixing inputs and
-        network weights/bias such as "1", "2"...
-        For convenience, we rename the `real` input names to "input_0",
-        "input_1"... And renaming parameters to "param_0", "param_1"...
+
+        #TODO (gigiblender): Handle model input name sanitization. This has been a problem
+        in the Relay importer in the past and we should be careful to avoid it here.
+
         Parameters
         ----------
         graph : onnx protobuf object
@@ -938,7 +975,7 @@ class GraphProto:
             A dict of name: tvm.nd.array pairs, used as pretrained weights
         """
         with self.bb.function("main"):
-            with self.bb.dataflow() as df:
+            with self.bb.dataflow() as df:  # pylint: disable=invalid-name, unused-variable
                 self.opset = opset
                 self._parse_graph_initializers(graph)
                 self._parse_graph_input(graph)
@@ -949,16 +986,13 @@ class GraphProto:
                 outputs = [self._nodes[self._parse_value_proto(i)] for i in graph.output]
                 outputs = outputs[0] if len(outputs) == 1 else relax.Tuple(outputs)
 
-                ## Maintain the order of inputs and parameters from the ONNX graph, but only include
-                ## those parameters that are needed to execute the relax graph
-                nodes = {v: k for k, v in self._nodes.items()}
                 # Create a function from our output expression and all input variables.
                 param_list = [v for k, v in self._inputs.items()]
                 output_var = self.bb.emit_output(outputs)
             self.bb.emit_func_output(output_var, params=param_list)
         return self.bb.get()
 
-    def _parse_graph_initializers(self, graph):
+    def _parse_graph_initializers(self, graph: onnx.onnx_ml_pb2.GraphProto):
         """Parse network inputs to relax, aka parameters."""
         for init_tensor in graph.initializer:
             if not init_tensor.name.strip():
@@ -966,14 +1000,13 @@ class GraphProto:
             array = self._parse_array(init_tensor)
             self._nodes[init_tensor.name] = relax.const(array)
 
-    def _parse_graph_input(self, graph):
+    def _parse_graph_input(self, graph: onnx.onnx_ml_pb2.GraphProto):
+        """Parse model inputs to Relax parameters."""
         for i in graph.input:
             # from onnx v0.2, GraphProto.input has type ValueInfoProto,
             #  and the name is 'i.name'
             i_name, i_shape, d_type, i_shape_name = get_info(i)
-            if i_name in self._nodes:
-                continue
-            else:
+            if i_name not in self._nodes:
                 self._num_input += 1
                 self._input_names.append(i_name)
                 if i_name in self._shape:
@@ -993,8 +1026,8 @@ class GraphProto:
                 self._nodes[i_name] = new_var(i_name, shape=i_shape, dtype=dtype)
             self._inputs[i_name] = self._nodes[i_name]
 
-    def _check_for_unsupported_ops(self, graph):
-        convert_map = _get_convert_map(self.opset)
+    def _check_for_unsupported_ops(self, graph: onnx.onnx_ml_pb2.GraphProto):
+        convert_map = _get_convert_map()
         unsupported_ops = set()
         for node in graph.node:
             op_name = node.op_type
@@ -1009,7 +1042,7 @@ class GraphProto:
             msg += ", ".join(unsupported_ops)
             raise tvm.error.OpNotImplemented(msg)
 
-    def _construct_nodes(self, graph):
+    def _construct_nodes(self, graph: onnx.onnx_ml_pb2.GraphProto):
         """Nodes are stored as directed acyclic graph."""
         for node in graph.node:
             op_name = node.op_type
@@ -1054,7 +1087,7 @@ class GraphProto:
                 for k, i in zip(list(outputs), range(len(outputs))):
                     self._nodes[k] = op[i]
 
-    def _parse_value_proto(self, value_proto):
+    def _parse_value_proto(self, value_proto: onnx.onnx_ml_pb2.GraphProto):
         """Parse ValueProto or raw str."""
         try:
             name = value_proto.name
@@ -1062,11 +1095,11 @@ class GraphProto:
             name = value_proto
         return name
 
-    def _parse_array(self, tensor_proto):
+    def _parse_array(self, tensor_proto: onnx.onnx_ml_pb2.TensorProto) -> tvm.nd.array:
         np_array = get_numpy(tensor_proto).reshape(tuple(tensor_proto.dims))
         return tvm.nd.array(np_array)
 
-    def _parse_attr(self, attr_proto):
+    def _parse_attr(self, attr_proto: onnx.onnx_ml_pb2.AttributeProto) -> Dict[str, Any]:
         """Convert a list of AttributeProto to a dict, with names as keys."""
         attrs = {}
         for a in attr_proto:
@@ -1091,7 +1124,7 @@ class GraphProto:
                 raise ValueError("Cannot parse attribute: \n{}\n.".format(a))
         return attrs
 
-    def _relay_input_adapter(self, inputs):
+    def _relay_input_adapter(self, inputs: List[relax.Var]) -> List[relay.Var]:
         """Creates equivalent input Relay vars from the input Relax vars"""
         relay_vars = onnx_input()
         for relax_var in inputs:
@@ -1117,7 +1150,12 @@ class GraphProto:
                     )
         return relay_vars
 
-    def _relay_output_adapter(self, relax_inputs, relay_inputs, relay_output):
+    def _relay_output_adapter(
+        self,
+        relax_inputs: List[Union[relax.Var, relax.Constant]],
+        relay_inputs: List[Union[relay.Var, relay.Constant]],
+        relay_output: relay.Expr,
+    ) -> relax.Expr:
         """Given the output of a relay op from the Onnx relay frontend,
         calls into the relay to relax translator to obtain the equivalent Relax.
         Then unpacks the IRModule obtained and adds the TIR funcs and the
@@ -1153,9 +1191,9 @@ class GraphProto:
         # This dict is used by the Mapper mutator to replace the globar vars
         # in the relax_mod with global_vars registered with the in-use block builder.
         global_var_dict = {}
-        for gv, func in relax_mod.functions.items():
-            if gv.name_hint != "main":
-                global_var_dict[gv] = self.bb.add_func(func, gv.name_hint)
+        for global_var, func in relax_mod.functions.items():
+            if global_var.name_hint != "main":
+                global_var_dict[global_var] = self.bb.add_func(func, global_var.name_hint)
 
         # This dict is used by the Mapper mutator to replace the relax vars
         # with the inputs.
@@ -1166,16 +1204,27 @@ class GraphProto:
 
         @relax.expr_functor.mutator
         class Mapper(PyExprMutator):
-            def visit_var_(self, var_node: Var):
+            """Mutator to replace the global vars and relax vars in the relax_mod
+            with the global vars registered with the in-use block builder and the
+            relax vars with the inputs.
+            """
+
+            def visit_span(self, span: relax.Span):
+                return span
+
+            def visit_var_(self, var_node: Var):  # pylint: disable=arguments-differ
                 if var_node.name_hint in relax_input_dict:
                     return relax_input_dict[var_node.name_hint]
                 return var_node
 
-            def visit_global_var_(self, gv_node: GlobalVar):
+            def visit_global_var_(self, gv_node: GlobalVar):  # pylint: disable=arguments-differ
                 if gv_node in global_var_dict:
                     return global_var_dict[gv_node]
                 return gv_node
 
+        assert (
+            len([f for f in relax_mod.functions.values() if isinstance(f, relax.Function)]) == 1
+        ), "Expected only one Relax function in the module."
         updated_func = Mapper().visit_expr(relax_mod["main"])
 
         var_bindings = updated_func.body.blocks[0].bindings
@@ -1191,10 +1240,13 @@ class GraphProto:
 
         return final_binding.value
 
-    def _convert_operator(self, op_name, inputs, attrs, opset):
+    def _convert_operator(
+        self, op_name: str, inputs: List[relax.Function], attrs: Dict, opset: int
+    ) -> relax.Function:
         """Convert ONNX operator into a Relax operator.
         The converter must specify conversions explicitly for incompatible name, and
         apply handlers to operator attributes.
+
         Parameters
         ----------
         op_name : str
@@ -1210,14 +1262,14 @@ class GraphProto:
         sym : tvm.relax.function.Function
             Converted relax function
         """
-        convert_map = _get_convert_map(opset)
+        convert_map = _get_convert_map()
         if op_name in convert_map:
             convert_class = convert_map[op_name]
             op_function = convert_class.get_converter(opset)
             # If the op_function is a subclass of Relay OnnxOpConverter then it is a relay op.
             if issubclass(convert_class, RelayOnnxOpConverter):
                 relay_inputs = self._relay_input_adapter(inputs)
-                # The op_function might change the inputs to the relay op. Use a copy of the inputs.
+                # The op_function might change relay_inputs array. Use a copy of the inputs.
                 relay_inputs_copy = onnx_input()
                 for relay_input in relay_inputs:
                     relay_inputs_copy.append(relay_input)
@@ -1231,20 +1283,18 @@ class GraphProto:
         return sym
 
 
-def from_onnx(model, shape=None, dtype="float32", opset=None, target: Union[str, Target] = "llvm"):
+def from_onnx(
+    model: onnx.onnx_ml_pb2.GraphProto,
+    shape: Dict[str, Tuple] = None,
+    dtype: str = "float32",
+    opset: int = None,
+    target: Union[str, Target] = "llvm",
+) -> Tuple[IRModule, Dict]:
     """Convert a ONNX model into an equivalent Relax Function.
     ONNX graphs are represented as Python Protobuf objects.
-    The companion parameters will be handled automatically.
-    However, the input names from onnx graph is vague, mixing inputs and
-    network weights/bias such as "1", "2"...
-    For convenience, we rename the `real` input names to "input_0",
-    "input_1"... And renaming parameters to "param_0", "param_1"...
-    By default, ONNX defines models in terms of dynamic shapes. The ONNX importer
-    retains that dynamism upon import, and the compiler attempts to convert the
-    model into a static shapes at compile time. If this fails, there may still
-    be dynamic operations in the model. Not all TVM kernels currently support
-    dynamic shapes, please file an issue on discuss.tvm.apache.org
-    if you hit an error with dynamic kernels.
+
+    The current implementation assumes that the input model is after ONNX v1.1.0.
+
     Parameters
     ----------
     model : protobuf object
@@ -1267,21 +1317,21 @@ def from_onnx(model, shape=None, dtype="float32", opset=None, target: Union[str,
         The parameter dict to be used by relax
     """
     try:
-        import onnx
+        import onnx  # pylint: disable=import-outside-toplevel, redefined-outer-name
 
         if hasattr(onnx.checker, "check_model"):
             # try use onnx's own model checker before converting any model
             try:
                 onnx.checker.check_model(model)
-            except Exception as e:  # pylint: disable=c-extension-no-member, broad-except
+            except Exception as exception:  # pylint: disable=c-extension-no-member, broad-except
                 # the checker is a bit violent about errors, so simply print warnings here
-                warnings.warn(str(e))
+                warnings.warn(str(exception))
     except ImportError:
-        pass
+        raise ImportError("Unable to import onnx which is required {}".format(e))
 
     if isinstance(target, str):
         target = Target(target)
-    g = GraphProto(shape, dtype, target)
+    g = ONNXGraphImporter(shape, dtype, target)
     graph = model.graph
 
     try:

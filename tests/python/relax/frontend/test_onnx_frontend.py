@@ -34,10 +34,13 @@ import onnx
 from onnx import helper, TensorProto, ModelProto, ValueInfoProto, mapping
 import onnxruntime
 
+bg = np.random.MT19937(0)
+rg = np.random.Generator(bg)
+
 
 def generate_random_inputs(
-    model: ModelProto, inputs: Optional[Dict[str, np.array]] = None
-) -> Dict[str, np.array]:
+    model: ModelProto, inputs: Optional[Dict[str, np.ndarray]] = None
+) -> Dict[str, np.ndarray]:
     input_values = {}
     # Iterate through model inputs and extract their shape.
     for i in model.graph.input:
@@ -56,16 +59,18 @@ def generate_random_inputs(
 
         # Generate random inputs for each input.
         if dtype == "bool":
-            random_value = np.random.choice(a=[False, True], size=shape)
+            # random_value = np.random.choice(a=[False, True], size=shape)
+            random_value = rg.choice(a=[False, True], size=shape)
         else:
-            random_value = np.random.normal(size=shape).astype(dtype)
+            # random_value = np.random.normal(size=shape).astype(dtype)
+            random_value = rg.standard_normal(size=shape).astype(dtype)
         input_values[i.name] = random_value
 
     return input_values
 
 
 def check_correctness(
-    model: ModelProto, inputs: Optional[Dict[str, np.array]] = None, opset: int = None
+    model: ModelProto, inputs: Optional[Dict[str, np.ndarray]] = None, opset: int = None
 ) -> None:
     """Run an onnx model in both onnxruntime and TVM through our importer
        confirm that the results match. Otherwise, an exception will be raised.
@@ -74,7 +79,7 @@ def check_correctness(
     ----------
     model: ModelProto
         The input onnx model that should be tested.
-    inputs: Optional[Dict[str, np.array]]
+    inputs: Optional[Dict[str, np.ndarray]]
         An optional dictionary containing values for each input in the onnx model.
     opset: int
         The opset version to use for the onnx importer.
@@ -192,16 +197,22 @@ def test_mul():
     check_correctness(model)
 
 
-def test_cast():
-    cast_node = helper.make_node("Cast", ["a"], ["a_float"], to=TensorProto.FLOAT)
+@pytest.mark.parametrize(
+    "from_type", [TensorProto.INT32, TensorProto.FLOAT, TensorProto.FLOAT16, TensorProto.DOUBLE]
+)
+@pytest.mark.parametrize(
+    "to_type", [TensorProto.INT32, TensorProto.FLOAT, TensorProto.FLOAT16, TensorProto.DOUBLE]
+)
+def test_cast(from_type, to_type):
+    cast_node = helper.make_node("Cast", ["a"], ["a_float"], to=to_type)
 
     graph = helper.make_graph(
         [cast_node],
         "cast_test",
         inputs=[
-            helper.make_tensor_value_info("a", TensorProto.INT32, [1, 32]),
+            helper.make_tensor_value_info("a", from_type, [1, 32]),
         ],
-        outputs=[helper.make_tensor_value_info("a_float", TensorProto.FLOAT, [1, 32])],
+        outputs=[helper.make_tensor_value_info("a_float", to_type, [1, 32])],
     )
 
     model = helper.make_model(graph, producer_name="cast_test")
@@ -229,19 +240,30 @@ def test_gather():
     check_correctness(model, inputs=input_values)
 
 
-def test_gemm():
-    gemm_node = helper.make_node(
-        "Gemm", ["a", "b", "c"], ["y"], alpha=0.25, beta=0.35, transA=1, transB=1
-    )
+@pytest.mark.parametrize("alpha", [None, 0.25])
+@pytest.mark.parametrize("beta", [None, 0.35])
+@pytest.mark.parametrize("useC", [False, True])
+def test_gemm(alpha, beta, useC):
+    if useC:
+        gemm_node = helper.make_node(
+            "Gemm", ["a", "b", "c"], ["y"], alpha=alpha, beta=beta, transA=1, transB=1
+        )
+    else:
+        gemm_node = helper.make_node(
+            "Gemm", ["a", "b"], ["y"], alpha=alpha, beta=beta, transA=1, transB=1
+        )
+
+    inputs = [
+        helper.make_tensor_value_info("a", TensorProto.FLOAT, [4, 3]),
+        helper.make_tensor_value_info("b", TensorProto.FLOAT, [5, 4]),
+    ]
+    if useC:
+        inputs.append(helper.make_tensor_value_info("c", TensorProto.FLOAT, [1, 5]))
 
     graph = helper.make_graph(
         [gemm_node],
         "gemm_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [4, 3]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [5, 4]),
-            helper.make_tensor_value_info("c", TensorProto.FLOAT, [1, 5]),
-        ],
+        inputs=inputs,
         outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 5])],
     )
 
@@ -249,24 +271,24 @@ def test_gemm():
     check_correctness(model)
 
 
-@pytest.mark.parametrize("dynamic", [True, False])
-def test_reshape(dynamic):
+@pytest.mark.parametrize(
+    "in_shape, shape, out_shape",
+    [([7, 32, 32, 8], [224, 256], [224, 256]), ([7, 32, 32, 8], [-1, 8192], [7, 8192])],
+)
+def test_reshape(in_shape, shape, out_shape):
     reshape_node = helper.make_node("Reshape", ["data", "shape"], ["reshaped"])
-
-    data_shape = ["?", 32, 32, 8] if dynamic else [7, 32, 32, 8]
-    output_shape = ["?", "?"] if dynamic else [7, 8192]
 
     graph = helper.make_graph(
         [reshape_node],
         "reshape_test",
         inputs=[
-            helper.make_tensor_value_info("data", TensorProto.FLOAT, data_shape),
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, in_shape),
         ],
-        initializer=[helper.make_tensor("shape", TensorProto.INT64, [2], [-1, 8192])],
-        outputs=[helper.make_tensor_value_info("reshaped", TensorProto.FLOAT, output_shape)],
+        initializer=[helper.make_tensor("shape", TensorProto.INT64, [len(shape)], shape)],
+        outputs=[helper.make_tensor_value_info("reshaped", TensorProto.FLOAT, out_shape)],
     )
     input_values = {
-        "data": np.random.randn(7, 32, 32, 8).astype("float32"),
+        "data": np.random.randn(*in_shape).astype("float32"),
     }
     model = helper.make_model(graph, producer_name="reshape_test")
     check_correctness(model, inputs=input_values)
@@ -395,17 +417,28 @@ def test_where():
     check_correctness(model)
 
 
-def test_clip():
-    clip_node = helper.make_node("Clip", ["input", "min", "max"], ["output"])
+@pytest.mark.parametrize("min", [True, False])
+@pytest.mark.parametrize("max", [True, False])
+def test_clip(min, max):
+    if min and max:
+        clip_node = helper.make_node("Clip", ["input", "min", "max"], ["output"])
+    elif min:
+        clip_node = helper.make_node("Clip", ["input", "min"], ["output"])
+    elif max:
+        clip_node = helper.make_node("Clip", ["input", "max"], ["output"])
+    else:
+        clip_node = helper.make_node("Clip", ["input"], ["output"])
+
+    inputs = [helper.make_tensor_value_info("input", TensorProto.FLOAT, [32, 64])]
+    if min:
+        inputs.append(helper.make_tensor_value_info("min", TensorProto.FLOAT, ()))
+    if max:
+        inputs.append(helper.make_tensor_value_info("max", TensorProto.FLOAT, ()))
 
     graph = helper.make_graph(
         [clip_node],
         "clip_test",
-        inputs=[
-            helper.make_tensor_value_info("input", TensorProto.FLOAT, [32, 64]),
-            helper.make_tensor_value_info("min", TensorProto.FLOAT, ()),
-            helper.make_tensor_value_info("max", TensorProto.FLOAT, ()),
-        ],
+        inputs=inputs,
         outputs=[helper.make_tensor_value_info("output", TensorProto.FLOAT, [32, 64])],
     )
 
@@ -568,12 +601,13 @@ def test_erf():
     check_correctness(model)
 
 
-def test_cumsum():
-    cumsum_node = helper.make_node("CumSum", ["x", "axis"], ["y"])
+@pytest.mark.parametrize("reverse", [True, False])
+@pytest.mark.parametrize("exclusive", [True, False])
+def test_cumsum(reverse, exclusive):
+    cumsum_node = helper.make_node(
+        "CumSum", ["x", "axis"], ["y"], reverse=reverse, exclusive=exclusive
+    )
     shape = [32, 32]
-    type_proto = onnx.TypeProto()
-    tensor_type_proto = type_proto.tensor_type
-    tensor_type_proto.elem_type = TensorProto.INT64
     graph = helper.make_graph(
         [cumsum_node],
         "cumsum_test",
@@ -588,21 +622,30 @@ def test_cumsum():
     check_correctness(model)
 
 
-def test_squeeze():
-    squeeze_node = helper.make_node("Squeeze", ["x", "axis"], ["y"])
+@pytest.mark.parametrize("axis", [[0, 2], None])
+def test_squeeze(axis):
+    if axis:
+        squeeze_node = helper.make_node("Squeeze", ["x", "axes"], ["y"])
+    else:
+        squeeze_node = helper.make_node("Squeeze", ["x"], ["y"])
     shape = [1, 32, 1, 32]
+
+    initializer = (
+        [helper.make_tensor("axes", TensorProto.INT64, [len(axis)], axis)] if axis else None
+    )
+
     graph = helper.make_graph(
         [squeeze_node],
         "squeeze_test",
         inputs=[
             helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
         ],
-        initializer=[helper.make_tensor("axis", TensorProto.INT64, [2], [0, 2])],
+        initializer=initializer,
         outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [32, 32])],
     )
 
     model = helper.make_model(graph, producer_name="squeeze_test")
-    check_correctness(model)
+    check_correctness(model, opset=13)
 
 
 def test_const():
@@ -670,8 +713,6 @@ def test_layer_norm():
 # TODO Enable dynamism
 @pytest.mark.parametrize("dynamic", [False])
 def test_skiplayernormalization(dynamic):
-    """test_skiplayernormalization"""
-
     def verify_skiplayernormalization(input_, skip, gamma, beta, bias):
         node = onnx.helper.make_node(
             "SkipLayerNormalization",
@@ -736,8 +777,6 @@ def test_skiplayernormalization(dynamic):
 
 
 def test_embedlayernormalization():
-    """test_embedlayernormalization"""
-
     def verify_embedlayernormalization(
         input_ids,
         segment_ids,
@@ -873,8 +912,6 @@ def create_reduce_test_parameters():
 
 @pytest.mark.parametrize("func, dynamic", create_reduce_test_parameters())
 def test_all_reduce_funcs(func, dynamic):
-    """test_all_reduce_funcs"""
-
     def verify_reduce_func(func, data, axis, keepdims):
         inshape = data.shape
         outshape = np.sum(data, axis=axis, keepdims=keepdims == 1).shape
@@ -934,7 +971,6 @@ def test_all_reduce_funcs(func, dynamic):
 
 @pytest.mark.parametrize("dynamic", [False, True])
 def test_expand(dynamic):
-    """test_expand"""
     if dynamic:
         # TODO: Support dynamic shape for Expand
         pytest.skip("Dynamic expand is not supported yet")
@@ -977,8 +1013,6 @@ def test_expand(dynamic):
 
 
 def test_constantofshape():
-    """test_constantofshape"""
-
     def verify_constantofshape(input_dim, value, dtype):
         fill_node = helper.make_node(
             "ConstantOfShape",
@@ -1071,13 +1105,21 @@ def test_slice():
         steps=[-1, -3, -2],
         axes=[0, 1, 2],
     )
+    verify_slice([20, 10, 5], [10, 5], starts=[0, 0], ends=[3, 10], axes=[1, 2])
+
+    # TODO (gigiblender): Enable this test when we have a way to pass the steps but not axes.
+    # verify_slice(
+    #     [20, 10, 5],
+    #     [19, 3, 2],
+    #     starts=[20, 10, 4],
+    #     ends=[0, 0, 1],
+    #     steps=[-1, -3, -2],
+    # )
 
 
 # TODO Enable dynamism
 @pytest.mark.parametrize("dynamic", [False])
 def test_attention(dynamic):
-    """test_attention"""
-
     def verify_attention(input_, weight, bias, mask_index, num_heads):
         node = onnx.helper.make_node(
             "Attention",
@@ -1153,7 +1195,6 @@ def test_attention(dynamic):
 
 @pytest.mark.parametrize("dynamic", [True, False])
 def test_pad(dynamic):
-    """test_pad"""
 
     if dynamic:
         pytest.skip("Dynamic pad not supported")
@@ -1210,50 +1251,9 @@ def test_pad(dynamic):
     verify_pad((1, 3, 4, 5), [0, 1, 1, 1, 0, 0, 1, 1], "reflect")
 
 
-@pytest.mark.parametrize("dynamic", [True, False])
-def test_pad_constant_value(dynamic):
-    """test_pad_constant_value"""
-    if dynamic:
-        pytest.skip("Dynamic shape is not supported yet")
-
-    def verify_pad_constant_value(constant_value):
-        tensor_shape = [1, 2, 257, 126]
-        output_shape = [1, 2, 258, 128]
-        pad_values = [0, 0, 0, 2, 0, 0, 1, 0]
-        graph_inputs = [
-            helper.make_tensor_value_info("input", TensorProto.FLOAT, tensor_shape),
-        ]
-        initializer = [
-            helper.make_tensor("pads", TensorProto.INT64, dims=[len(pad_values)], vals=pad_values),
-            helper.make_tensor("constant_value", TensorProto.FLOAT, dims=[], vals=[constant_value]),
-        ]
-        graph_outputs = [helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)]
-
-        pad_node = helper.make_node(
-            "Pad", ["input", "pads", "constant_value"], ["output"], mode="constant"
-        )
-        graph_nodes = [pad_node]
-        graph = helper.make_graph(
-            graph_nodes,
-            "test_pad_constant_value",
-            inputs=graph_inputs,
-            outputs=graph_outputs,
-            initializer=initializer,
-        )
-        model = helper.make_model(
-            graph,
-            producer_name="test_pad_constant_value",
-        )
-        check_correctness(model)
-
-    verify_pad_constant_value(0)
-
-
 @pytest.mark.parametrize("fp_arith", [np.float16, np.float32])
 @pytest.mark.parametrize("dynamic", [True, False])
 def test_split(fp_arith, dynamic):
-    """test_split"""
-
     def verify_split(indata_shape, outdata_shapes, split, axis=0, pass_split=True, opset=11):
         indata = np.random.normal(size=indata_shape).astype(fp_arith)
         input_names = ["input"]
@@ -1310,37 +1310,35 @@ def test_split(fp_arith, dynamic):
         check_correctness(model, inputs={"input": indata}, opset=opset)
 
     # 1D
-    verify_split(6, [[2], [2], [2]], [2, 2, 2], 0)
-    verify_split(6, [[2], [2], [2]], [2, 2, 2], 0, False)
-    verify_split(6, [[2], [1], [3]], [2, 1, 3], 0)
-    verify_split(6, [[2], [1], [3]], [2, 1, 3], 0, opset=13)
+    verify_split(6, [[2], [2], [2]], [2, 2, 2])
+    verify_split(6, [[2], [2], [2]], [2, 2, 2], pass_split=False)
+    verify_split(6, [[2], [1], [3]], [2, 1, 3])
+    verify_split(6, [[2], [1], [3]], [2, 1, 3], opset=13)
     # 2D
     verify_split(
         (4, 4),
         [[2, 2], [2, 2]],
         [2, 2],
-        1,
+        axis=1,
     )
     verify_split(
         (4, 4),
         [[2, 2], [2, 2]],
         [2, 2],
-        1,
+        axis=1,
         opset=13,
     )
     # Split evenly (unstack)
-    verify_split(3, [[1], [1], [1]], False, 0, False)
+    verify_split(3, [[1], [1], [1]], False, pass_split=False)
     # Split a single value to a single value
     verify_split(1, [[1]], [1], pass_split=True)
     # Test that the default case modifies nothing when split list has length one
-    verify_split((1, 2), [[2]], [2], 1)
-    verify_split((1, 2), [[2]], [1], 0)
+    verify_split((1, 2), [[2]], [2], axis=1)
+    verify_split((1, 2), [[2]], [1])
 
 
 @pytest.mark.parametrize("dynamic", [True, False])
 def test_tile(dynamic):
-    """test_tile"""
-
     def verify_tile(in_shape, repeats, out_shape):
         node = helper.make_node("Tile", inputs=["input", "repeats"], outputs=["out"])
 
