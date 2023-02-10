@@ -122,13 +122,13 @@ def test_ms_tuning_minimal():
 
     mod = InputModule
     assert isinstance(mod, IRModule)
-
+    num_tasks = len(ms.relax_integration.extract_tasks(mod, target))
     with tempfile.TemporaryDirectory() as work_dir:
         with target, transform.PassContext(trace=Trace(mod), opt_level=0):
             tuning_pass = relax.transform.MetaScheduleTuneIRMod(
                 params={},
                 work_dir=work_dir,
-                max_trials_global=4,
+                max_trials_global=4 * num_tasks,
                 max_trials_per_task=1,
                 runner=FakeRunner(),
             )
@@ -144,4 +144,4 @@ def test_ms_tuning_minimal():
 
 
 if __name__ == "__main__":
-    test_ms_tuning_minimal()
+    tvm.testing.main()
