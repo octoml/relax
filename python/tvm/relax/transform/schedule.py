@@ -28,7 +28,7 @@ from .tuning_api import Trace
 
 @transform.module_pass(opt_level=2, name="schedule_for_target")
 class ScheduleForTarget:
-    def __init__(self, target: Union[Target, str]):
+    def __init__(self, target: Union[Target, str], trials_per_task=4):
         """Apply a minimal set of transformations to enable running on a specific target.
 
         This function returns a pass which applies basic schedule transformations to each
@@ -47,10 +47,15 @@ class ScheduleForTarget:
         ----------
         target : Union[Target, str]
             The tvm target that fucntions should be scheduled for.
+        trials_per_task : int
+            The number of transformations to try per task. The higher this number is,
+            the longer the pass will take, but the less likely it is for an invalid
+            schedule to be picked.
         """
         if isinstance(target, str):
             target = Target(target)
         self.target = target
+        self.trials_per_task = trials_per_task
         # Create a fake runner function that does not perform benchmarking. This
         # allows us to save time when transforming primitive functions in the module.
         @ms.derived_object
@@ -74,7 +79,7 @@ class ScheduleForTarget:
                 tuning_pass = relax.transform.MetaScheduleTuneIRMod(
                     params={},
                     work_dir=work_dir,
-                    max_trials_global=4 * num_tasks,
+                    max_trials_global=self.trials_per_task * num_tasks,
                     max_trials_per_task=1,
                     runner=self.runner,
                 )
