@@ -14,13 +14,13 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-# pylint: disable=invalid-name
+# pylint: disable=invalid-name, unused-argument
 """Relax passes related to scheduling functions for target hardware."""
 import tempfile
 from typing import Union, List
 
 from tvm import relax
-from tvm.ir import transform
+from tvm.ir import transform, IRModule
 from tvm.target import Target
 from tvm import meta_schedule as ms
 from .tuning_api import Trace
@@ -28,9 +28,10 @@ from .tuning_api import Trace
 
 @transform.module_pass(opt_level=2, name="schedule_for_target")
 class ScheduleForTarget:
-    def __init__(self, target: Union[Target, str], trials_per_task=4):
-        """Apply a minimal set of transformations to enable running on a specific target.
+    """Apply a minimal set of transformations to enable running on a specific target."""
 
+    def __init__(self, target: Union[Target, str], trials_per_task: int = 4):
+        """
         This function returns a pass which applies basic schedule transformations to each
         primitive function in the input module for the specified target. This is useful
         when a hardware target requires certain intrinsics for kernels to be valid. For
@@ -67,7 +68,21 @@ class ScheduleForTarget:
 
         self.runner = FakeRunner()
 
-    def transform_module(self, mod, ctx):
+    def transform_module(self, mod: IRModule, ctx: transform.PassContext) -> IRModule:
+        """Apply a minimal set of tuning to transform the input module.
+
+        Parameters
+        ----------
+        mod : IRModule
+            The input module to schedule.
+        ctx : transform.PassContext
+            Information about the current pass, not currently used.
+
+        Returns
+        -------
+        scheduled_mod : IRModule
+            The input module with hardware specific transformations applied.
+        """
         # Extract the number of tasks in the input module so that we can
         # determine the minimal number of transformations to try.
         num_tasks = len(ms.relax_integration.extract_tasks(mod, self.target))

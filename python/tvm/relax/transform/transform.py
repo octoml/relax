@@ -446,7 +446,9 @@ def MetaScheduleTuneIRMod(
     """
     if runner is None:
         runner = ms.runner.LocalRunner()
-    return _ffi_api.MetaScheduleTuneIRMod(params, work_dir, max_trials_global, max_trials_per_task, runner)  # type: ignore
+    return _ffi_api.MetaScheduleTuneIRMod(  # type: ignore
+        params, work_dir, max_trials_global, max_trials_per_task, runner
+    )
 
 
 def _wrap_class_function_pass(pass_cls, pass_info):
