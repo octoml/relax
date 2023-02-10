@@ -51,7 +51,7 @@ from tvm.relay.frontend.onnx import OnnxOpConverter as RelayOnnxOpConverter
 from tvm.script import relax as R
 
 
-def new_var(var_name: str, shape: Tuple, dtype: str = "float32"):
+def new_var(var_name: str, shape: List, dtype: str = "float32"):
     return testing.nn.Parameter(shape=shape, dtype=dtype, name=var_name)
 
 
@@ -942,16 +942,16 @@ class ONNXGraphImporter:
 
     current = None
 
-    def __init__(self, shape: Dict[str, Tuple], dtype: Union[str, Dict[str, str]], target: Target):
-        self._nodes = {}
-        self._inputs = {}
-        self._num_input = 0
+    def __init__(self, shape: Dict[str, List], dtype: Union[str, Dict[str, str]], target: Target):
+        self._nodes: Dict[str, relax.Expr] = {}
+        self._inputs: Dict[str, relax.Var] = {}
+        self._num_input: int = 0
         self._shape = shape.copy() if shape else {}
-        self._input_names = []
+        self._input_names: List[str] = []
         self._dtype = dtype
-        self.opset = None
-        self._target = target
-        self.bb = relax.BlockBuilder()  # pylint: disable=invalid-name
+        self.opset: int = None
+        self._target: Union[tvm.target.Target, str] = target
+        self.bb: relax.BlockBuilder = relax.BlockBuilder()  # pylint: disable=invalid-name
 
     def from_onnx(
         self, graph: onnx.onnx_ml_pb2.ModelProto, opset: int
@@ -1285,7 +1285,7 @@ class ONNXGraphImporter:
 
 def from_onnx(
     model: onnx.onnx_ml_pb2.GraphProto,
-    shape: Dict[str, Tuple] = None,
+    shape: Dict[str, List] = None,
     dtype: str = "float32",
     opset: int = None,
     target: Union[str, Target] = "llvm",
@@ -1334,8 +1334,8 @@ def from_onnx(
             except Exception as exception:  # pylint: disable=c-extension-no-member, broad-except
                 # the checker is a bit violent about errors, so simply print warnings here
                 warnings.warn(str(exception))
-    except ImportError:
-        raise ImportError("Unable to import onnx which is required {}".format(e))
+    except ImportError as error:
+        raise ImportError("Unable to import onnx which is required {}".format(error))
 
     if isinstance(target, str):
         target = Target(target)

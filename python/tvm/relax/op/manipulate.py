@@ -15,9 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 """Manipulation operators."""
-from typing import List, Optional, Tuple, Union, Callable
+from typing import List, Optional, Tuple, Union, Callable, Any
 
-import torch
 import numpy as np
 import tvm
 from tvm.ir.expr import PrimExpr
@@ -267,7 +266,7 @@ def squeeze(x: Expr, axis: Optional[Union[int, List[int]]] = None) -> Expr:
 
 
 @tvm.register_func("relax.run.broadcast_to")
-def numpy_broadcast_to(data: tvm.nd.array, shape: ShapeExpr) -> tvm.nd.array:
+def numpy_broadcast_to(data: tvm.nd.array, shape: List[Any]) -> tvm.nd.array:
     shape = [s for s in shape]
     out = np.broadcast_to(data.numpy(), shape)
     return tvm.nd.array(out)
