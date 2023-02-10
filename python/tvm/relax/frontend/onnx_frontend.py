@@ -89,7 +89,7 @@ def get_info(info_proto: onnx.onnx_ml_pb2.ValueInfoProto) -> Tuple[str, List, st
         name = dim.dim_param
         value = dim.dim_value
         if value is None or value == 0:
-            value = tvm.tir.Var("d", "int64")
+            value = tvm.tir.Var("dyn", "int64")
             shape_name.append(name)
         else:
             shape_name.append(value)
