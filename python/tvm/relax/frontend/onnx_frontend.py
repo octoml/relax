@@ -48,7 +48,6 @@ from tvm.ir import IRModule
 from tvm.relax import testing, PyExprMutator
 from tvm.relay.expr import TupleWrapper, Var, GlobalVar
 from tvm.relay.frontend.onnx import OnnxOpConverter as RelayOnnxOpConverter
-from tvm.script import relax as R
 
 
 def new_var(var_name: str, shape: List, dtype: str = "float32"):
@@ -556,7 +555,7 @@ class ConstantOfShape(OnnxOpConverter):
         shape_vars = []
         for i in range(shape_ndim):
             shape_vars.append(tvm.tir.Var("x_%d" % i, "int64"))
-        bb.match_cast(shape_dataflow_var, R.Shape(shape_vars))
+        bb.match_cast(shape_dataflow_var, relax.ShapeStructInfo(shape_vars))
         return bb.normalize(relax.op.broadcast_to(const_value, relax.ShapeExpr(shape_vars)))
 
 
@@ -706,7 +705,7 @@ class Expand(OnnxOpConverter):
         shape_vars = []
         for i in range(shape_ndim):
             shape_vars.append(tvm.tir.Var("x_%d" % i, "int64"))
-        bb.match_cast(shape_dataflow_var, R.Shape(shape_vars))
+        bb.match_cast(shape_dataflow_var, relax.ShapeStructInfo(shape_vars))
         return bb.normalize(relax.op.broadcast_to(data, relax.ShapeExpr(shape_vars)))
 
 
@@ -987,7 +986,7 @@ class ONNXGraphImporter:
                 outputs = outputs[0] if len(outputs) == 1 else relax.Tuple(outputs)
 
                 # Create a function from our output expression and all input variables.
-                param_list = [v for k, v in self._inputs.items()]
+                param_list = [v for k, v in self._inputs.items() if isinstance(v, relax.Var)]
                 output_var = self.bb.emit_output(outputs)
             self.bb.emit_func_output(output_var, params=param_list)
         return self.bb.get()
