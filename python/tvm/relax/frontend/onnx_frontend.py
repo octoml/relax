@@ -45,13 +45,10 @@ import tvm
 from tvm import relax, topi, relay
 from tvm.target import Target
 from tvm.ir import IRModule
+from tvm.ir.supply import NameSupply
 from tvm.relax import testing, PyExprMutator
 from tvm.relay.expr import TupleWrapper, Var, GlobalVar
 from tvm.relay.frontend.onnx import OnnxOpConverter as RelayOnnxOpConverter
-
-
-def new_var(var_name: str, shape: List, dtype: str = "float32"):
-    return testing.nn.Parameter(shape=shape, dtype=dtype, name=var_name)
 
 
 def get_type(elem_type: Union[str, int]) -> str:
@@ -937,11 +934,19 @@ class ONNXGraphImporter:
         The input types to the graph
     target : tvm.target.Target
         The target device of the compiled functions when using the translator.
+    sanitize : bool
+        Whether to sanitize the input names to be valid Relax identifiers.
     """
 
     current = None
 
-    def __init__(self, shape: Dict[str, List], dtype: Union[str, Dict[str, str]], target: Target):
+    def __init__(
+        self,
+        shape: Dict[str, List],
+        dtype: Union[str, Dict[str, str]],
+        target: Target,
+        sanitize: bool = True,
+    ):
         self._nodes: Dict[str, relax.Expr] = {}
         self._inputs: Dict[str, relax.Var] = {}
         self._num_input: int = 0
@@ -950,6 +955,8 @@ class ONNXGraphImporter:
         self._dtype = dtype
         self.opset: int = None
         self._target: Union[tvm.target.Target, str] = target
+        self._name_supply = NameSupply()
+        self._sanitize: bool = sanitize
         self.bb: relax.BlockBuilder = relax.BlockBuilder()  # pylint: disable=invalid-name
 
     def from_onnx(
@@ -999,6 +1006,39 @@ class ONNXGraphImporter:
             array = self._parse_array(init_tensor)
             self._nodes[init_tensor.name] = relax.const(array)
 
+    def _sanitize_name(self, name: str) -> str:
+        """Sanitize a name to make it a valid identifier.
+        If the name is None, returns a string input_0, input_1, etc.
+        If the input is an empty string, returns empty_0, empty_1, etc.
+        If the input is a string that does not start with a letter or underscore,
+        returns input_<name>. Otherwise, returns an unique input name.
+
+        Parameters
+        ----------
+        name : str
+            The name to sanitize
+        Returns
+        -------
+        new_name : str
+        """
+
+        if name == "":
+            return self._name_supply.fresh_name("empty_")
+
+        new_name = name.replace(".", "_")
+        if not new_name[0].isalpha() and new_name[0] != "_":
+            new_name = str(self._name_supply.fresh_name("input_" + new_name))
+        else:
+            new_name = str(self._name_supply.fresh_name(new_name))
+
+        if new_name != name:
+            warnings.warn(("Renaming name %s to %s" % (name, new_name)))
+        return new_name
+
+    def _new_var(self, var_name: str, shape: List, dtype: str = "float32"):
+        """Creates a new Relax variable."""
+        return testing.nn.Parameter(shape=shape, dtype=dtype, name=var_name)
+
     def _parse_graph_input(self, graph: onnx.onnx_ml_pb2.GraphProto):
         """Parse model inputs to Relax parameters."""
         for i in graph.input:
@@ -1022,7 +1062,8 @@ class ONNXGraphImporter:
                     dtype = self._dtype[i_name] if i_name in self._dtype else d_type
                 else:
                     dtype = d_type
-                self._nodes[i_name] = new_var(i_name, shape=i_shape, dtype=dtype)
+                var_name = self._sanitize_name(i_name) if self._sanitize else i_name
+                self._nodes[i_name] = self._new_var(var_name, shape=i_shape, dtype=dtype)
             self._inputs[i_name] = self._nodes[i_name]
 
     def _check_for_unsupported_ops(self, graph: onnx.onnx_ml_pb2.GraphProto):
@@ -1288,6 +1329,7 @@ def from_onnx(
     dtype: str = "float32",
     opset: int = None,
     target: Union[str, Target] = "llvm",
+    sanitize_input_names: bool = True,
 ) -> Tuple[IRModule, Dict]:
     """Convert a ONNX model into an equivalent Relax Function.
     ONNX graphs are represented as Python Protobuf objects.
@@ -1307,6 +1349,8 @@ def from_onnx(
         This can be helpful for some testing.
     target : str or Target, optional
         The compilation target used by the Relay to Relax translator.
+    sanitize_input_names : bool, optional
+        Whether to sanitize the input names to ensure they are valid Relax identifiers.
 
     Returns
     -------
@@ -1338,7 +1382,7 @@ def from_onnx(
 
     if isinstance(target, str):
         target = Target(target)
-    g = ONNXGraphImporter(shape, dtype, target)
+    g = ONNXGraphImporter(shape, dtype, target, sanitize_input_names)
     graph = model.graph
 
     try:

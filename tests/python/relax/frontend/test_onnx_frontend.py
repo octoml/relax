@@ -118,6 +118,35 @@ def check_correctness(
             tvm.testing.assert_allclose(tvm_out.numpy(), ort_out, atol=1e-5)
 
 
+@pytest.mark.parametrize(
+    "input_names, expected_names",
+    [
+        ([".", "123"], ["_", "input_123"]),
+        ([".", "_"], ["_", "__1"]),
+        (["123", "input_123"], ["input_123", "input_123_1"]),
+    ],
+)
+def test_sanitize(input_names, expected_names):
+    node = helper.make_node("Add", inputs=input_names, outputs=["output"])
+    graph = helper.make_graph(
+        [node],
+        "test",
+        inputs=[
+            helper.make_tensor_value_info(str(var), TensorProto.FLOAT, [32, 32])
+            for var in input_names
+        ],
+        outputs=[
+            helper.make_tensor_value_info("output", TensorProto.FLOAT, [32, 32]),
+        ],
+    )
+    model = helper.make_model(graph, producer_name="test_sanitizer")
+
+    tvm_model = relax.from_onnx(model)
+
+    for i, param in enumerate(tvm_model["main"].params):
+        assert param.name_hint == expected_names[i]
+
+
 @pytest.mark.parametrize("dynamic", [True, False])
 def test_matmul(dynamic):
     matmul_node = helper.make_node("MatMul", ["a", "b"], ["c"])
