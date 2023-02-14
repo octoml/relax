@@ -16,6 +16,7 @@
 # under the License.
 # pylint: disable=invalid-name, unused-argument
 """Relax passes related to scheduling functions for target hardware."""
+import logging
 import tempfile
 from typing import Union, List
 
@@ -30,7 +31,7 @@ from .tuning_api import Trace
 class ScheduleForTarget:
     """Apply a minimal set of transformations to enable running on a specific target."""
 
-    def __init__(self, target: Union[Target, str], trials_per_task: int = 4):
+    def __init__(self, target: Union[Target, str]):
         """
         This function returns a pass which applies basic schedule transformations to each
         primitive function in the input module for the specified target. This is useful
@@ -48,15 +49,10 @@ class ScheduleForTarget:
         ----------
         target : Union[Target, str]
             The tvm target that fucntions should be scheduled for.
-        trials_per_task : int
-            The number of transformations to try per task. The higher this number is,
-            the longer the pass will take, but the less likely it is for an invalid
-            schedule to be picked.
         """
         if isinstance(target, str):
             target = Target(target)
         self.target = target
-        self.trials_per_task = trials_per_task
         # Create a fake runner function that does not perform benchmarking. This
         # allows us to save time when transforming primitive functions in the module.
         @ms.derived_object
@@ -86,7 +82,9 @@ class ScheduleForTarget:
         # Extract the number of tasks in the input module so that we can
         # determine the minimal number of transformations to try.
         num_tasks = len(ms.relax_integration.extract_tasks(mod, self.target))
-
+        # Disable logging for this pass.
+        logging_level = logging.getLogger("tvm.meta_schedule").level
+        logging.getLogger("tvm.meta_schedule").setLevel(logging.CRITICAL)
         # Perform a minimal set of metaschedule tuning on the input module.
         with tempfile.TemporaryDirectory() as work_dir:
             with self.target, transform.PassContext(trace=Trace(mod), opt_level=0):
@@ -94,7 +92,7 @@ class ScheduleForTarget:
                 tuning_pass = relax.transform.MetaScheduleTuneIRMod(
                     params={},
                     work_dir=work_dir,
-                    max_trials_global=self.trials_per_task * num_tasks,
+                    max_trials_global=num_tasks,
                     max_trials_per_task=1,
                     runner=self.runner,
                 )
@@ -105,5 +103,6 @@ class ScheduleForTarget:
                 # Use the results of tuning to schedule the module.
                 application_pass = relax.transform.MetaScheduleApplyDatabase(work_dir)
                 mod = application_pass(mod)
-
+        # Re-enable normal logging.
+        logging.getLogger("tvm.meta_schedule").setLevel(logging_level)
         return mod
