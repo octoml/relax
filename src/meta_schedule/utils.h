@@ -154,8 +154,6 @@ inline void clear_logging(const char* file, int lineno, PackedFunc logging_func)
     logging_func(static_cast<int>(PyLogMessage::Level::CLEAR), file, lineno, "");
   } else {
     // this would clear all logging output in the console
-    // runtime::detail::LogMessage(file, lineno, TVM_LOG_LEVEL_INFO).stream()
-    //    << "\033c\033[3J\033[2J\033[0m\033[H";
     logging_func(static_cast<int>(PyLogMessage::Level::INFO), file, lineno,
                  "\033c\033[3J\033[2J\033[0m\033[H");
   }
