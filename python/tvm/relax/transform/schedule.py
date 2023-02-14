@@ -88,7 +88,7 @@ class ScheduleForTarget:
         # Perform a minimal set of metaschedule tuning on the input module.
         with tempfile.TemporaryDirectory() as work_dir:
             with self.target, transform.PassContext(trace=Trace(mod), opt_level=0):
-                # Create a pass that performs a few trials per task in the module.
+                # Create a pass that finds one valid schedule per task in the module.
                 tuning_pass = relax.transform.MetaScheduleTuneIRMod(
                     params={},
                     work_dir=work_dir,
