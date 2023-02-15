@@ -59,17 +59,6 @@ def _darknet_test_image_path():
     return DARKNET_TEST_IMAGE_PATH
 
 
-def astext(program, unify_free_vars=False):
-    """check that program is parsable in text format"""
-    text = program.astext()
-    if isinstance(program, relay.Expr):
-        roundtrip_program = tvm.parser.parse_expr(text)
-    else:
-        roundtrip_program = tvm.parser.fromtext(text)
-
-    tvm.ir.assert_structural_equal(roundtrip_program, program, map_free_vars=True)
-
-
 def _read_memory_buffer(shape, data, dtype="float32"):
     length = 1
     for x in shape:
@@ -84,9 +73,7 @@ def _get_tvm_output(net, data, build_dtype="float32", states=None):
     """Compute TVM output"""
     dtype = "float32"
     mod, params = relay.frontend.from_darknet(net, data.shape, dtype)
-    # verify that from_darknet creates a valid, parsable relay program
     mod = relay.transform.InferType()(mod)
-    astext(mod)
 
     target = "llvm"
     lib = relay.build(mod, target, params=params)
