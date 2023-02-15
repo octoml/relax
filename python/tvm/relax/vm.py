@@ -607,7 +607,8 @@ def build(
         target = tvm.target.Target(target)
 
     passes = []
-    passes.append(relax.transform.RewriteDataflowReshape())
+    # TODO(jwfromm) Reenable once bug with Slice is resolved. https://github.com/tlc-pack/relax/issues/444
+    # passes.append(relax.transform.RewriteDataflowReshape())
     passes.append(relax.transform.ToNonDataflow())
     passes.append(relax.transform.CallTIRRewrite())
     passes.append(relax.transform.StaticPlanBlockMemory())
