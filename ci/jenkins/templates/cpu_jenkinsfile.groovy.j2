@@ -29,6 +29,7 @@
     label: 'Create CPU cmake config',
   )
   cmake_build(ci_cpu, 'build', '-j2')
+  make_standalone_crt(ci_cpu, 'build')
   make_cpp_tests(ci_cpu, 'build')
   sh("ls build")
   {{ m.upload_artifacts(tag='cpu', filenames=tvm_lib + cpptest) }}
