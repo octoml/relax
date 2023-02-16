@@ -46,7 +46,7 @@ def test_unique_name_reduction_block():
 
 
 def _check_workload(te_workload, tir_workload, index_dtype_override=None):
-    func = te.create_prim_func(te_workload(), index_dtype_override)
+    func = te.create_prim_func(te_workload(), index_dtype_override=index_dtype_override)
     tvm.ir.assert_structural_equal(func, tir_workload)
     # make sure that we can create schedule from the func
     s = tir.Schedule(func, debug_mask="all")
