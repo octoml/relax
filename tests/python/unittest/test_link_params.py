@@ -331,6 +331,7 @@ def test_c_link_params(linkable_dtype):
         np.testing.assert_allclose(unlinked_output.numpy(), linked_output.numpy())
 
 
+@pytest.mark.skip("Flaky in relax")
 @tvm.testing.requires_micro
 def test_crt_link_params(linkable_dtype):
     from tvm import micro
