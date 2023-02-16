@@ -60,7 +60,7 @@
 // 'python3 jenkins/generate.py'
 // Note: This timestamp is here to ensure that updates to the Jenkinsfile are
 // always rebased on main before merging:
-// Generated at 2023-02-02T20:12:16.563887
+// Generated at 2023-02-15T22:34:41.771086
 
 import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
 // These are set at runtime from data in ci/jenkins/docker-images.yml, update
@@ -499,10 +499,11 @@ def build() {
           label: 'Create CPU cmake config',
         )
         cmake_build(ci_cpu, 'build', '-j2')
+        make_standalone_crt(ci_cpu, 'build')
         make_cpp_tests(ci_cpu, 'build')
         sh("ls build")
         sh(
-            script: "./${jenkins_scripts_root}/s3.py --action upload --bucket ${s3_bucket} --prefix ${s3_prefix}/cpu --items build/libtvm.so build/libtvm_runtime.so build/config.cmake build/cpptest build/build.ninja build/CMakeFiles/rules.ninja",
+            script: "./${jenkins_scripts_root}/s3.py --action upload --bucket ${s3_bucket} --prefix ${s3_prefix}/cpu --items build/libtvm.so build/libtvm_runtime.so build/config.cmake build/cpptest build/build.ninja build/CMakeFiles/rules.ninja build/crttest build/standalone_crt build/build.ninja build/microtvm_template_projects",
             label: 'Upload artifacts to S3',
           )
 
