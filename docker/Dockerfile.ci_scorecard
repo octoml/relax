@@ -1,0 +1,74 @@
+FROM nvidia/cuda:11.7.1-devel-ubuntu22.04
+
+WORKDIR /opt/scorecard
+
+RUN apt update
+RUN DEBIAN_FRONTEND=noninteractive apt install -y \
+    build-essential \
+    python3 \
+    python3-dev \
+    python3-pip \
+    curl \
+    wget \
+    git \
+    postgresql \
+    postgresql-contrib \
+    libpq-dev \
+    fish \
+    vim
+
+# llvm
+RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
+RUN apt update
+RUN apt install -y libllvm-15-ocaml-dev \
+    libllvm15 \
+    llvm-15 \
+    llvm-15-dev \
+    llvm-15-runtime
+
+# python dependencies
+RUN python3 -m pip install --no-cache-dir \
+    ninja \
+    cmake \
+    jinja2 \
+    pyyaml \
+    onnx \
+    onnxruntime-gpu \
+    torch \
+    typing_extensions \
+    pytest \
+    pytest-xdist \
+    nvidia-tensorrt \
+    psycopg2==2.9.5 \
+    commentjson==0.9.0 \
+    jsonschema==4.17.3 \
+    google-cloud-bigquery==3.5.0 \
+    tabulate==0.9.0 \
+    xgboost
+RUN python3 -m pip --no-cache-dir install onnx_graphsurgeon==0.3.26 --index-url https://pypi.ngc.nvidia.com --no-deps
+
+# onnx nightly
+RUN mkdir /opt/onnx_nightly
+RUN PYTHONUSERBASE=/opt/onnx_nightly pip install --user \
+    --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ORT-Nightly/pypi/simple/ \
+    ort-nightly \
+    ort-nightly-gpu
+ENV ONNX_NIGHTLY_PATH /opt/onnx_nightly/lib/python3.10/site-packages
+
+# Build TVM, use the TUZ-6 branch merged with main
+RUN git clone https://github.com/octoml/relax --recursive
+RUN cd relax && git fetch origin && git config user.name test && git config user.email test@example.com
+RUN cd relax && curl -L https://github.com/octoml/relax/pull/14.diff | patch -p1 -N -d . && git add . && git commit -m"PR #14 - TUZ-6"
+RUN cd relax && curl -L https://github.com/octoml/relax/pull/20.diff | patch -p1 -N -d . && git add . && git commit -m"PR #20 - TUZ-152"
+RUN rm -rf relax/build
+COPY azure/build_relax.sh azure/build_relax.sh
+RUN bash azure/build_relax.sh
+RUN cd relax/python && python3 -m pip install --no-cache-dir -e .
+
+# testbench code
+COPY relax-coverage relax-coverage
+COPY schema schema
+COPY models.yaml models.yaml
+COPY azure/build_relax.sh azure/build_relax.sh
+
+ENV ORT_TENSORRT_FP16_ENABLE 1

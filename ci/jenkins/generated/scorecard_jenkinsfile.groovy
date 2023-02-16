@@ -60,7 +60,7 @@
 // 'python3 jenkins/generate.py'
 // Note: This timestamp is here to ensure that updates to the Jenkinsfile are
 // always rebased on main before merging:
-// Generated at 2023-02-16T16:43:37.343463
+// Generated at 2023-02-16T16:43:37.395046
 
 import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
 // These are set at runtime from data in ci/jenkins/docker-images.yml, update
@@ -486,95 +486,11 @@ def micro_cpp_unittest(image) {
 cancel_previous_build()
 
 prepare()
-return;
-
-def build() {
-  stage('Build') {
-    if (!skip_ci && is_docs_only_build != 1) {
-      node('CPU-SMALL') {
-        ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/build-cpu-minimal") {
-          init_git()
-          docker_init(ci_minimal)
-          timeout(time: max_time, unit: 'MINUTES') {
-            sh (
-          script: "${docker_run} ${ci_minimal} ./tests/scripts/task_config_build_minimal.sh build",
-          label: 'Create CPU minimal cmake config',
-        )
-        cmake_build(ci_minimal, 'build', '-j2')
-        make_standalone_crt(ci_minimal, 'build')
-        make_cpp_tests(ci_minimal, 'build')
-        sh(
-            script: "./${jenkins_scripts_root}/s3.py --action upload --bucket ${s3_bucket} --prefix ${s3_prefix}/cpu-minimal --items build/libtvm.so build/libtvm_runtime.so build/config.cmake build/libtvm_allvisible.so build/crttest build/cpptest build/build.ninja build/CMakeFiles/rules.ninja build/standalone_crt build/build.ninja build/microtvm_template_projects",
-            label: 'Upload artifacts to S3',
-          )
-          }
+stage('Scorecard') {
+    node('GPU') {
+        ws(per_exec_ws('scorecard')) {
+            init_git()
+            sh "echo hello"
         }
-      }
-    } else {
-      Utils.markStageSkippedForConditional('BUILD: CPU MINIMAL')
     }
-  }
 }
-build()
-
-
-
-
-def shard_run_unittest_CPU_MINIMAL_1_of_1() {
-  if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
-      ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/ut-python-cpu-minimal") {
-        try {
-          init_git()
-          docker_init(ci_minimal)
-          timeout(time: max_time, unit: 'MINUTES') {
-            withEnv([
-              'PLATFORM=minimal',
-              'TEST_STEP_NAME=unittest: CPU MINIMAL',
-              'TVM_NUM_SHARDS=1',
-              'TVM_SHARD_INDEX=0',
-              "SKIP_SLOW_TESTS=${skip_slow_tests}"], {
-              sh(
-                  script: "./${jenkins_scripts_root}/s3.py --action download --bucket ${s3_bucket} --prefix ${s3_prefix}/cpu-minimal",
-                  label: 'Download artifacts from S3',
-                )
-
-              cpp_unittest(ci_minimal)
-              // TODO: Currently broken
-              // python_unittest(ci_minimal)
-            })
-          }
-        } finally {
-          try {
-            sh(
-            script: "./${jenkins_scripts_root}/s3.py --action upload --bucket ${s3_bucket} --prefix ${s3_prefix}/pytest-results/unittest_CPU_MINIMAL --items build/pytest-results",
-            label: 'Upload JUnits to S3',
-          )
-
-            junit 'build/pytest-results/*.xml'
-          } catch (Exception e) {
-            echo 'Exception during JUnit upload: ' + e.toString()
-          }
-        }
-      }
-    }
-  } else {
-    Utils.markStageSkippedForConditional('unittest: CPU MINIMAL 1 of 1')
-  }
-}
-
-
-
-def test() {
-  stage('Test') {
-    environment {
-      SKIP_SLOW_TESTS = "${skip_slow_tests}"
-    }
-    parallel(
-    'unittest: CPU MINIMAL 1 of 1': {
-      shard_run_unittest_CPU_MINIMAL_1_of_1()
-    },
-    )
-  }
-}
-test()

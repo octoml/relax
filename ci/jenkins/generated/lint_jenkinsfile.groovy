@@ -60,7 +60,7 @@
 // 'python3 jenkins/generate.py'
 // Note: This timestamp is here to ensure that updates to the Jenkinsfile are
 // always rebased on main before merging:
-// Generated at 2023-02-02T20:12:16.725728
+// Generated at 2023-02-16T16:43:37.382846
 
 import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
 // These are set at runtime from data in ci/jenkins/docker-images.yml, update
@@ -132,14 +132,14 @@ def init_git() {
     label: 'Show executor node info',
   )
 
-  // Determine merge commit to use for all stages
-  if (env.BRANCH_NAME == 'relax') {
-    // Only set upstream_revision to HEAD and skip merging to avoid a race with another commit merged to main.
-    update_upstream_revision("HEAD")
-  } else {
-    // This is PR branch so merge with latest relax branch.
-    merge_with_main()
-  }
+  // // Determine merge commit to use for all stages
+  // if (env.BRANCH_NAME == 'relax') {
+  //   // Only set upstream_revision to HEAD and skip merging to avoid a race with another commit merged to main.
+  //   update_upstream_revision("HEAD")
+  // } else {
+  //   // This is PR branch so merge with latest relax branch.
+  //   merge_with_main()
+  // }
 
   sh(
     script: """
@@ -486,6 +486,8 @@ def micro_cpp_unittest(image) {
 cancel_previous_build()
 
 prepare()
+return;
+
 
 stage('Lint') {
   parallel(

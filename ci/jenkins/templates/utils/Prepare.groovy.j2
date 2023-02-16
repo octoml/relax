@@ -14,14 +14,14 @@ def init_git() {
     label: 'Show executor node info',
   )
 
-  // Determine merge commit to use for all stages
-  if (env.BRANCH_NAME == 'relax') {
-    // Only set upstream_revision to HEAD and skip merging to avoid a race with another commit merged to main.
-    update_upstream_revision("HEAD")
-  } else {
-    // This is PR branch so merge with latest relax branch.
-    merge_with_main()
-  }
+  // // Determine merge commit to use for all stages
+  // if (env.BRANCH_NAME == 'relax') {
+  //   // Only set upstream_revision to HEAD and skip merging to avoid a race with another commit merged to main.
+  //   update_upstream_revision("HEAD")
+  // } else {
+  //   // This is PR branch so merge with latest relax branch.
+  //   merge_with_main()
+  // }
 
   sh(
     script: """
