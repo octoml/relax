@@ -607,7 +607,8 @@ def build(
         target = tvm.target.Target(target)
 
     passes = []
-    # TODO(jwfromm) Reenable once bug with Slice is resolved. https://github.com/tlc-pack/relax/issues/444
+    # TODO(jwfromm) Reenable once bug with Slice is resolved.
+    # https://github.com/tlc-pack/relax/issues/444
     # passes.append(relax.transform.RewriteDataflowReshape())
     passes.append(relax.transform.ToNonDataflow())
     passes.append(relax.transform.CallTIRRewrite())
