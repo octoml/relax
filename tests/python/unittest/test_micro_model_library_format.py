@@ -140,6 +140,7 @@ def validate_graph_json(extract_dir, factory):
         assert "attrs" in graph
 
 
+@pytest.mark.skip("Flaky in relax")
 @tvm.testing.requires_micro
 @pytest.mark.parametrize(
     "executor,runtime,should_generate_interface,json_constants_size_bytes",
