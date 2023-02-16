@@ -81,10 +81,10 @@ def test_schedule_for_target(target, dev):
         # Perform an additional check depending on the target.
         if dev == tvm.cpu():
             # On CPU, parallelization should have been inserted.
-            assert "parallel" in out_mod.astext()
+            assert "parallel" in out_mod.script()
         if dev == tvm.gpu():
             # On GPU, thread bindings should have been inserted.
-            assert "thread_binding" in out_mod.astext()
+            assert "thread_binding" in out_mod.script()
 
 
 if __name__ == "__main__":
