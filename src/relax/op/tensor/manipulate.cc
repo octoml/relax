@@ -62,7 +62,7 @@ StructInfo InferStructInfoBroadcastTo(const Call& call, const BlockBuilder& ctx)
   if (!data_sinfo->IsUnknownNdim() && !tgt_shape_sinfo->IsUnknownNdim() &&
       tgt_shape_sinfo->ndim < data_sinfo->ndim) {
     ctx->ReportFatal(Diagnostic::Error(call)
-                     << "broadcast_to expects the input shape to have the number of ndim at least "
+                     << "broadcast_to expects the input shape to have the number of ndim at least"
                         "as the input tensor's. However, the given tensor has ndim "
                      << data_sinfo->ndim << " while the target shape has ndim "
                      << tgt_shape_sinfo->ndim);
@@ -106,7 +106,8 @@ TVM_REGISTER_OP("relax.broadcast_to")
     .set_num_inputs(2)
     .add_argument("x", "Tensor", "The input tensor.")
     .add_argument("shape", "Shape", "The target shape.")
-    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoBroadcastTo);
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoBroadcastTo)
+    .set_attr<FCallPacked>("FCallPacked", "relax.run.broadcast_to");
 
 /* relax.concat */
 TVM_REGISTER_NODE_TYPE(ConcatAttrs);
