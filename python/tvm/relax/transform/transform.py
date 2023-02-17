@@ -24,6 +24,7 @@ import numpy as np  # type: ignore
 
 import tvm.ir
 from tvm.runtime import NDArray
+from tvm import meta_schedule as ms
 from . import _ffi_api
 
 
@@ -399,6 +400,7 @@ def MetaScheduleApplyDatabase(
 def MetaScheduleTuneTIR(
     work_dir: str,
     max_trials_global: int,
+    runner: Optional[ms.runner.Runner] = None,
 ) -> tvm.ir.transform.Pass:
     """Tune TIR with MetaSchedule.
     Parameters
@@ -407,17 +409,23 @@ def MetaScheduleTuneTIR(
        work directory
     max_trials_gloabl: int
        maximum number of total trials allowed for tuning
+    runner: Optional[ms.runner.Runner]
+       runner for tuning
     Returns
     -------
     ret: tvm.ir.transform.Pass
     """
-    return _ffi_api.MetaScheduleTuneTIR(work_dir, max_trials_global)  # type: ignore
+    if runner is None:
+        runner = ms.runner.LocalRunner()
+    return _ffi_api.MetaScheduleTuneTIR(work_dir, max_trials_global, runner)  # type: ignore
 
 
 def MetaScheduleTuneIRMod(
     params: Dict[str, NDArray],
     work_dir: str,
     max_trials_global: int,
+    max_trials_per_task: Optional[int] = None,
+    runner: Optional[ms.runner.Runner] = None,
 ) -> tvm.ir.transform.Pass:
     """Tune Relax IRModule with MetaSchedule.
     Parameters
@@ -428,11 +436,19 @@ def MetaScheduleTuneIRMod(
        work directory
     max_trials_gloabl: int
        maximum number of total trials allowed for tuning
+    max_trials_per_task: Optional[int]
+       maximum number of trials allowed for each task
+    runner: Optional[ms.runner.Runner]
+       runner for the tuning pass
     Returns
     -------
     ret: tvm.ir.transform.Pass
     """
-    return _ffi_api.MetaScheduleTuneIRMod(params, work_dir, max_trials_global)  # type: ignore
+    if runner is None:
+        runner = ms.runner.LocalRunner()
+    return _ffi_api.MetaScheduleTuneIRMod(  # type: ignore
+        params, work_dir, max_trials_global, max_trials_per_task, runner
+    )
 
 
 def _wrap_class_function_pass(pass_cls, pass_info):

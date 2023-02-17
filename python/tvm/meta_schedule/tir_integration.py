@@ -45,10 +45,10 @@ def tune_tir(
     target: Union[str, Target],
     work_dir: str,
     max_trials_global: int,
-    *,
     num_trials_per_iter: int = 64,
     builder: Builder.BuilderType = "local",
     runner: Runner.RunnerType = "local",
+    *,
     database: Database.DatabaseType = "json",
     cost_model: CostModel.CostModelType = "xgb",
     measure_callbacks: MeasureCallback.CallbackListType = "default",
@@ -103,6 +103,7 @@ def tune_tir(
     """
     (logger,) = get_loggers_from_work_dir(work_dir, [task_name])
     (seed,) = fork_seed(seed, n=1)
+    num_trials_per_iter = int(num_trials_per_iter)
     return tune_tasks(
         tasks=[
             TuneContext(
@@ -136,10 +137,10 @@ def _tune_tir(
     target: Union[str, Target],
     work_dir: str,
     max_trials_global: int,
-    *,
     num_trials_per_iter: int = 64,
     builder: Builder.BuilderType = "local",
     runner: Runner.RunnerType = "local",
+    *,
     database: Database.DatabaseType = "json",
     cost_model: CostModel.CostModelType = "xgb",
     measure_callbacks: MeasureCallback.CallbackListType = "default",
