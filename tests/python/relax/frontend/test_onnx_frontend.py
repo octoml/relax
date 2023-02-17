@@ -20,162 +20,2031 @@ ONNX testcases
 ================
 This file is a test script to test Relax ONNX frontend coverage.
 """
-
-from typing import Optional, Dict
-
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 import numpy as np
-import pytest
 
 import tvm
 import tvm.testing
 from tvm import relax
+from tvm.script import relax as R
+from tvm.script import tir as T
 
-import onnx
-from onnx import helper, TensorProto, ModelProto, ValueInfoProto, mapping
-import onnxruntime
+import pytest
+from onnx import helper
+
+if TYPE_CHECKING:
+
+    class TensorProto:
+        """ONNX TensorProto values for type checking."""
+
+        UNDEFINED = 0
+        FLOAT = 1
+        UINT8 = 2
+        INT8 = 3
+        UINT16 = 4
+        INT16 = 5
+        INT32 = 6
+        INT64 = 7
+        BOOL = 9
+        FLOAT16 = 10
+        DOUBLE = 11
+        UINT32 = 12
+        COMPLEX64 = 14
+        COMPLEX128 = 15
+        BFLOAT16 = 16
+
+else:
+    from onnx import TensorProto
+
 
 bg = np.random.MT19937(0)
 rg = np.random.Generator(bg)
 
 
-def generate_random_inputs(
-    model: ModelProto, inputs: Optional[Dict[str, np.ndarray]] = None
-) -> Dict[str, np.ndarray]:
-    input_values = {}
-    # Iterate through model inputs and extract their shape.
-    for i in model.graph.input:
-        if inputs is not None and i.name in inputs and inputs[i.name] is not None:
-            input_values[i.name] = inputs[i.name]
-            continue
-        shape = []
-        for dim in i.type.tensor_type.shape.dim:
-            shape.append(dim.dim_value)
-
-        # Extract datatype for the input.
-        if i.type.tensor_type.elem_type:
-            dtype = str(onnx.mapping.TENSOR_TYPE_TO_NP_TYPE[i.type.tensor_type.elem_type])
-        else:
-            dtype = "float32"
-
-        # Generate random inputs for each input.
-        if dtype == "bool":
-            # random_value = np.random.choice(a=[False, True], size=shape)
-            random_value = rg.choice(a=[False, True], size=shape)
-        else:
-            # random_value = np.random.normal(size=shape).astype(dtype)
-            random_value = rg.standard_normal(size=shape).astype(dtype)
-        input_values[i.name] = random_value
-
-    return input_values
+# pylint: disable=no-self-argument,missing-class-docstring,missing-function-docstring,invalid-name
+@tvm.script.ir_module
+class ConcatModule:
+    @R.function
+    def main(
+        a: R.Tensor((1, 32), dtype="float32"), b: R.Tensor((1, 32), dtype="float32")
+    ) -> R.Tensor((2, 32), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((2, 32), dtype="float32") = R.concat((a, b), axis=0)
+            R.output(gv)
+        return gv
 
 
-def check_correctness(
-    model: ModelProto, inputs: Optional[Dict[str, np.ndarray]] = None, opset: int = None
-) -> None:
-    """Run an onnx model in both onnxruntime and TVM through our importer
-       confirm that the results match. Otherwise, an exception will be raised.
-
-    Parameters
-    ----------
-    model: ModelProto
-        The input onnx model that should be tested.
-    inputs: Optional[Dict[str, np.ndarray]]
-        An optional dictionary containing values for each input in the onnx model.
-    opset: int
-        The opset version to use for the onnx importer.
-    """
-    if opset is not None:
-        model.opset_import[0].version = opset
-
-    # If inputs are not provided, extract them from the onnx graph and produce random
-    # values that we'll use for testing.
-    inputs = generate_random_inputs(model, inputs)
-
-    # Run the model through onnx to get the expected result.
-    ort_session = onnxruntime.InferenceSession(model.SerializeToString())
-    ort_output = ort_session.run([], inputs)
-
-    # Convert the onnx model into relax through the onnx importer.
-    tvm_model = relax.from_onnx(model, opset=opset)
-    # Compile the relax graph into a VM then run.
-    with tvm.transform.PassContext(opt_level=3):
-        # TODO add target configuration.
-        ex = relax.vm.build(tvm_model, target="llvm")
-        vm = relax.VirtualMachine(ex, tvm.cpu())
-    vm.set_input("main", **inputs)
-    vm.invoke_stateful("main")
-    tvm_output = vm.get_outputs("main")
-    # Wrap as a list if there is only one output.
-    if isinstance(tvm_output, tvm.nd.NDArray):
-        tvm_output = [tvm_output]
-
-    assert len(tvm_output) == len(ort_output), "Unequal number of outputs"
-
-    for (tvm_out, ort_out) in zip(tvm_output, ort_output):
-        # TODO Allow configurable tolerance.
-        # Sometimes None is used to indicate an unused output.
-        if ort_out is not None:
-            tvm.testing.assert_allclose(tvm_out.numpy(), ort_out, atol=1e-5)
+@tvm.script.ir_module
+class MatMulModule:
+    @R.function
+    def main(
+        a: R.Tensor((24, 32), dtype="float32"), b: R.Tensor((32, 16), dtype="float32")
+    ) -> R.Tensor((24, 16), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 16), dtype="float32") = R.matmul(a, b, out_dtype="")
+            R.output(gv)
+        return gv
 
 
-@pytest.mark.parametrize(
-    "input_names, expected_names",
-    [
-        ([".", "123"], ["_", "input_123"]),
-        ([".", "_"], ["_", "__1"]),
-        (["123", "input_123"], ["input_123", "input_123_1"]),
-    ],
-)
-def test_sanitize(input_names, expected_names):
-    node = helper.make_node("Add", inputs=input_names, outputs=["output"])
-    graph = helper.make_graph(
-        [node],
-        "test",
-        inputs=[
-            helper.make_tensor_value_info(str(var), TensorProto.FLOAT, [32, 32])
-            for var in input_names
-        ],
-        outputs=[
-            helper.make_tensor_value_info("output", TensorProto.FLOAT, [32, 32]),
-        ],
-    )
-    model = helper.make_model(graph, producer_name="test_sanitizer")
-
-    tvm_model = relax.from_onnx(model)
-
-    for i, param in enumerate(tvm_model["main"].params):
-        assert param.name_hint == expected_names[i]
+@tvm.script.ir_module
+class AddModule:
+    @R.function
+    def main(
+        a: R.Tensor((24, 32), dtype="float32"), b: R.Tensor((24, 32), dtype="float32")
+    ) -> R.Tensor((24, 32), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float32") = R.add(a, b)
+            R.output(gv)
+        return gv
 
 
-@pytest.mark.parametrize("dynamic", [True, False])
-def test_matmul(dynamic):
-    matmul_node = helper.make_node("MatMul", ["a", "b"], ["c"])
+@tvm.script.ir_module
+class CastModule_6_6:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="int32")) -> R.Tensor((24, 32), dtype="int32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="int32") = R.astype(a, dtype="int32")
+            R.output(gv)
+        return gv
 
-    tensor_size = [32, 32]
-    if dynamic:
-        tensor_size = ["?", "?"]
 
-    graph = helper.make_graph(
-        [matmul_node],
-        "matmul_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, tensor_size),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, tensor_size),
-        ],
-        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, tensor_size)],
-    )
+@tvm.script.ir_module
+class CastModule_1_6:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float32")) -> R.Tensor((24, 32), dtype="int32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="int32") = R.astype(a, dtype="int32")
+            R.output(gv)
+        return gv
 
-    model = helper.make_model(graph, producer_name="matmul_test")
-    inputs = None
-    if dynamic:
-        inputs = {
-            "a": np.random.normal(size=(32, 48)).astype("float32"),
-            "b": np.random.normal(size=(48, 64)).astype("float32"),
-        }
-    check_correctness(model, inputs)
+
+@tvm.script.ir_module
+class CastModule_10_6:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float16")) -> R.Tensor((24, 32), dtype="int32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="int32") = R.astype(a, dtype="int32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_11_6:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float64")) -> R.Tensor((24, 32), dtype="int32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="int32") = R.astype(a, dtype="int32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_6_1:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="int32")) -> R.Tensor((24, 32), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float32") = R.astype(a, dtype="float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_1_1:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float32")) -> R.Tensor((24, 32), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float32") = R.astype(a, dtype="float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_10_1:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float16")) -> R.Tensor((24, 32), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float32") = R.astype(a, dtype="float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_11_1:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float64")) -> R.Tensor((24, 32), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float32") = R.astype(a, dtype="float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_6_10:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="int32")) -> R.Tensor((24, 32), dtype="float16"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float16") = R.astype(a, dtype="float16")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_1_10:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float32")) -> R.Tensor((24, 32), dtype="float16"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float16") = R.astype(a, dtype="float16")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_10_10:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float16")) -> R.Tensor((24, 32), dtype="float16"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float16") = R.astype(a, dtype="float16")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_11_10:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float64")) -> R.Tensor((24, 32), dtype="float16"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float16") = R.astype(a, dtype="float16")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_6_11:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="int32")) -> R.Tensor((24, 32), dtype="float64"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float64") = R.astype(a, dtype="float64")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_1_11:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float32")) -> R.Tensor((24, 32), dtype="float64"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float64") = R.astype(a, dtype="float64")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_10_11:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float16")) -> R.Tensor((24, 32), dtype="float64"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float64") = R.astype(a, dtype="float64")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class CastModule_11_11:
+    @R.function
+    def main(a: R.Tensor((24, 32), dtype="float64")) -> R.Tensor((24, 32), dtype="float64"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float64") = R.astype(a, dtype="float64")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GatherModule_0:
+    @R.function
+    def main(
+        data: R.Tensor((2, 4, 3, 2), dtype="float32"), indices: R.Tensor((2,), dtype="int32")
+    ) -> R.Tensor((2, 4, 3, 2), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((2, 4, 3, 2), dtype="float32") = R.take(data, indices, axis=0)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GatherModule_1:
+    @R.function
+    def main(
+        data: R.Tensor((5, 2, 3, 2), dtype="float32"), indices: R.Tensor((2,), dtype="int32")
+    ) -> R.Tensor((5, 2, 3, 2), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((5, 2, 3, 2), dtype="float32") = R.take(data, indices, axis=1)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GatherModule_2:
+    @R.function
+    def main(
+        data: R.Tensor((5, 4, 2, 2), dtype="float32"), indices: R.Tensor((2,), dtype="int32")
+    ) -> R.Tensor((5, 4, 2, 2), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((5, 4, 2, 2), dtype="float32") = R.take(data, indices, axis=2)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GatherModule_3:
+    @R.function
+    def main(
+        data: R.Tensor((5, 4, 3, 2), dtype="float32"), indices: R.Tensor((2,), dtype="int32")
+    ) -> R.Tensor((5, 4, 3, 2), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((5, 4, 3, 2), dtype="float32") = R.take(data, indices, axis=3)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_None_False_False_False:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"), b: R.Tensor((4, 5), dtype="float32")
+    ) -> R.Tensor((), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((), dtype="float32") = R.const(0, "float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_None_False_False_False:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"), b: R.Tensor((4, 5), dtype="float32")
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 5), dtype="float32") = R.matmul(a, b, out_dtype="")
+            gv: R.Tensor((3, 5), dtype="float32") = R.multiply(lv, R.const(0.25, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_0_35_False_False_False:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"), b: R.Tensor((4, 5), dtype="float32")
+    ) -> R.Tensor((), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((), dtype="float32") = R.const(0, "float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_0_35_False_False_False:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"), b: R.Tensor((4, 5), dtype="float32")
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 5), dtype="float32") = R.matmul(a, b, out_dtype="")
+            gv: R.Tensor((3, 5), dtype="float32") = R.multiply(lv, R.const(0.25, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_None_True_False_False:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"), b: R.Tensor((4, 5), dtype="float32")
+    ) -> R.Tensor((), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((), dtype="float32") = R.const(0, "float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_None_True_False_False:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"), b: R.Tensor((4, 5), dtype="float32")
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 4), dtype="float32") = R.permute_dims(a, axes=None)
+            lv1: R.Tensor((3, 5), dtype="float32") = R.matmul(lv, b, out_dtype="")
+            gv: R.Tensor((3, 5), dtype="float32") = R.multiply(lv1, R.const(0.25, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_0_35_True_False_False:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"), b: R.Tensor((4, 5), dtype="float32")
+    ) -> R.Tensor((), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((), dtype="float32") = R.const(0, "float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_0_35_True_False_False:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"), b: R.Tensor((4, 5), dtype="float32")
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 4), dtype="float32") = R.permute_dims(a, axes=None)
+            lv1: R.Tensor((3, 5), dtype="float32") = R.matmul(lv, b, out_dtype="")
+            gv: R.Tensor((3, 5), dtype="float32") = R.multiply(lv1, R.const(0.25, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_None_False_True_False:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"), b: R.Tensor((5, 4), dtype="float32")
+    ) -> R.Tensor((), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((), dtype="float32") = R.const(0, "float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_None_False_True_False:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"), b: R.Tensor((5, 4), dtype="float32")
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((4, 5), dtype="float32") = R.permute_dims(b, axes=None)
+            lv1: R.Tensor((3, 5), dtype="float32") = R.matmul(a, lv, out_dtype="")
+            gv: R.Tensor((3, 5), dtype="float32") = R.multiply(lv1, R.const(0.25, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_0_35_False_True_False:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"), b: R.Tensor((5, 4), dtype="float32")
+    ) -> R.Tensor((), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((), dtype="float32") = R.const(0, "float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_0_35_False_True_False:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"), b: R.Tensor((5, 4), dtype="float32")
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((4, 5), dtype="float32") = R.permute_dims(b, axes=None)
+            lv1: R.Tensor((3, 5), dtype="float32") = R.matmul(a, lv, out_dtype="")
+            gv: R.Tensor((3, 5), dtype="float32") = R.multiply(lv1, R.const(0.25, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_None_True_True_False:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"), b: R.Tensor((5, 4), dtype="float32")
+    ) -> R.Tensor((), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((), dtype="float32") = R.const(0, "float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_None_True_True_False:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"), b: R.Tensor((5, 4), dtype="float32")
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 4), dtype="float32") = R.permute_dims(a, axes=None)
+            lv1: R.Tensor((4, 5), dtype="float32") = R.permute_dims(b, axes=None)
+            lv2: R.Tensor((3, 5), dtype="float32") = R.matmul(lv, lv1, out_dtype="")
+            gv: R.Tensor((3, 5), dtype="float32") = R.multiply(lv2, R.const(0.25, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_0_35_True_True_False:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"), b: R.Tensor((5, 4), dtype="float32")
+    ) -> R.Tensor((), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((), dtype="float32") = R.const(0, "float32")
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_0_35_True_True_False:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"), b: R.Tensor((5, 4), dtype="float32")
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 4), dtype="float32") = R.permute_dims(a, axes=None)
+            lv1: R.Tensor((4, 5), dtype="float32") = R.permute_dims(b, axes=None)
+            lv2: R.Tensor((3, 5), dtype="float32") = R.matmul(lv, lv1, out_dtype="")
+            gv: R.Tensor((3, 5), dtype="float32") = R.multiply(lv2, R.const(0.25, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_None_False_False_True:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"),
+        b: R.Tensor((4, 5), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 5), dtype="float32") = c
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_None_False_False_True:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"),
+        b: R.Tensor((4, 5), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 5), dtype="float32") = R.matmul(a, b, out_dtype="")
+            lv1: R.Tensor((3, 5), dtype="float32") = R.multiply(lv, R.const(0.25, "float32"))
+            gv: R.Tensor((3, 5), dtype="float32") = R.add(lv1, c)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_0_35_False_False_True:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"),
+        b: R.Tensor((4, 5), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 5), dtype="float32") = R.multiply(c, R.const(0.35, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_0_35_False_False_True:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"),
+        b: R.Tensor((4, 5), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 5), dtype="float32") = R.matmul(a, b, out_dtype="")
+            lv1: R.Tensor((3, 5), dtype="float32") = R.multiply(lv, R.const(0.25, "float32"))
+            lv2: R.Tensor((1, 5), dtype="float32") = R.multiply(c, R.const(0.35, "float32"))
+            gv: R.Tensor((3, 5), dtype="float32") = R.add(lv1, lv2)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_None_True_False_True:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"),
+        b: R.Tensor((4, 5), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 5), dtype="float32") = c
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_None_True_False_True:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"),
+        b: R.Tensor((4, 5), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 4), dtype="float32") = R.permute_dims(a, axes=None)
+            lv1: R.Tensor((3, 5), dtype="float32") = R.matmul(lv, b, out_dtype="")
+            lv2: R.Tensor((3, 5), dtype="float32") = R.multiply(lv1, R.const(0.25, "float32"))
+            gv: R.Tensor((3, 5), dtype="float32") = R.add(lv2, c)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_0_35_True_False_True:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"),
+        b: R.Tensor((4, 5), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 5), dtype="float32") = R.multiply(c, R.const(0.35, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_0_35_True_False_True:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"),
+        b: R.Tensor((4, 5), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 4), dtype="float32") = R.permute_dims(a, axes=None)
+            lv1: R.Tensor((3, 5), dtype="float32") = R.matmul(lv, b, out_dtype="")
+            lv2: R.Tensor((3, 5), dtype="float32") = R.multiply(lv1, R.const(0.25, "float32"))
+            lv3: R.Tensor((1, 5), dtype="float32") = R.multiply(c, R.const(0.35, "float32"))
+            gv: R.Tensor((3, 5), dtype="float32") = R.add(lv2, lv3)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_None_False_True_True:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"),
+        b: R.Tensor((5, 4), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 5), dtype="float32") = c
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_None_False_True_True:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"),
+        b: R.Tensor((5, 4), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((4, 5), dtype="float32") = R.permute_dims(b, axes=None)
+            lv1: R.Tensor((3, 5), dtype="float32") = R.matmul(a, lv, out_dtype="")
+            lv2: R.Tensor((3, 5), dtype="float32") = R.multiply(lv1, R.const(0.25, "float32"))
+            gv: R.Tensor((3, 5), dtype="float32") = R.add(lv2, c)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_0_35_False_True_True:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"),
+        b: R.Tensor((5, 4), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 5), dtype="float32") = R.multiply(c, R.const(0.35, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_0_35_False_True_True:
+    @R.function
+    def main(
+        a: R.Tensor((3, 4), dtype="float32"),
+        b: R.Tensor((5, 4), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((4, 5), dtype="float32") = R.permute_dims(b, axes=None)
+            lv1: R.Tensor((3, 5), dtype="float32") = R.matmul(a, lv, out_dtype="")
+            lv2: R.Tensor((3, 5), dtype="float32") = R.multiply(lv1, R.const(0.25, "float32"))
+            lv3: R.Tensor((1, 5), dtype="float32") = R.multiply(c, R.const(0.35, "float32"))
+            gv: R.Tensor((3, 5), dtype="float32") = R.add(lv2, lv3)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_None_True_True_True:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"),
+        b: R.Tensor((5, 4), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 5), dtype="float32") = c
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_None_True_True_True:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"),
+        b: R.Tensor((5, 4), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 4), dtype="float32") = R.permute_dims(a, axes=None)
+            lv1: R.Tensor((4, 5), dtype="float32") = R.permute_dims(b, axes=None)
+            lv2: R.Tensor((3, 5), dtype="float32") = R.matmul(lv, lv1, out_dtype="")
+            lv3: R.Tensor((3, 5), dtype="float32") = R.multiply(lv2, R.const(0.25, "float32"))
+            gv: R.Tensor((3, 5), dtype="float32") = R.add(lv3, c)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_None_0_35_True_True_True:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"),
+        b: R.Tensor((5, 4), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 5), dtype="float32") = R.multiply(c, R.const(0.35, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class GemmModule_0_25_0_35_True_True_True:
+    @R.function
+    def main(
+        a: R.Tensor((4, 3), dtype="float32"),
+        b: R.Tensor((5, 4), dtype="float32"),
+        c: R.Tensor((1, 5), dtype="float32"),
+    ) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 4), dtype="float32") = R.permute_dims(a, axes=None)
+            lv1: R.Tensor((4, 5), dtype="float32") = R.permute_dims(b, axes=None)
+            lv2: R.Tensor((3, 5), dtype="float32") = R.matmul(lv, lv1, out_dtype="")
+            lv3: R.Tensor((3, 5), dtype="float32") = R.multiply(lv2, R.const(0.25, "float32"))
+            lv4: R.Tensor((1, 5), dtype="float32") = R.multiply(c, R.const(0.35, "float32"))
+            gv: R.Tensor((3, 5), dtype="float32") = R.add(lv3, lv4)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class MulModule:
+    @R.function
+    def main(
+        a: R.Tensor((24, 32), dtype="float32"), b: R.Tensor((24, 32), dtype="float32")
+    ) -> R.Tensor((24, 32), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float32") = R.multiply(a, b)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReshapeModuleConstant_0:
+    @R.function
+    def main(
+        data: R.Tensor((7, 32, 32, 8), dtype="float32")
+    ) -> R.Tensor((224, 256), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((224, 256), dtype="float32") = R.reshape(data, (224, 256))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReshapeModuleConstant_1:
+    @R.function
+    def main(
+        data: R.Tensor((7, 32, 32, 8), dtype="float32")
+    ) -> R.Tensor((7, 8192), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 8192), dtype="float32") = R.reshape(data, (7, 8192))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ShapeModule:
+    @R.function
+    def main(data: R.Tensor((7, 32, 32, 8), dtype="float32")) -> R.Shape(ndim=-1):
+        # block 0
+        with R.dataflow():
+            gv: R.Shape(ndim=-1) = R.shape_of(data)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ClipModule:
+    @R.function
+    def main(
+        data: R.Tensor((7, 32, 32, 8), dtype="float32")
+    ) -> R.Tensor((7, 32, 32, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 32, 32, 8), dtype="float32") = R.clip(
+                data, R.prim_value(2), R.prim_value(3)
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class DivModule:
+    @R.function
+    def main(
+        a: R.Tensor((24, 32), dtype="float32"), b: R.Tensor((24, 32), dtype="float32")
+    ) -> R.Tensor((24, 32), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((24, 32), dtype="float32") = R.divide(a, b)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ExpandModule:
+    @R.function
+    def main(
+        data: R.Tensor((3, 1), dtype="float32"), shape: R.Tensor((2,), dtype="int64")
+    ) -> R.Tensor(dtype="float32", ndim=2):
+        shape_var_0 = T.var("int64")
+        shape_var_1 = T.var("int64")
+        # block 0
+        with R.dataflow():
+            lv: R.Shape(ndim=2) = R.call_packed(
+                "vm.builtin.tensor_to_shape", shape, sinfo_args=[R.Shape(ndim=2)]
+            )
+            lv1: R.Shape([shape_var_0, shape_var_1]) = R.match_cast(
+                lv, R.Shape([shape_var_0, shape_var_1])
+            )
+            gv: R.Tensor((shape_var_0, shape_var_1), dtype="float32") = R.broadcast_to(
+                data, (shape_var_0, shape_var_1)
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((7, 6, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 6, 5), dtype="float32") = R.mean(data, axis=[0], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((2, 3, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((2, 3, 4), dtype="float32") = R.mean(data, axis=[0], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__1__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((8, 6, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 6, 5), dtype="float32") = R.mean(data, axis=[1], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__1__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((1, 3, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 3, 4), dtype="float32") = R.mean(data, axis=[1], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__2__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((8, 7, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 7, 5), dtype="float32") = R.mean(data, axis=[2], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__2__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((1, 2, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 2, 4), dtype="float32") = R.mean(data, axis=[2], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__3__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((8, 7, 6), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 7, 6), dtype="float32") = R.mean(data, axis=[3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__3__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((1, 2, 3), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 2, 3), dtype="float32") = R.mean(data, axis=[3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_1__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((6, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((6, 5), dtype="float32") = R.mean(data, axis=[0, 1], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_1__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((3, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((3, 4), dtype="float32") = R.mean(data, axis=[0, 1], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_2__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((7, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 5), dtype="float32") = R.mean(data, axis=[0, 2], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_2__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((2, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((2, 4), dtype="float32") = R.mean(data, axis=[0, 2], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_3__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((7, 6), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 6), dtype="float32") = R.mean(data, axis=[0, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_3__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((2, 3), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((2, 3), dtype="float32") = R.mean(data, axis=[0, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__1_2__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((8, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 5), dtype="float32") = R.mean(data, axis=[1, 2], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__1_2__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((1, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 4), dtype="float32") = R.mean(data, axis=[1, 2], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__1_3__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((8, 6), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 6), dtype="float32") = R.mean(data, axis=[1, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__1_3__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((1, 3), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 3), dtype="float32") = R.mean(data, axis=[1, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__2_3__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((8, 7), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 7), dtype="float32") = R.mean(data, axis=[2, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__2_3__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((1, 2), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 2), dtype="float32") = R.mean(data, axis=[2, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_1_2__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((5,), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((5,), dtype="float32") = R.mean(data, axis=[0, 1, 2], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_1_2__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((4,), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((4,), dtype="float32") = R.mean(data, axis=[0, 1, 2], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_1_3__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((6,), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((6,), dtype="float32") = R.mean(data, axis=[0, 1, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_1_3__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((3,), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((3,), dtype="float32") = R.mean(data, axis=[0, 1, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_2_3__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((7,), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7,), dtype="float32") = R.mean(data, axis=[0, 2, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_2_3__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((2,), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((2,), dtype="float32") = R.mean(data, axis=[0, 2, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__1_2_3__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((8,), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8,), dtype="float32") = R.mean(data, axis=[1, 2, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__1_2_3__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((1,), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1,), dtype="float32") = R.mean(data, axis=[1, 2, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_1_2_3__0:
+    @R.function
+    def main(data: R.Tensor((8, 7, 6, 5), dtype="float32")) -> R.Tensor((), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((), dtype="float32") = R.mean(data, axis=[0, 1, 2, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_1_2_3__0:
+    @R.function
+    def main(data: R.Tensor((1, 2, 3, 4), dtype="float32")) -> R.Tensor((), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((), dtype="float32") = R.mean(data, axis=[0, 1, 2, 3], keepdims=False)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((1, 7, 6, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 7, 6, 5), dtype="float32") = R.mean(data, axis=[0], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 2, 3, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 2, 3, 4), dtype="float32") = R.mean(data, axis=[0], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__1__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((8, 1, 6, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 1, 6, 5), dtype="float32") = R.mean(data, axis=[1], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__1__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 1, 3, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 3, 4), dtype="float32") = R.mean(data, axis=[1], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__2__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((8, 7, 1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 7, 1, 5), dtype="float32") = R.mean(data, axis=[2], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__2__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 2, 1, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 2, 1, 4), dtype="float32") = R.mean(data, axis=[2], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__3__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((8, 7, 6, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 7, 6, 1), dtype="float32") = R.mean(data, axis=[3], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__3__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 2, 3, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 2, 3, 1), dtype="float32") = R.mean(data, axis=[3], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_1__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((1, 1, 6, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 6, 5), dtype="float32") = R.mean(data, axis=[0, 1], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_1__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 1, 3, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 3, 4), dtype="float32") = R.mean(data, axis=[0, 1], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_2__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((1, 7, 1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 7, 1, 5), dtype="float32") = R.mean(data, axis=[0, 2], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_2__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 2, 1, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 2, 1, 4), dtype="float32") = R.mean(data, axis=[0, 2], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((1, 7, 6, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 7, 6, 1), dtype="float32") = R.mean(data, axis=[0, 3], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 2, 3, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 2, 3, 1), dtype="float32") = R.mean(data, axis=[0, 3], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__1_2__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((8, 1, 1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 1, 1, 5), dtype="float32") = R.mean(data, axis=[1, 2], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__1_2__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 1, 1, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 1, 4), dtype="float32") = R.mean(data, axis=[1, 2], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__1_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((8, 1, 6, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 1, 6, 1), dtype="float32") = R.mean(data, axis=[1, 3], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__1_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 1, 3, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 3, 1), dtype="float32") = R.mean(data, axis=[1, 3], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__2_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((8, 7, 1, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 7, 1, 1), dtype="float32") = R.mean(data, axis=[2, 3], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__2_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 2, 1, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 2, 1, 1), dtype="float32") = R.mean(data, axis=[2, 3], keepdims=True)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_1_2__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((1, 1, 1, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 1, 5), dtype="float32") = R.mean(
+                data, axis=[0, 1, 2], keepdims=True
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_1_2__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 1, 1, 4), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 1, 4), dtype="float32") = R.mean(
+                data, axis=[0, 1, 2], keepdims=True
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_1_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((1, 1, 6, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 6, 1), dtype="float32") = R.mean(
+                data, axis=[0, 1, 3], keepdims=True
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_1_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 1, 3, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 3, 1), dtype="float32") = R.mean(
+                data, axis=[0, 1, 3], keepdims=True
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_2_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((1, 7, 1, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 7, 1, 1), dtype="float32") = R.mean(
+                data, axis=[0, 2, 3], keepdims=True
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_2_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 2, 1, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 2, 1, 1), dtype="float32") = R.mean(
+                data, axis=[0, 2, 3], keepdims=True
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__1_2_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((8, 1, 1, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((8, 1, 1, 1), dtype="float32") = R.mean(
+                data, axis=[1, 2, 3], keepdims=True
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__1_2_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 1, 1, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 1, 1), dtype="float32") = R.mean(
+                data, axis=[1, 2, 3], keepdims=True
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__8_7_6_5__0_1_2_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((8, 7, 6, 5), dtype="float32")
+    ) -> R.Tensor((1, 1, 1, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 1, 1), dtype="float32") = R.mean(
+                data, axis=[0, 1, 2, 3], keepdims=True
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReduceMeanModule__1_2_3_4__0_1_2_3__1:
+    @R.function
+    def main(
+        data: R.Tensor((1, 2, 3, 4), dtype="float32")
+    ) -> R.Tensor((1, 1, 1, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 1, 1, 1), dtype="float32") = R.mean(
+                data, axis=[0, 1, 2, 3], keepdims=True
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SigmoidModule:
+    @R.function
+    def main(
+        data: R.Tensor((7, 32, 32, 8), dtype="float32")
+    ) -> R.Tensor((7, 32, 32, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 32, 32, 8), dtype="float32") = R.sigmoid(data)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SliceModule_0:
+    @R.function
+    def main(x: R.Tensor((20, 10, 5), dtype="float32")) -> R.Tensor((3, 10, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((3, 10, 5), dtype="float32") = R.strided_slice(
+                x, axes=[0, 1], begin=[0, 0], end=[3, 10], strides=[1, 1]
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SliceModule_1:
+    @R.function
+    def main(x: R.Tensor((20, 10, 5), dtype="float32")) -> R.Tensor((3, 10, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((3, 10, 5), dtype="float32") = R.strided_slice(
+                x, axes=[0, 1], begin=[0, 0], end=[3, 10], strides=[1, 1]
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SliceModule_2:
+    @R.function
+    def main(x: R.Tensor((20, 10, 5), dtype="float32")) -> R.Tensor((20, 4, 2), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((20, 4, 2), dtype="float32") = R.strided_slice(
+                x, axes=[0, 1, 2], begin=[20, 10, 4], end=[0, 0, 1], strides=[-1, -3, -2]
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SliceModule_3:
+    @R.function
+    def main(x: R.Tensor((20, 10, 5), dtype="float32")) -> R.Tensor((20, 3, 10), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((20, 3, 10), dtype="float32") = R.strided_slice(
+                x, axes=[1, 2], begin=[0, 0], end=[3, 10], strides=[1, 1]
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SliceModule_4:
+    @R.function
+    def main(
+        x: R.Tensor((20, 10, 5), dtype="float32")
+    ) -> R.Tensor((-10, -3, -20), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((-10, -3, -20), dtype="float32") = R.strided_slice(
+                x, axes=[-1, -3, -2], begin=[20, 10, 4], end=[0, 0, 1], strides=[1, 1, 1]
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SoftmaxModule:
+    @R.function
+    def main(
+        a: R.Tensor((7, 32, 32, 8), dtype="float32")
+    ) -> R.Tensor((7, 32, 32, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 32, 32, 8), dtype="float32") = R.nn.softmax(a, axis=-1)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class TransposeModule:
+    @R.function
+    def main(a: R.Tensor((7, 32, 8), dtype="float32")) -> R.Tensor((32, 7, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((32, 7, 8), dtype="float32") = R.permute_dims(a, axes=[1, 0, 2])
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class UnsqueezeModule:
+    @R.function
+    def main(
+        a: R.Tensor((7, 32, 8), dtype="float32")
+    ) -> R.Tensor((1, 7, 32, 8, 1), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((1, 7, 32, 8, 1), dtype="float32") = R.expand_dims(a, axis=[0, 4])
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class BiasGeluModule:
+    @R.function
+    def main(
+        a: R.Tensor((7, 32, 8), dtype="float32"), b: R.Tensor((8,), dtype="float32")
+    ) -> R.Tensor((7, 32, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((7, 32, 8), dtype="float32") = R.add(a, b)
+            gv: R.Tensor((7, 32, 8), dtype="float32") = R.nn.gelu(lv)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ConvModule:
+    @R.function
+    def main(
+        x: R.Tensor((3, 12, 32, 32), dtype="float32"),
+        w: R.Tensor((4, 12, 3, 3), dtype="float32"),
+        b: R.Tensor((4,), dtype="float32"),
+    ) -> R.Tensor((3, 4, 31, 31), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((3, 4, 31, 31), dtype="float32") = R.nn.conv2d(
+                x,
+                w,
+                strides=[1, 1],
+                padding=[0, 0, 1, 1],
+                dilation=[1, 1],
+                groups=1,
+                data_layout="NCHW",
+                kernel_layout="OIHW",
+                out_layout="NCHW",
+                out_dtype="",
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class EqualModule:
+    @R.function
+    def main(
+        a: R.Tensor((7, 32, 8), dtype="float32"),
+        b: R.Tensor((7, 32, 8), dtype="float32"),
+    ) -> R.Tensor((7, 32, 8), dtype="bool"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 32, 8), dtype="bool") = R.equal(a, b)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ErfModule:
+    @R.function
+    def main(a: R.Tensor((7, 32, 8), dtype="float32")) -> R.Tensor((7, 32, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((), dtype="float32") = R.sqrt(R.const(2, "float32"))
+            lv1: R.Tensor((7, 32, 8), dtype="float32") = R.multiply(a, lv)
+            lv2: R.Tensor((7, 32, 8), dtype="float32") = R.nn.gelu(lv1)
+            lv3: R.Tensor((7, 32, 8), dtype="float32") = R.multiply(lv2, lv)
+            lv4: R.Tensor((7, 32, 8), dtype="float32") = R.divide(lv3, a)
+            gv: R.Tensor((7, 32, 8), dtype="float32") = R.add(lv4, R.const(-1, "float32"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class NotModule:
+    @R.function
+    def main(a: R.Tensor((7, 32, 8), dtype="bool")) -> R.Tensor((7, 32, 8), dtype="bool"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 32, 8), dtype="bool") = R.equal(a, R.const(False, "bool"))
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class PowModule:
+    @R.function
+    def main(
+        a: R.Tensor((7, 32, 8), dtype="float32"),
+        b: R.Tensor((7, 32, 8), dtype="float32"),
+    ) -> R.Tensor((7, 32, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((7, 32, 8), dtype="float32") = R.log(a)
+            lv1: R.Tensor((7, 32, 8), dtype="float32") = R.multiply(lv, b)
+            gv: R.Tensor((7, 32, 8), dtype="float32") = R.exp(lv1)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SqrtModule:
+    @R.function
+    def main(a: R.Tensor((7, 32, 8), dtype="float32")) -> R.Tensor((7, 32, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 32, 8), dtype="float32") = R.sqrt(a)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SkipLayerNormModule:
+    @R.function
+    def main(
+        input: R.Tensor((3, 4, 5), dtype="float32"),
+        skip: R.Tensor((3, 4, 5), dtype="float32"),
+        gamma: R.Tensor((5,), dtype="float32"),
+        beta: R.Tensor((5,), dtype="float32"),
+        bias: R.Tensor((5,), dtype="float32"),
+    ) -> R.Tensor((3, 4, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((3, 4, 5), dtype="float32") = R.add(input, skip)
+            lv1: R.Tensor((3, 4, 5), dtype="float32") = R.add(lv, bias)
+            gv: R.Tensor((3, 4, 5), dtype="float32") = R.nn.layer_norm(
+                lv1, gamma, beta, axes=[2], epsilon=1e-05, center=True, scale=True
+            )
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SqueezeModule:
+    @R.function
+    def main(a: R.Tensor((1, 3, 1, 5), dtype="float32")) -> R.Tensor((3, 5), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((3, 5), dtype="float32") = R.squeeze(a, axis=[0, 2])
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SubModule:
+    @R.function
+    def main(
+        a: R.Tensor((7, 32, 8), dtype="float32"),
+        b: R.Tensor((7, 32, 8), dtype="float32"),
+    ) -> R.Tensor((7, 32, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 32, 8), dtype="float32") = R.subtract(a, b)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class TanhModule:
+    @R.function
+    def main(a: R.Tensor((7, 32, 8), dtype="float32")) -> R.Tensor((7, 32, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 32, 8), dtype="float32") = R.tanh(a)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class WhereModule:
+    @R.function
+    def main(
+        condition: R.Tensor((7, 32, 8), dtype="bool"),
+        x: R.Tensor((7, 32, 8), dtype="float32"),
+        y: R.Tensor((7, 32, 8), dtype="float32"),
+    ) -> R.Tensor((7, 32, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 32, 8), dtype="float32") = R.where(condition, x, y)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class ReluModule:
+    @R.function
+    def main(a: R.Tensor((7, 32, 8), dtype="float32")) -> R.Tensor((7, 32, 8), dtype="float32"):
+        # block 0
+        with R.dataflow():
+            gv: R.Tensor((7, 32, 8), dtype="float32") = R.nn.relu(a)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class SplitModule:
+    @R.function
+    def main(
+        data: R.Tensor((7, 32, 8), dtype="float32")
+    ) -> R.Tuple(R.Tensor((2, 32, 8), dtype="float32"), R.Tensor((3, 32, 8), dtype="float32")):
+        # block 0
+        with R.dataflow():
+            lv: R.Tuple(
+                R.Tensor((2, 32, 8), dtype="float32"),
+                R.Tensor((3, 32, 8), dtype="float32"),
+                R.Tensor((2, 32, 8), dtype="float32"),
+            ) = R.split(data, indices_or_sections=[2, 5], axis=0)
+            lv1: R.Tensor((2, 32, 8), dtype="float32") = lv[0]
+            lv2: R.Tensor((3, 32, 8), dtype="float32") = lv[1]
+            lv3: R.Tensor((2, 32, 8), dtype="float32") = lv[2]
+            gv: R.Tuple(
+                R.Tensor((2, 32, 8), dtype="float32"),
+                R.Tensor((3, 32, 8), dtype="float32"),
+            ) = (lv1, lv2)
+            R.output(gv)
+        return gv
+
+
+@tvm.script.ir_module
+class EmbedLayerNormModule:
+    @R.function
+    def main(
+        input_ids: R.Tensor((8, 64), dtype="int64"),
+        segment_ids: R.Tensor((8, 64), dtype="int64"),
+        word_embedding: R.Tensor((30522, 128), dtype="float32"),
+        position_embedding: R.Tensor((512, 128), dtype="float32"),
+        segment_embedding: R.Tensor((2, 128), dtype="float32"),
+        gamma: R.Tensor((128,), dtype="float32"),
+        beta: R.Tensor((128,), dtype="float32"),
+        mask: R.Tensor((8, 64), dtype="bool"),
+        position_ids: R.Tensor((8, 64), dtype="int64"),
+    ) -> R.Tuple(
+        R.Tensor((8, 64, 128), dtype="float32"),
+        R.Tensor((8,), dtype="bool"),
+        R.Tensor((8, 64, 128), dtype="float32"),
+    ):
+        # block 0
+        with R.dataflow():
+            lv: R.Tensor((512,), dtype="int64") = R.reshape(input_ids, (512,))
+            lv1: R.Tensor((512, 128), dtype="float32") = R.take(word_embedding, lv, axis=0)
+            lv2: R.Tensor((512,), dtype="int64") = R.reshape(segment_ids, (512,))
+            lv3: R.Tensor((512, 128), dtype="float32") = R.take(segment_embedding, lv2, axis=0)
+            lv4: R.Tensor((512,), dtype="int64") = R.reshape(position_ids, (512,))
+            lv5: R.Tensor((512, 128), dtype="float32") = R.take(position_embedding, lv4, axis=0)
+            lv6: R.Tensor((8, 64, 128), dtype="float32") = R.reshape(lv1, (8, 64, 128))
+            lv7: R.Tensor((8, 64, 128), dtype="float32") = R.reshape(lv5, (8, 64, 128))
+            lv8: R.Tensor((8, 64, 128), dtype="float32") = R.add(lv6, lv7)
+            lv9: R.Tensor((8, 64, 128), dtype="float32") = R.reshape(lv3, (8, 64, 128))
+            lv10: R.Tensor((8, 64, 128), dtype="float32") = R.add(lv8, lv9)
+            lv11: R.Tensor((512, 128), dtype="float32") = R.reshape(lv10, (512, 128))
+            lv12: R.Tensor((512, 128), dtype="float32") = R.nn.layer_norm(
+                lv11, gamma, beta, axes=[1], epsilon=1e-12, center=True, scale=True
+            )
+            lv13: R.Tensor((8, 64, 128), dtype="float32") = R.reshape(lv12, (8, 64, 128))
+            lv14: R.Tensor((8,), dtype="bool") = R.sum(mask, axis=[1], keepdims=False)
+            gv: R.Tuple(
+                R.Tensor((8, 64, 128), dtype="float32"),
+                R.Tensor((8,), dtype="bool"),
+                R.Tensor((8, 64, 128), dtype="float32"),
+            ) = (lv13, lv14, lv10)
+            R.output(gv)
+        return gv
+
+
+# pylint: enable=no-self-argument,missing-class-docstring,missing-function-docstring,invalid-name
 
 
 def test_concat():
+    """Test case for concat op."""
     concat_node = helper.make_node("Concat", ["a", "b"], ["ab"], axis=0)
 
     graph = helper.make_graph(
@@ -189,41 +2058,43 @@ def test_concat():
     )
 
     model = helper.make_model(graph, producer_name="concat_test")
-    check_correctness(model)
+    assert tvm.ir.structural_equal(relax.from_onnx(model), ConcatModule)
+
+
+def test_matmul():
+    """Test case for matmul op."""
+    matmul_node = helper.make_node("MatMul", ["a", "b"], ["c"])
+
+    graph = helper.make_graph(
+        [matmul_node],
+        "matmul_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [24, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 16]),
+        ],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [24, 16])],
+    )
+
+    model = helper.make_model(graph, producer_name="matmul_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), MatMulModule)
 
 
 def test_add():
-    add_node = helper.make_node("Add", ["a", "b"], ["ab"])
+    """Test case for add op."""
+    add_node = helper.make_node("Add", ["a", "b"], ["c"])
 
     graph = helper.make_graph(
         [add_node],
         "add_test",
         inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [1, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32]),
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [24, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [24, 32]),
         ],
-        outputs=[helper.make_tensor_value_info("ab", TensorProto.FLOAT, [1, 32])],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [24, 32])],
     )
 
     model = helper.make_model(graph, producer_name="add_test")
-    check_correctness(model)
-
-
-def test_mul():
-    mul_node = helper.make_node("Mul", ["a", "b"], ["ab"])
-
-    graph = helper.make_graph(
-        [mul_node],
-        "mul_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [1, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32]),
-        ],
-        outputs=[helper.make_tensor_value_info("ab", TensorProto.FLOAT, [1, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="mul_test")
-    check_correctness(model)
+    assert tvm.ir.structural_equal(relax.from_onnx(model), AddModule)
 
 
 @pytest.mark.parametrize(
@@ -232,61 +2103,84 @@ def test_mul():
 @pytest.mark.parametrize(
     "to_type", [TensorProto.INT32, TensorProto.FLOAT, TensorProto.FLOAT16, TensorProto.DOUBLE]
 )
-def test_cast(from_type, to_type):
-    cast_node = helper.make_node("Cast", ["a"], ["a_float"], to=to_type)
+def test_cast(from_type: int, to_type: int):
+    """Test case for cast op."""
+    cast_node = helper.make_node("Cast", ["a"], ["a_cast"], to=to_type)
 
     graph = helper.make_graph(
         [cast_node],
         "cast_test",
-        inputs=[
-            helper.make_tensor_value_info("a", from_type, [1, 32]),
-        ],
-        outputs=[helper.make_tensor_value_info("a_float", to_type, [1, 32])],
+        inputs=[helper.make_tensor_value_info("a", from_type, [24, 32])],
+        outputs=[helper.make_tensor_value_info("a_cast", to_type, [24, 32])],
     )
 
     model = helper.make_model(graph, producer_name="cast_test")
-    check_correctness(model)
+    assert tvm.ir.structural_equal(
+        relax.from_onnx(model),
+        eval(f"CastModule_{from_type}_{to_type}"),  # pylint: disable=eval-used
+    )
 
 
-def test_gather():
-    gather_node = helper.make_node("Gather", ["data", "indices"], ["y"], axis=0)
+@pytest.mark.parametrize("axis", [0, 1, 2, 3])
+def test_gather(axis: int):
+    """Test case for gather op."""
+    gather_node = helper.make_node("Gather", ["data", "indices"], ["output"], axis=axis)
 
+    data_shape = [5, 4, 3, 2]
+    indices_shape = [2]
+    output_shape = data_shape
+    output_shape[axis] = indices_shape[0]
     graph = helper.make_graph(
         [gather_node],
         "gather_test",
         inputs=[
-            helper.make_tensor_value_info("data", TensorProto.FLOAT, [5, 4, 3, 2]),
-            helper.make_tensor_value_info("indices", TensorProto.INT32, [3]),
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, data_shape),
+            helper.make_tensor_value_info("indices", TensorProto.INT32, indices_shape),
         ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 4, 3, 2])],
+        outputs=[helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)],
     )
 
     model = helper.make_model(graph, producer_name="gather_test")
-    input_values = {
-        "data": np.random.randn(5, 4, 3, 2).astype("float32"),
-        "indices": np.array([0, 1, 3]).astype("int32"),
-    }
-    check_correctness(model, inputs=input_values)
+    assert tvm.ir.structural_equal(
+        relax.from_onnx(model),
+        eval(f"GatherModule_{axis}"),  # pylint: disable=eval-used
+    )
 
 
 @pytest.mark.parametrize("alpha", [None, 0.25])
 @pytest.mark.parametrize("beta", [None, 0.35])
-@pytest.mark.parametrize("useC", [False, True])
-def test_gemm(alpha, beta, useC):
-    if useC:
+@pytest.mark.parametrize("trans_a", [False, True])
+@pytest.mark.parametrize("trans_b", [False, True])
+@pytest.mark.parametrize("use_c", [False, True])
+def test_gemm(
+    alpha: Optional[float],
+    beta: Optional[float],
+    trans_a: bool,
+    trans_b: bool,
+    use_c: bool,
+):
+    """Test case for gemm op."""
+    if use_c:
         gemm_node = helper.make_node(
-            "Gemm", ["a", "b", "c"], ["y"], alpha=alpha, beta=beta, transA=1, transB=1
+            "Gemm", ["a", "b", "c"], ["y"], alpha=alpha, beta=beta, transA=trans_a, transB=trans_b
         )
     else:
         gemm_node = helper.make_node(
-            "Gemm", ["a", "b"], ["y"], alpha=alpha, beta=beta, transA=1, transB=1
+            "Gemm", ["a", "b"], ["y"], alpha=alpha, beta=beta, transA=trans_a, transB=trans_b
         )
 
+    shape_a = [3, 4]
+    shape_b = [4, 5]
+    if trans_a:
+        shape_a = shape_a[::-1]
+    if trans_b:
+        shape_b = shape_b[::-1]
+
     inputs = [
-        helper.make_tensor_value_info("a", TensorProto.FLOAT, [4, 3]),
-        helper.make_tensor_value_info("b", TensorProto.FLOAT, [5, 4]),
+        helper.make_tensor_value_info("a", TensorProto.FLOAT, shape_a),
+        helper.make_tensor_value_info("b", TensorProto.FLOAT, shape_b),
     ]
-    if useC:
+    if use_c:
         inputs.append(helper.make_tensor_value_info("c", TensorProto.FLOAT, [1, 5]))
 
     graph = helper.make_graph(
@@ -297,14 +2191,39 @@ def test_gemm(alpha, beta, useC):
     )
 
     model = helper.make_model(graph, producer_name="gemm_test")
-    check_correctness(model)
+    assert tvm.ir.structural_equal(
+        relax.from_onnx(model),
+        eval(  # pylint: disable=eval-used
+            f"GemmModule_{str(alpha).replace('.', '_')}"
+            + f"_{str(beta).replace('.', '_')}_{trans_a}_{trans_b}_{use_c}"
+        ),
+    )
+
+
+def test_mul():
+    """Test case for mul op."""
+    mul_node = helper.make_node("Mul", ["a", "b"], ["c"])
+
+    graph = helper.make_graph(
+        [mul_node],
+        "mul_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [24, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [24, 32]),
+        ],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [24, 32])],
+    )
+
+    model = helper.make_model(graph, producer_name="mul_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), MulModule)
 
 
 @pytest.mark.parametrize(
-    "in_shape, shape, out_shape",
-    [([7, 32, 32, 8], [224, 256], [224, 256]), ([7, 32, 32, 8], [-1, 8192], [7, 8192])],
+    "case_num, in_shape, shape, out_shape",
+    [(0, [7, 32, 32, 8], [224, 256], [224, 256]), (1, [7, 32, 32, 8], [-1, 8192], [7, 8192])],
 )
-def test_reshape(in_shape, shape, out_shape):
+def test_reshape(case_num: int, in_shape: Tuple[int], shape: Tuple[int], out_shape: Tuple[int]):
+    """Test case for reshape op."""
     reshape_node = helper.make_node("Reshape", ["data", "shape"], ["reshaped"])
 
     graph = helper.make_graph(
@@ -316,774 +2235,175 @@ def test_reshape(in_shape, shape, out_shape):
         initializer=[helper.make_tensor("shape", TensorProto.INT64, [len(shape)], shape)],
         outputs=[helper.make_tensor_value_info("reshaped", TensorProto.FLOAT, out_shape)],
     )
-    input_values = {
-        "data": np.random.randn(*in_shape).astype("float32"),
-    }
+
     model = helper.make_model(graph, producer_name="reshape_test")
-    check_correctness(model, inputs=input_values)
+    assert tvm.ir.structural_equal(
+        relax.from_onnx(model),
+        eval(f"ReshapeModuleConstant_{case_num}"),  # pylint: disable=eval-used
+    )
+
+
+def test_shape():
+    """Test case for shape op."""
+    shape_node = helper.make_node("Shape", ["data"], ["shape"])
+
+    graph = helper.make_graph(
+        [shape_node],
+        "shape_test",
+        inputs=[
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, [7, 32, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("shape", TensorProto.INT64, [4])],
+    )
+
+    model = helper.make_model(graph, producer_name="shape_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), ShapeModule)
+
+
+def test_clip():
+    """Test case for clip op."""
+    clip_node = helper.make_node("Clip", ["data", "min", "max"], ["clipped"])
+
+    graph = helper.make_graph(
+        [clip_node],
+        "clip_test",
+        inputs=[
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, [7, 32, 32, 8]),
+        ],
+        initializer=[
+            # TODO: TVMScript not supporting float as prim value here
+            helper.make_tensor("min", TensorProto.INT64, (), [2]),
+            helper.make_tensor("max", TensorProto.INT64, (), [3]),
+        ],
+        outputs=[helper.make_tensor_value_info("clipped", TensorProto.FLOAT, [7, 32, 32, 8])],
+    )
+
+    model = helper.make_model(graph, producer_name="clip_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), ClipModule)
 
 
 def test_div():
+    """Test case for div op."""
     div_node = helper.make_node("Div", ["a", "b"], ["c"])
 
     graph = helper.make_graph(
         [div_node],
         "div_test",
         inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [24, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [24, 32]),
         ],
-        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [24, 32])],
     )
 
     model = helper.make_model(graph, producer_name="div_test")
-    check_correctness(model)
+    assert tvm.ir.structural_equal(relax.from_onnx(model), DivModule)
+
+
+def test_expand():
+    """Test case for expand op."""
+    in_shape = [3, 1]
+    out_shape = [3, 4]
+    expand_node = helper.make_node("Expand", ["data", "shape"], ["expanded"])
+
+    graph = helper.make_graph(
+        [expand_node],
+        "expand_test",
+        inputs=[
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, in_shape),
+            helper.make_tensor_value_info("shape", TensorProto.INT64, [len(out_shape)]),
+        ],
+        # output shape depends on input of shape
+        outputs=[helper.make_tensor_value_info("expanded", TensorProto.FLOAT, out_shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="expand_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), ExpandModule)
+
+
+@pytest.mark.parametrize("input_shape", [[8, 7, 6, 5], [1, 2, 3, 4]])
+@pytest.mark.parametrize(
+    "axes",
+    [
+        [0],
+        [1],
+        [2],
+        [3],
+        [0, 1],
+        [0, 2],
+        [0, 3],
+        [1, 2],
+        [1, 3],
+        [2, 3],
+        [0, 1, 2],
+        [0, 1, 3],
+        [0, 2, 3],
+        [1, 2, 3],
+        [0, 1, 2, 3],
+    ],
+)
+@pytest.mark.parametrize("keepdims", [0, 1])
+def test_reduce_mean(input_shape: List[int], axes: List[int], keepdims: int):
+    """Test case for reduce_mean op."""
+    reduce_mean_node = helper.make_node(
+        "ReduceMean", ["data"], ["reduced"], axes=axes, keepdims=keepdims
+    )
+    output_shape = []
+    for i, shape_var in enumerate(input_shape):
+        if i not in axes or keepdims == 1:
+            output_shape.append(shape_var)
+    graph = helper.make_graph(
+        [reduce_mean_node],
+        "reduce_mean_test",
+        inputs=[
+            helper.make_tensor_value_info(
+                "data",
+                TensorProto.FLOAT,
+                input_shape,
+            ),
+        ],
+        outputs=[helper.make_tensor_value_info("reduced", TensorProto.FLOAT, [24])],
+    )
+
+    model = helper.make_model(graph, producer_name="reduce_mean_test")
+    assert tvm.ir.structural_equal(
+        relax.from_onnx(model),
+        eval(  # pylint: disable=eval-used
+            f"ReduceMeanModule__{'_'.join([str(x) for x in input_shape])}"
+            f"__{'_'.join([str(x) for x in axes])}__{keepdims}"
+        ),
+    )
 
 
 def test_sigmoid():
-    sigmoid_node = helper.make_node("Sigmoid", ["a"], ["b"])
+    """Test case for sigmoid op."""
+    sigmoid_node = helper.make_node("Sigmoid", ["data"], ["sigmoid"])
 
     graph = helper.make_graph(
         [sigmoid_node],
         "sigmoid_test",
-        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32])],
-        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32])],
+        inputs=[
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, [7, 32, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("sigmoid", TensorProto.FLOAT, [7, 32, 32, 8])],
     )
 
     model = helper.make_model(graph, producer_name="sigmoid_test")
-    check_correctness(model)
-
-
-def test_softmax():
-    softmax_node = helper.make_node("Softmax", ["a"], ["b"])
-
-    graph = helper.make_graph(
-        [softmax_node],
-        "softmax_test",
-        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32, 32])],
-        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="softmax_test")
-    check_correctness(model)
-
-
-def test_transpose():
-    transpose_node = helper.make_node("Transpose", ["a"], ["b"], perm=[1, 2, 0])
-
-    graph = helper.make_graph(
-        [transpose_node],
-        "transpose_test",
-        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32, 32])],
-        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="transpose_test")
-    check_correctness(model)
-
-
-def test_unsqueeze():
-    unsqueeze_node = helper.make_node("Unsqueeze", ["a", "axes"], ["b"])
-
-    graph = helper.make_graph(
-        [unsqueeze_node],
-        "unsqueeze",
-        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32])],
-        initializer=[helper.make_tensor("axes", TensorProto.INT64, [3], vals=[0, 2, 3])],
-        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32, 1, 1, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="unsqueeze_test")
-    check_correctness(model)
-
-
-def test_gelu():
-    gelu_node = helper.make_node("Gelu", ["a"], ["b"], domain="com.microsoft")
-
-    graph = helper.make_graph(
-        [gelu_node],
-        "gelu_test",
-        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32])],
-        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="gelu_test")
-    check_correctness(model)
-
-
-def test_bias_gelu():
-    bias_gelu_node = helper.make_node("BiasGelu", ["a", "b"], ["c"], domain="com.microsoft")
-
-    graph = helper.make_graph(
-        [bias_gelu_node],
-        "bias_gelu_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32]),
-        ],
-        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="bias_gelu_test")
-    check_correctness(model)
-
-
-def test_where():
-    where_node = helper.make_node("Where", ["a", "b", "c"], ["d"])
-
-    graph = helper.make_graph(
-        [where_node],
-        "where_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.BOOL, [32, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
-            helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32]),
-        ],
-        outputs=[helper.make_tensor_value_info("d", TensorProto.FLOAT, [32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="where_test")
-    check_correctness(model)
-
-
-@pytest.mark.parametrize("min", [True, False])
-@pytest.mark.parametrize("max", [True, False])
-def test_clip(min, max):
-    if min and max:
-        clip_node = helper.make_node("Clip", ["input", "min", "max"], ["output"])
-    elif min:
-        clip_node = helper.make_node("Clip", ["input", "min"], ["output"])
-    elif max:
-        clip_node = helper.make_node("Clip", ["input", "max"], ["output"])
-    else:
-        clip_node = helper.make_node("Clip", ["input"], ["output"])
-
-    inputs = [helper.make_tensor_value_info("input", TensorProto.FLOAT, [32, 64])]
-    if min:
-        inputs.append(helper.make_tensor_value_info("min", TensorProto.FLOAT, ()))
-    if max:
-        inputs.append(helper.make_tensor_value_info("max", TensorProto.FLOAT, ()))
-
-    graph = helper.make_graph(
-        [clip_node],
-        "clip_test",
-        inputs=inputs,
-        outputs=[helper.make_tensor_value_info("output", TensorProto.FLOAT, [32, 64])],
-    )
-
-    model = helper.make_model(graph, producer_name="clip_test")
-    check_correctness(model)
-
-
-def test_equal():
-    equal_node = helper.make_node("Equal", ["a", "b"], ["output"])
-
-    graph = helper.make_graph(
-        [equal_node],
-        "equal_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
-        ],
-        outputs=[helper.make_tensor_value_info("output", TensorProto.BOOL, [32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="equal_test")
-    check_correctness(
-        model, {"a": np.zeros([32, 32], dtype="float32"), "b": np.zeros([32, 32], dtype="float32")}
-    )
-    check_correctness(
-        model, {"a": np.ones([32, 32], dtype="float32"), "b": np.zeros([32, 32], dtype="float32")}
-    )
-    check_correctness(model)
-
-
-def test_shape():
-    shape_node = helper.make_node("Shape", ["data"], ["output"])
-
-    graph = helper.make_graph(
-        [shape_node],
-        "shape_test",
-        inputs=[
-            helper.make_tensor_value_info("data", TensorProto.FLOAT, [3, 4, 5, 6]),
-        ],
-        outputs=[helper.make_tensor_value_info("output", TensorProto.INT64, [4])],
-    )
-
-    model = helper.make_model(graph, producer_name="shape_test")
-    check_correctness(model)
-
-
-def test_not():
-    not_node = helper.make_node("Not", ["x"], ["y"])
-    shape = [3, 4, 5, 6]
-    graph = helper.make_graph(
-        [not_node],
-        "not_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.BOOL, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.BOOL, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="not_test")
-    check_correctness(model, {"x": np.zeros(shape, dtype="bool")})
-    check_correctness(model, {"x": np.ones(shape, dtype="bool")})
-
-
-def test_tanh():
-    tanh_node = helper.make_node("Tanh", ["x"], ["y"])
-    shape = [9, 8, 7, 6]
-    graph = helper.make_graph(
-        [tanh_node],
-        "tanh_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="tanh_test")
-    check_correctness(model)
-
-
-def test_sqrt():
-    sqrt_node = helper.make_node("Sqrt", ["x"], ["y"])
-    shape = [32, 32]
-    graph = helper.make_graph(
-        [sqrt_node],
-        "sqrt_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="sqrt_test")
-    check_correctness(model)
-
-
-def test_relu():
-    relu_node = helper.make_node("Relu", ["x"], ["y"])
-    shape = [32, 32]
-    graph = helper.make_graph(
-        [relu_node],
-        "relu_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="relu_test")
-    check_correctness(model)
-
-
-def test_conv():
-    conv_node = helper.make_node("Conv", ["x", "w", "b"], ["y"])
-    nchw_shape = [3, 12, 32, 32]
-    graph = helper.make_graph(
-        [conv_node],
-        "conv_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, nchw_shape),
-            helper.make_tensor_value_info("w", TensorProto.FLOAT, [4, 12, 3, 3]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [4]),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 4, 30, 30])],
-    )
-
-    model = helper.make_model(graph, producer_name="conv_test")
-    check_correctness(model)
-
-
-def test_pow():
-    pow_node = helper.make_node("Pow", ["x", "y"], ["z"])
-    shape = [32, 32]
-    graph = helper.make_graph(
-        [pow_node],
-        "pow_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-            helper.make_tensor_value_info("y", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("z", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="pow_test")
-    check_correctness(model)
-
-
-def test_erf():
-    erf_node = helper.make_node("Erf", ["x"], ["y"])
-    shape = [32, 32]
-    graph = helper.make_graph(
-        [erf_node],
-        "erf_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="erf_test")
-    check_correctness(model)
-
-
-@pytest.mark.parametrize("reverse", [True, False])
-@pytest.mark.parametrize("exclusive", [True, False])
-def test_cumsum(reverse, exclusive):
-    cumsum_node = helper.make_node(
-        "CumSum", ["x", "axis"], ["y"], reverse=reverse, exclusive=exclusive
-    )
-    shape = [32, 32]
-    graph = helper.make_graph(
-        [cumsum_node],
-        "cumsum_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-        ],
-        initializer=[helper.make_tensor("axis", TensorProto.INT64, (), [1])],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="cumsum_test")
-    check_correctness(model)
-
-
-@pytest.mark.parametrize("axis", [[0, 2], None])
-def test_squeeze(axis):
-    if axis:
-        squeeze_node = helper.make_node("Squeeze", ["x", "axes"], ["y"])
-    else:
-        squeeze_node = helper.make_node("Squeeze", ["x"], ["y"])
-    shape = [1, 32, 1, 32]
-
-    initializer = (
-        [helper.make_tensor("axes", TensorProto.INT64, [len(axis)], axis)] if axis else None
-    )
-
-    graph = helper.make_graph(
-        [squeeze_node],
-        "squeeze_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-        ],
-        initializer=initializer,
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="squeeze_test")
-    check_correctness(model, opset=13)
-
-
-def test_const():
-    shape = [32, 32]
-    const_node = helper.make_node(
-        "Constant",
-        [],
-        ["y"],
-        value=helper.make_tensor(
-            "value", TensorProto.FLOAT, shape, np.random.rand(*shape).astype(np.float32).flatten()
-        ),
-    )
-    graph = helper.make_graph(
-        [const_node],
-        "const_test",
-        inputs=[],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="const_test")
-    check_correctness(model)
-
-
-def test_sub():
-    sub_node = helper.make_node("Sub", ["x", "y"], ["z"])
-    shape = [32, 16]
-    graph = helper.make_graph(
-        [sub_node],
-        "sub_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-            helper.make_tensor_value_info("y", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("z", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="sub_test")
-    check_correctness(model)
-
-
-def test_layer_norm():
-    layer_norm_node = helper.make_node(
-        "LayerNormalization", ["a", "b", "c"], ["d", "mean", "std_dev"], epsilon=1e-12
-    )
-
-    graph = helper.make_graph(
-        [layer_norm_node],
-        "layer_norm_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32]),
-            helper.make_tensor_value_info("c", TensorProto.FLOAT, [32]),
-        ],
-        outputs=[
-            helper.make_tensor_value_info("d", TensorProto.FLOAT, [32, 32]),
-            helper.make_tensor_value_info("mean", TensorProto.FLOAT, [32]),
-            helper.make_tensor_value_info("std_dev", TensorProto.FLOAT, [32]),
-        ],
-    )
-
-    model = helper.make_model(graph, producer_name="layer_norm_test")
-    check_correctness(model)
-
-
-# TODO Enable dynamism
-@pytest.mark.parametrize("dynamic", [False])
-def test_skiplayernormalization(dynamic):
-    def verify_skiplayernormalization(input_, skip, gamma, beta, bias):
-        node = onnx.helper.make_node(
-            "SkipLayerNormalization",
-            inputs=["input", "skip", "gamma", "beta", "bias"],
-            outputs=["output", "mean", "std_dev"],
-            domain="com.microsoft",
-        )
-
-        node.attribute.append(onnx.helper.make_attribute("epsilon", 1e-4))
-
-        input_shape = list(input_.shape)
-        skip_shape = list(skip.shape)
-        gamma_shape = list(gamma.shape)
-        beta_shape = list(beta.shape)
-        bias_shape = list(bias.shape)
-        output_shape = list(input_.shape)
-        mean_shape = list([1])
-        std_dev_shape = list([1])
-        if dynamic:
-            input_shape = ["?" for _ in range(len(input_.shape))]
-            skip_shape = ["?" for _ in range(len(skip.shape))]
-            gamma_shape = ["?" for _ in range(len(gamma.shape))]
-            beta_shape = ["?" for _ in range(len(beta.shape))]
-            bias_shape = ["?" for _ in range(len(bias.shape))]
-            output_shape = ["?" for _ in range(len(input_.shape))]
-
-        graph = helper.make_graph(
-            [node],
-            "skiplayernormalization_test",
-            inputs=[
-                helper.make_tensor_value_info("input", TensorProto.FLOAT, input_shape),
-                helper.make_tensor_value_info("skip", TensorProto.FLOAT, skip_shape),
-                helper.make_tensor_value_info("gamma", TensorProto.FLOAT, gamma_shape),
-                helper.make_tensor_value_info("beta", TensorProto.FLOAT, beta_shape),
-                helper.make_tensor_value_info("bias", TensorProto.FLOAT, bias_shape),
-            ],
-            outputs=[
-                helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape),
-                helper.make_tensor_value_info("mean", TensorProto.FLOAT, mean_shape),
-                helper.make_tensor_value_info("std_dev", TensorProto.FLOAT, std_dev_shape),
-            ],
-        )
-
-        model = helper.make_model(graph, producer_name="skiplayernormalization_test")
-        check_correctness(
-            model,
-            inputs={"input": input_, "skip": skip, "gamma": gamma, "beta": beta, "bias": bias},
-        )
-
-    hidden_size = 384
-    batch_size = 4
-    sequence_length = 4
-
-    dtype = "float32"
-    input_array = np.random.random((batch_size, sequence_length, hidden_size)).astype(dtype)
-    skip = np.random.random((batch_size, sequence_length, hidden_size)).astype(dtype)
-    gamma = np.random.uniform(0.5, 0.7, hidden_size).astype(dtype)
-    beta = np.random.randn(hidden_size).astype(dtype) * 0.1
-    bias = np.random.randn(hidden_size).astype(dtype)
-
-    verify_skiplayernormalization(input_array, skip, gamma, beta, bias)
-
-
-def test_embedlayernormalization():
-    def verify_embedlayernormalization(
-        input_ids,
-        segment_ids,
-        word_embedding,
-        position_embedding,
-        segment_embedding,
-        gamma,
-        beta,
-    ):
-        node = onnx.helper.make_node(
-            "EmbedLayerNormalization",
-            inputs=[
-                "input_ids",
-                "" if segment_ids is None else "segment_ids",
-                "word_embedding",
-                "position_embedding",
-                "" if segment_embedding is None else "segment_embedding",
-                "gamma",
-                "beta",
-            ],
-            outputs=["output", "mask_index"],
-            domain="com.microsoft",
-        )
-
-        node.attribute.append(onnx.helper.make_attribute("epsilon", 1e-4))
-
-        segment_ids_shape = [] if segment_ids is None else segment_ids.shape
-        segment_embedding_shape = [] if segment_embedding is None else segment_embedding.shape
-
-        graph = helper.make_graph(
-            [node],
-            "embedlayernormalization_test",
-            inputs=[
-                helper.make_tensor_value_info(
-                    "input_ids", TensorProto.INT32, list(input_ids.shape)
-                ),
-                helper.make_tensor_value_info("segment_ids", TensorProto.INT32, segment_ids_shape),
-                helper.make_tensor_value_info(
-                    "word_embedding", TensorProto.FLOAT, list(word_embedding.shape)
-                ),
-                helper.make_tensor_value_info(
-                    "position_embedding", TensorProto.FLOAT, list(position_embedding.shape)
-                ),
-                helper.make_tensor_value_info(
-                    "segment_embedding", TensorProto.FLOAT, segment_embedding_shape
-                ),
-                helper.make_tensor_value_info("gamma", TensorProto.FLOAT, list(gamma.shape)),
-                helper.make_tensor_value_info("beta", TensorProto.FLOAT, list(beta.shape)),
-            ],
-            outputs=[
-                helper.make_tensor_value_info(
-                    "output", TensorProto.FLOAT, list((batch_size, sequence_length, hidden_size))
-                ),
-                helper.make_tensor_value_info("mask_index", TensorProto.INT32, [batch_size]),
-            ],
-        )
-
-        model = helper.make_model(graph, producer_name="embedlayernormalization_test")
-
-        inputs = {
-            "input_ids": input_ids,
-            "segment_ids": segment_ids,
-            "word_embedding": word_embedding,
-            "position_embedding": position_embedding,
-            "segment_embedding": segment_embedding,
-            "gamma": gamma,
-            "beta": beta,
-        }
-        check_correctness(model, inputs=inputs)
-
-        # TODO(@anwang2009): onnxruntime v1.9.0 requires empty list for optional argument,
-        # but v1.10.0+ requires None instead.
-        # verify_with_ort_with_inputs(
-        #     model,
-        #     [
-        #         input_ids,
-        #         np.empty(0, dtype="int32") if segment_ids is None else segment_ids,
-        #         word_embedding,
-        #         position_embedding,
-        #         np.empty(0, dtype="float32") if segment_embedding is None else segment_embedding,
-        #         gamma,
-        #         beta,
-        #     ],
-        #     [
-        #         (batch_size, sequence_length, hidden_size),
-        #         batch_size,
-        #     ],
-        #     target=target,
-        #     dev=dev,
-        #     rtol=1e-4,
-        #     atol=1e-4,
-        # )
-
-    hidden_size = 384
-    batch_size = 4
-    sequence_length = 3
-    vocab_size = 5
-
-    input_ids = np.full((batch_size, sequence_length), 3).astype("int32")
-    segment_ids = np.zeros((batch_size, sequence_length)).astype("int32")
-    word_embedding = np.full((vocab_size, hidden_size), 1).astype("float32")
-    position_embedding = np.full((sequence_length, hidden_size), 2).astype("float32")
-    segment_embedding = np.full((vocab_size, hidden_size), 3).astype("float32")
-
-    gamma = np.random.uniform(0.5, 0.7, hidden_size).astype("float32")
-    beta = np.random.randn(hidden_size).astype("float32") * 0.1
-
-    verify_embedlayernormalization(
-        input_ids, segment_ids, word_embedding, position_embedding, segment_embedding, gamma, beta
-    )
-
-    # Test with undefined segment embedding
-    verify_embedlayernormalization(
-        input_ids, None, word_embedding, position_embedding, None, gamma, beta
-    )
-
-
-def create_reduce_test_parameters():
-    output = []
-    for value in [True, False]:
-        output.append(("ReduceMax", value))
-        output.append(("ReduceMean", value))
-        output.append(("ReduceMin", value))
-        output.append(("ReduceProd", value))
-        output.append(("ReduceSum", value))
-        output.append(("ReduceSumSquare", value))
-        output.append(("ReduceLogSum", value))
-        output.append(("ReduceLogSumExp", value))
-        output.append(("ReduceL1", value))
-        output.append(("ReduceL2", value))
-    return output
-
-
-@pytest.mark.parametrize("func, dynamic", create_reduce_test_parameters())
-def test_all_reduce_funcs(func, dynamic):
-    def verify_reduce_func(func, data, axis, keepdims):
-        inshape = data.shape
-        outshape = np.sum(data, axis=axis, keepdims=keepdims == 1).shape
-
-        if axis:
-            node = onnx.helper.make_node(
-                func, inputs=["x"], outputs=["y"], axes=axis, keepdims=keepdims
-            )
-        else:
-            node = onnx.helper.make_node(func, inputs=["x"], outputs=["y"], keepdims=keepdims)
-
-        if dynamic:
-            in_list = ["?" for _ in range(len(inshape))]
-            out_list = ["?" for _ in range(len(outshape))]
-        else:
-            in_list = list(inshape)
-            out_list = list(outshape)
-        graph = helper.make_graph(
-            [node],
-            "reduce_test",
-            inputs=[helper.make_tensor_value_info("x", TensorProto.FLOAT, in_list)],
-            outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, out_list)],
-        )
-
-        model = helper.make_model(graph, producer_name="reduce_test")
-
-        inputs_dict = {"x": data}
-        check_correctness(model, inputs_dict, opset=11)
-
-    verify_reduce_func(func, np.array(1.0).astype(np.float32), axis=None, keepdims=False)
-
-    for keepdims in [True, False]:
-        verify_reduce_func(
-            func, np.random.randn(3, 2, 2).astype(np.float32), axis=None, keepdims=keepdims
-        )
-
-        verify_reduce_func(
-            func, np.random.randn(3, 2, 3).astype(np.float32), axis=None, keepdims=keepdims
-        )
-
-        verify_reduce_func(
-            func, np.random.randn(3, 3, 3).astype(np.float32), axis=(1,), keepdims=keepdims
-        )
-
-        verify_reduce_func(
-            func, np.random.randn(3, 3, 3, 1).astype(np.float32), axis=(1, 2), keepdims=keepdims
-        )
-
-        verify_reduce_func(
-            func, np.random.randn(3, 3, 3, 1).astype(np.float32), axis=(1,), keepdims=keepdims
-        )
-
-        verify_reduce_func(
-            func, np.random.randn(1, 3, 4, 1).astype(np.float32), axis=(1,), keepdims=keepdims
-        )
-
-
-@pytest.mark.parametrize("dynamic", [False, True])
-def test_expand(dynamic):
-    if dynamic:
-        # TODO: Support dynamic shape for Expand
-        pytest.skip("Dynamic expand is not supported yet")
-
-    def _test_expand(name, data, shape, ref_data):
-        shape_array = np.array(shape)
-        shape_node = onnx.helper.make_node(
-            "Constant",
-            inputs=[],
-            outputs=["shape"],
-            value=onnx.helper.make_tensor(
-                name="const_tensor",
-                data_type=onnx.TensorProto.INT64,
-                dims=shape_array.shape,
-                vals=shape_array.flatten().astype("int64"),
-            ),
-        )
-        expand_node = helper.make_node("Expand", ["in", "shape"], ["out"])
-
-        in_shape = list(data.shape)
-        out_shape = list(ref_data.shape)
-        if dynamic:
-            in_shape = ["?" for _ in range(len(in_shape))]
-            out_shape = ["?" for _ in range(len(out_shape))]
-        graph = helper.make_graph(
-            [shape_node, expand_node],
-            "expand_teint64st",
-            inputs=[helper.make_tensor_value_info("in", TensorProto.FLOAT, in_shape)],
-            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, out_shape)],
-        )
-
-        model = helper.make_model(graph, producer_name=name)
-        check_correctness(model, inputs={"in": data})
-
-    in_shape = (3, 1)
-    shape = (3, 4)
-    data = np.random.uniform(size=in_shape).astype(np.float32)
-    ref_data = np.tile(data, 4)
-    _test_expand("expand_with_dim_unchanged_test", data, shape, ref_data)
-
-
-def test_constantofshape():
-    def verify_constantofshape(input_dim, value, dtype):
-        fill_node = helper.make_node(
-            "ConstantOfShape",
-            ["input"],
-            ["output"],
-            value=helper.make_tensor(
-                "value", mapping.NP_TYPE_TO_TENSOR_TYPE[np.dtype(dtype)], (1,), (value,)
-            ),
-        )
-
-        inputs = [helper.make_tensor_value_info("input", TensorProto.INT64, [len(input_dim)])]
-
-        graph = helper.make_graph(
-            [fill_node],
-            "fill_test",
-            inputs,
-            initializer=[
-                helper.make_tensor(
-                    "input",
-                    TensorProto.INT64,
-                    [len(input_dim)],
-                    np.asarray(input_dim).astype("int64"),
-                )
-            ],
-            outputs=[
-                helper.make_tensor_value_info(
-                    "output", mapping.NP_TYPE_TO_TENSOR_TYPE[np.dtype(dtype)], input_dim
-                )
-            ],
-        )
-
-        model = helper.make_model(graph, producer_name="fill_test")
-        input_np = np.array(input_dim).astype("int64")
-        check_correctness(model, inputs={"input": input_np})
-
-    verify_constantofshape((2, 3, 4, 5), 10, "float32")
-    verify_constantofshape((3, 3), 0, "int32")
-    verify_constantofshape((1, 2, 3), -1, "float32")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), SigmoidModule)
 
 
 def test_slice():
-    def verify_slice(data_shape, output_shape, starts, ends, axes=None, steps=None):
+    """Test case for slice op."""
+
+    def verify_slice(
+        case_num: int,
+        data_shape: List[int],
+        output_shape: List[int],
+        starts: Union[List[int], np.ndarray],
+        ends: Union[List[int], np.ndarray],
+        axes: Union[List[int], np.ndarray] = None,
+        steps: Union[List[int], np.ndarray] = None,
+    ):
         if isinstance(starts, list):
             starts = np.array(starts, "int64")
         if isinstance(ends, list):
@@ -1119,14 +2439,20 @@ def test_slice():
         )
 
         model = helper.make_model(graph, producer_name="slice_test")
-        check_correctness(model)
+        assert tvm.ir.structural_equal(
+            relax.from_onnx(model),
+            eval("SliceModule_" + str(case_num)),  # pylint: disable=eval-used
+        ), (
+            "Case " + str(case_num) + " failed"
+        )
 
     # Test with all parameters set.
-    verify_slice([20, 10, 5], [3, 10, 5], starts=[0, 0], ends=[3, 10], axes=[0, 1], steps=[1, 1])
+    verify_slice(0, [20, 10, 5], [3, 10, 5], starts=[0, 0], ends=[3, 10], axes=[0, 1], steps=[1, 1])
     # Test with default axes and steps.
-    verify_slice([20, 10, 5], [3, 10, 5], starts=[0, 0], ends=[3, 10])
+    verify_slice(1, [20, 10, 5], [3, 10, 5], starts=[0, 0], ends=[3, 10])
     # Test with negative steps.
     verify_slice(
+        2,
         [20, 10, 5],
         [19, 3, 2],
         starts=[20, 10, 4],
@@ -1134,271 +2460,399 @@ def test_slice():
         steps=[-1, -3, -2],
         axes=[0, 1, 2],
     )
-    verify_slice([20, 10, 5], [10, 5], starts=[0, 0], ends=[3, 10], axes=[1, 2])
-
-    # TODO (gigiblender): Enable this test when we have a way to pass the steps but not axes.
-    # verify_slice(
-    #     [20, 10, 5],
-    #     [19, 3, 2],
-    #     starts=[20, 10, 4],
-    #     ends=[0, 0, 1],
-    #     steps=[-1, -3, -2],
-    # )
+    verify_slice(3, [20, 10, 5], [10, 5], starts=[0, 0], ends=[3, 10], axes=[1, 2])
+    verify_slice(4, [20, 10, 5], [19, 3, 2], starts=[20, 10, 4], ends=[0, 0, 1], steps=[-1, -3, -2])
 
 
-# TODO Enable dynamism
-@pytest.mark.parametrize("dynamic", [False])
-def test_attention(dynamic):
-    def verify_attention(input_, weight, bias, mask_index, num_heads):
-        node = onnx.helper.make_node(
-            "Attention",
-            inputs=["input", "weight", "bias", "mask_index"],
-            outputs=["output", "present"],
-            domain="com.microsoft",
-            num_heads=num_heads,
-        )
+def test_softmax():
+    """Test case for softmax op."""
+    softmax_node = helper.make_node("Softmax", ["a"], ["b"])
 
-        present_output_shape = (2, batch_size, num_heads, sequence_length, head_size)
-
-        input_shape = list(input_.shape)
-        weight_shape = list(weight.shape)
-        bias_shape = list(bias.shape)
-        mask_shape = list(mask_index.shape)
-        output_shape = list(input_.shape)
-        present_shape = list(present_output_shape)
-        if dynamic:
-            input_shape = ["?" for _ in range(len(input_.shape))]
-            weight_shape = ["?" for _ in range(len(weight.shape))]
-            bias_shape = ["?" for _ in range(len(bias.shape))]
-            mask_shape = ["?" for _ in range(len(mask_index.shape))]
-            output_shape = ["?" for _ in range(len(input_.shape))]
-            present_shape = ["?" for _ in range(len(present_output_shape))]
-
-        graph = helper.make_graph(
-            [node],
-            "attention_test",
-            inputs=[
-                helper.make_tensor_value_info("input", TensorProto.FLOAT, input_shape),
-                helper.make_tensor_value_info("weight", TensorProto.FLOAT, weight_shape),
-                helper.make_tensor_value_info("bias", TensorProto.FLOAT, bias_shape),
-                helper.make_tensor_value_info("mask_index", TensorProto.INT32, mask_shape),
-            ],
-            outputs=[
-                helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape),
-                helper.make_tensor_value_info("present", TensorProto.FLOAT, present_shape),
-            ],
-        )
-
-        model = helper.make_model(graph, producer_name="attention_test")
-
-        check_correctness(
-            model,
-            inputs={"input": input_, "weight": weight, "bias": bias, "mask_index": mask_index},
-        )
-        # "present" output should be nullptr when the "past" input isn't included,
-        # but ort requires an output shape to be specified?
-        # verify_with_ort_with_inputs(
-        #     model,
-        #     [input_, weight, bias, mask_index],
-        #     [input_.shape, present_output_shape],
-        #     target=target,
-        #     dev=dev,
-        #     rtol=1e-4,
-        #     atol=1e-4,
-        # )
-
-    hidden_size = 384
-    batch_size = 4
-    sequence_length = 4
-    num_heads = 12
-    head_size = 32
-
-    dtype = "float32"
-    input_array = np.random.random((batch_size, sequence_length, hidden_size)).astype(dtype)
-    weight = np.random.normal(size=(hidden_size, 3 * hidden_size)).astype(dtype) * 0.1
-    bias = np.random.randn(3 * hidden_size).astype(dtype)
-    mask_index = np.full((batch_size, sequence_length), 1).astype("int32")
-
-    verify_attention(input_array, weight, bias, mask_index, num_heads)
-
-
-@pytest.mark.parametrize("dynamic", [True, False])
-def test_pad(dynamic):
-
-    if dynamic:
-        pytest.skip("Dynamic pad not supported")
-
-    def verify_pad(input_shape, pads, mode="constant", value=0.0):
-        indata = np.random.normal(size=input_shape).astype(np.float32)
-        #  numpy expect result
-        len_dim = len(pads) // 2
-        np_pads = [(pads[i], pads[i + len_dim]) for i in range(len_dim)]
-        pads = np.array(pads)
-        #  onnx graph
-        if mode in ["edge", "reflect"]:
-            outdata = np.pad(indata, pad_width=np_pads, mode=mode)
-            node = helper.make_node("Pad", inputs=["input", "pads"], outputs=["output"], mode=mode)
-            graph = helper.make_graph(
-                [node],
-                "pad_test",
-                inputs=[
-                    helper.make_tensor_value_info("input", TensorProto.FLOAT, list(indata.shape))
-                ],
-                initializer=[helper.make_tensor("pads", TensorProto.INT64, (len(pads),), pads)],
-                outputs=[
-                    helper.make_tensor_value_info("output", TensorProto.FLOAT, list(outdata.shape))
-                ],
-            )
-        else:
-            outdata = np.pad(indata, pad_width=np_pads, mode="constant", constant_values=value)
-            node = helper.make_node(
-                "Pad",
-                inputs=["input", "pads", "constant_value"],
-                outputs=["output"],
-                mode="constant",
-            )
-            graph = helper.make_graph(
-                [node],
-                "pad_test",
-                inputs=[
-                    helper.make_tensor_value_info("input", TensorProto.FLOAT, list(indata.shape))
-                ],
-                initializer=[
-                    helper.make_tensor("pads", TensorProto.INT64, (len(pads),), pads),
-                    helper.make_tensor("constant_value", TensorProto.FLOAT, (1,), [value]),
-                ],
-                outputs=[
-                    helper.make_tensor_value_info("output", TensorProto.FLOAT, list(outdata.shape))
-                ],
-            )
-        model = helper.make_model(graph, producer_name="pad_test")
-        check_correctness(model)
-
-    verify_pad((2, 2), [0, 1, 0, 0], "constant", 0.0)
-    verify_pad((2, 3), [1, 0, 0, 1], "constant", 0.0)
-    verify_pad((3, 2), [0, 0, 1, 0], "constant", 5.0)
-    verify_pad((1, 3, 4, 5), [0, 1, 1, 1, 0, 0, 1, 1], "reflect")
-
-
-@pytest.mark.parametrize("fp_arith", [np.float16, np.float32])
-@pytest.mark.parametrize("dynamic", [True, False])
-def test_split(fp_arith, dynamic):
-    def verify_split(indata_shape, outdata_shapes, split, axis=0, pass_split=True, opset=11):
-        indata = np.random.normal(size=indata_shape).astype(fp_arith)
-        input_names = ["input"]
-        initializer = []
-
-        if split:
-            split_index = range(len(split))
-        else:
-            split_index = range(len(outdata_shapes))
-
-        indata_shape = list(indata.shape)
-        if dynamic:
-            indata_shape = ["?" for _ in range(len(indata.shape))]
-            outdata_shapes = [["?" for _ in range(len(o))] for o in outdata_shapes]
-
-        inputs = [
-            helper.make_tensor_value_info(
-                "input", mapping.NP_TYPE_TO_TENSOR_TYPE[indata.dtype], indata_shape
-            )
-        ]
-
-        if pass_split:
-            if opset >= 13:
-                np_split = np.array(split).astype(np.int64)
-                initializer.append(
-                    helper.make_tensor("split", TensorProto.INT64, list(np_split.shape), np_split)
-                )
-        node = helper.make_node(
-            "Split",
-            inputs=input_names,
-            outputs=[f"output_{i}" for i in range(len(split_index))],
-            axis=axis,
-        )
-
-        if pass_split and opset < 13:
-            split_attr = helper.make_attribute("split", split)
-            node.attribute.append(split_attr)
-
-        graph = helper.make_graph(
-            [node],
-            "split_test",
-            inputs=inputs,
-            initializer=initializer,
-            outputs=[
-                helper.make_tensor_value_info(
-                    f"output_{i}",
-                    mapping.NP_TYPE_TO_TENSOR_TYPE[indata.dtype],
-                    list(outdata_shapes[i]),
-                )
-                for i in range(len(split_index))
-            ],
-        )
-        model = helper.make_model(graph, producer_name="split_test")
-        check_correctness(model, inputs={"input": indata}, opset=opset)
-
-    # 1D
-    verify_split(6, [[2], [2], [2]], [2, 2, 2])
-    verify_split(6, [[2], [2], [2]], [2, 2, 2], pass_split=False)
-    verify_split(6, [[2], [1], [3]], [2, 1, 3])
-    verify_split(6, [[2], [1], [3]], [2, 1, 3], opset=13)
-    # 2D
-    verify_split(
-        (4, 4),
-        [[2, 2], [2, 2]],
-        [2, 2],
-        axis=1,
+    graph = helper.make_graph(
+        [softmax_node],
+        "softmax_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [7, 32, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [7, 32, 32, 8])],
     )
-    verify_split(
-        (4, 4),
-        [[2, 2], [2, 2]],
-        [2, 2],
-        axis=1,
-        opset=13,
+
+    model = helper.make_model(graph, producer_name="softmax_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), SoftmaxModule)
+
+
+def test_transpose():
+    """Test case for transpose op."""
+    transpose_node = helper.make_node("Transpose", ["a"], ["b"], perm=[1, 0, 2])
+
+    graph = helper.make_graph(
+        [transpose_node],
+        "transpose_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [7, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 7, 8])],
     )
-    # Split evenly (unstack)
-    verify_split(3, [[1], [1], [1]], False, pass_split=False)
-    # Split a single value to a single value
-    verify_split(1, [[1]], [1], pass_split=True)
-    # Test that the default case modifies nothing when split list has length one
-    verify_split((1, 2), [[2]], [2], axis=1)
-    verify_split((1, 2), [[2]], [1])
+
+    model = helper.make_model(graph, producer_name="transpose_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), TransposeModule)
 
 
-@pytest.mark.parametrize("dynamic", [True, False])
-def test_tile(dynamic):
-    def verify_tile(in_shape, repeats, out_shape):
-        node = helper.make_node("Tile", inputs=["input", "repeats"], outputs=["out"])
+def test_unsqueeze():
+    """Test case for unsqueeze op."""
+    unsqueeze_node = helper.make_node("Unsqueeze", ["a", "axes"], ["b"])
 
-        if dynamic:
-            indata = np.random.normal(size=in_shape).astype(np.float32)
-            in_shape = ["?" for _ in range(len(in_shape))]
-            out_shape = ["?" for _ in range(len(out_shape))]
+    graph = helper.make_graph(
+        [unsqueeze_node],
+        "unsqueeze_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [7, 32, 8]),
+        ],
+        initializer=[
+            helper.make_tensor("axes", TensorProto.INT64, [2], [0, 4]),
+        ],
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 7, 32, 8, 1])],
+    )
 
-        graph = helper.make_graph(
-            [node],
-            "tile_test",
-            inputs=[
-                helper.make_tensor_value_info("input", TensorProto.FLOAT, in_shape),
-            ],
-            initializer=[
-                helper.make_tensor("repeats", TensorProto.INT64, list(repeats.shape), repeats)
-            ],
-            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, out_shape)],
-        )
+    model = helper.make_model(graph, producer_name="unsqueeze_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), UnsqueezeModule)
 
-        model = helper.make_model(graph, producer_name="tile_test")
 
-        if dynamic:
-            check_correctness(model, {"input": indata})
-        else:
-            check_correctness(model)
+def test_bias_gelu():
+    """Test case for bias_gelu op."""
+    bias_gelu_node = helper.make_node("BiasGelu", ["a", "b"], ["c"])
 
-    x = np.random.rand(2, 3, 4, 5).astype(np.float32)
-    repeats = np.random.randint(low=1, high=10, size=(np.ndim(x),)).astype(np.int64)
-    z_array = np.tile(x, repeats)
-    verify_tile(x.shape, repeats, z_array.shape)
+    graph = helper.make_graph(
+        [bias_gelu_node],
+        "bias_gelu_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [7, 32, 8]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [8]),
+        ],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [7, 32, 8])],
+    )
+
+    model = helper.make_model(graph, producer_name="bias_gelu_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), BiasGeluModule)
+
+
+def test_conv():
+    """Test case for conv op."""
+    conv_node = helper.make_node("Conv", ["x", "w", "b"], ["y"], auto_pad="SAME_UPPER")
+    nchw_shape = [3, 12, 32, 32]
+    graph = helper.make_graph(
+        [conv_node],
+        "conv_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, nchw_shape),
+            helper.make_tensor_value_info("w", TensorProto.FLOAT, [4, 12, 3, 3]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [4]),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 4, 30, 30])],
+    )
+
+    model = helper.make_model(graph, producer_name="conv_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), ConvModule)
+
+
+def test_equal():
+    """Test case for equal op."""
+    equal_node = helper.make_node("Equal", ["a", "b"], ["c"])
+
+    graph = helper.make_graph(
+        [equal_node],
+        "equal_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [7, 32, 8]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [7, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.BOOL, [7, 32, 8])],
+    )
+
+    model = helper.make_model(graph, producer_name="equal_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), EqualModule)
+
+
+def test_erf():
+    """Test case for erf op."""
+    erf_node = helper.make_node("Erf", ["a"], ["b"])
+
+    graph = helper.make_graph(
+        [erf_node],
+        "erf_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [7, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [7, 32, 8])],
+    )
+
+    model = helper.make_model(graph, producer_name="erf_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), ErfModule)
+
+
+def test_not():
+    """Test case for not op."""
+    not_node = helper.make_node("Not", ["a"], ["b"])
+
+    graph = helper.make_graph(
+        [not_node],
+        "not_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.BOOL, [7, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("b", TensorProto.BOOL, [7, 32, 8])],
+    )
+
+    model = helper.make_model(graph, producer_name="not_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), NotModule)
+
+
+def test_pow():
+    """Test case for pow op."""
+    pow_node = helper.make_node("Pow", ["a", "b"], ["c"])
+
+    graph = helper.make_graph(
+        [pow_node],
+        "pow_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [7, 32, 8]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [7, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [7, 32, 8])],
+    )
+
+    model = helper.make_model(graph, producer_name="pow_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), PowModule)
+
+
+def test_sqrt():
+    """Test case for sqrt op."""
+    sqrt_node = helper.make_node("Sqrt", ["a"], ["b"])
+
+    graph = helper.make_graph(
+        [sqrt_node],
+        "sqrt_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [7, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [7, 32, 8])],
+    )
+
+    model = helper.make_model(graph, producer_name="sqrt_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), SqrtModule)
+
+
+def test_skip_layer_normalization():
+    """Test case for skip_layer_normalization op."""
+    skip_layer_normalization_node = helper.make_node(
+        "SkipLayerNormalization", ["input", "skip", "gamma", "beta", "bias"], ["y"], epsilon=1e-5
+    )
+
+    graph = helper.make_graph(
+        [skip_layer_normalization_node],
+        "skip_layer_normalization_test",
+        inputs=[
+            helper.make_tensor_value_info("input", TensorProto.FLOAT, [3, 4, 5]),
+            helper.make_tensor_value_info("skip", TensorProto.FLOAT, [3, 4, 5]),
+            helper.make_tensor_value_info("gamma", TensorProto.FLOAT, [5]),
+            helper.make_tensor_value_info("beta", TensorProto.FLOAT, [5]),
+            helper.make_tensor_value_info("bias", TensorProto.FLOAT, [5]),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 4, 5])],
+    )
+
+    model = helper.make_model(graph, producer_name="skip_layer_normalization_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), SkipLayerNormModule)
+
+
+def test_squeeze():
+    """Test case for squeeze op."""
+    squeeze_node = helper.make_node("Squeeze", ["a", "axes"], ["b"])
+
+    graph = helper.make_graph(
+        [squeeze_node],
+        "squeeze_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [1, 3, 1, 5]),
+        ],
+        initializer=[
+            helper.make_tensor("axes", TensorProto.INT64, [2], [0, 2]),
+        ],
+        outputs=[helper.make_tensor_value_info("b", TensorProto.INT64, [3, 5])],
+    )
+
+    model = helper.make_model(graph, producer_name="squeeze_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), SqueezeModule)
+
+
+def test_sub():
+    """Test case for sub op."""
+    sub_node = helper.make_node("Sub", ["a", "b"], ["c"])
+
+    graph = helper.make_graph(
+        [sub_node],
+        "sub_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [7, 32, 8]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [7, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [7, 32, 8])],
+    )
+
+    model = helper.make_model(graph, producer_name="sub_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), SubModule)
+
+
+def test_tanh():
+    """Test case for tanh op."""
+    tanh_node = helper.make_node("Tanh", ["a"], ["b"])
+
+    graph = helper.make_graph(
+        [tanh_node],
+        "tanh_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [7, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [7, 32, 8])],
+    )
+
+    model = helper.make_model(graph, producer_name="tanh_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), TanhModule)
+
+
+def test_where():
+    """Test case for where op."""
+    where_node = helper.make_node("Where", ["condition", "x", "y"], ["z"])
+
+    graph = helper.make_graph(
+        [where_node],
+        "where_test",
+        inputs=[
+            helper.make_tensor_value_info("condition", TensorProto.BOOL, [7, 32, 8]),
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, [7, 32, 8]),
+            helper.make_tensor_value_info("y", TensorProto.FLOAT, [7, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("z", TensorProto.FLOAT, [7, 32, 8])],
+    )
+
+    model = helper.make_model(graph, producer_name="where_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), WhereModule)
+
+
+def test_const():
+    """Test case for constant op."""
+    shape = [32, 16]
+    const_node = helper.make_node(
+        "Constant",
+        [],
+        ["y"],
+        value=helper.make_tensor(
+            "value", TensorProto.FLOAT, shape, np.random.rand(*shape).astype(np.float32).flatten()
+        ),
+    )
+    graph = helper.make_graph(
+        [const_node],
+        "const_test",
+        inputs=[],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="const_test")
+    relax.from_onnx(model)
+
+    # TODO: figure out how to get metadata to work with Relax TVMScript
+    # @tvm.script.ir_module
+    # class Module:
+    #     @R.function
+    #     def main() -> R.Tensor((32, 16), dtype="float32"):
+    #         # block 0
+    #         with R.dataflow():
+    #             gv: R.Tensor((32, 16), dtype="float32") = metadata["relax.expr.Constant"][0]
+    #             R.output(gv)
+    #         return gv
+
+
+def test_relu():
+    """Test case for relu op."""
+    relu_node = helper.make_node("Relu", ["a"], ["b"])
+
+    graph = helper.make_graph(
+        [relu_node],
+        "relu_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [7, 32, 8]),
+        ],
+        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [7, 32, 8])],
+    )
+
+    model = helper.make_model(graph, producer_name="relu_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), ReluModule)
+
+
+def test_split():
+    """Test case for split op."""
+    split_node = helper.make_node("Split", ["data", "split"], ["y0", "y1"])
+
+    graph = helper.make_graph(
+        [split_node],
+        "split_test",
+        inputs=[
+            helper.make_tensor_value_info("data", TensorProto.FLOAT, [7, 32, 8]),
+        ],
+        initializer=[
+            helper.make_tensor("split", TensorProto.INT64, [2], [2, 5]),
+        ],
+        outputs=[
+            helper.make_tensor_value_info("y0", TensorProto.FLOAT, [2, 32, 8]),
+            helper.make_tensor_value_info("y1", TensorProto.FLOAT, [5, 32, 8]),
+        ],
+    )
+
+    model = helper.make_model(graph, producer_name="split_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), SplitModule)
+
+
+def test_embed_layer_normalization():
+    """Test case for embed layer normalization op."""
+    embed_node = helper.make_node(
+        "EmbedLayerNormalization",
+        [
+            "input_ids",
+            "segment_ids",
+            "word_embedding",
+            "position_embedding",
+            "segment_embedding",
+            "gamma",
+            "beta",
+            "mask",
+            "position_ids",
+        ],
+        ["output", "mask_index", "embedding_sum"],
+    )
+
+    graph = helper.make_graph(
+        [embed_node],
+        "embed_layer_normalization_test",
+        inputs=[
+            helper.make_tensor_value_info("input_ids", TensorProto.INT64, [8, 64]),
+            helper.make_tensor_value_info("segment_ids", TensorProto.INT64, [8, 64]),
+            helper.make_tensor_value_info("word_embedding", TensorProto.FLOAT, [30522, 128]),
+            helper.make_tensor_value_info("position_embedding", TensorProto.FLOAT, [512, 128]),
+            helper.make_tensor_value_info("segment_embedding", TensorProto.FLOAT, [2, 128]),
+            helper.make_tensor_value_info("gamma", TensorProto.FLOAT, [128]),
+            helper.make_tensor_value_info("beta", TensorProto.FLOAT, [128]),
+            helper.make_tensor_value_info("mask", TensorProto.BOOL, [8, 64]),
+            helper.make_tensor_value_info("position_ids", TensorProto.INT64, [8, 64]),
+        ],
+        outputs=[
+            helper.make_tensor_value_info("output", TensorProto.FLOAT, [8, 64, 128]),
+            helper.make_tensor_value_info("mask_index", TensorProto.INT64, [8]),
+            helper.make_tensor_value_info("embedding_sum", TensorProto.FLOAT, [8, 64, 128]),
+        ],
+    )
+
+    model = helper.make_model(graph, producer_name="embed_layer_normalization_test")
+    assert tvm.ir.structural_equal(relax.from_onnx(model), EmbedLayerNormModule)
 
 
 if __name__ == "__main__":

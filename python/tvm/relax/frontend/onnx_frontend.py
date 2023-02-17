@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+# pylint: disable=consider-using-f-string
 """ONNX: Open Neural Network Exchange importer for Relax.
 
 This module implemnets the required functionality to read ONNX models
@@ -34,21 +35,24 @@ If this fails, there may still be dynamic operations in the model.
 Not all TVM kernels currently support dynamic shapes, please file an issue on
 github.com/apache/tvm/issues if you hit an error with dynamic kernels.
 """
-import math
 import warnings
 from typing import Union, List, Dict, Tuple, Any
-import onnx.onnx_ml_pb2
-
 import numpy as _np
 
 import tvm
-from tvm import relax, topi, relay
+from tvm import relax, relay
 from tvm.target import Target
 from tvm.ir import IRModule
-from tvm.ir.supply import NameSupply
 from tvm.relax import testing, PyExprMutator
 from tvm.relay.expr import TupleWrapper, Var, GlobalVar
 from tvm.relay.frontend.onnx import OnnxOpConverter as RelayOnnxOpConverter
+from tvm.script import relax as R
+
+import onnx.onnx_ml_pb2
+
+
+def new_var(var_name: str, shape: Tuple, dtype: str = "float32"):
+    return testing.nn.Parameter(shape=shape, dtype=dtype, name=var_name)
 
 
 def get_type(elem_type: Union[str, int]) -> str:
@@ -61,7 +65,9 @@ def get_type(elem_type: Union[str, int]) -> str:
     try:
         from onnx.mapping import TENSOR_TYPE_TO_NP_TYPE  # pylint: disable=import-outside-toplevel
     except ImportError as exception:
-        raise ImportError("Unable to import onnx which is required {}".format(exception))
+        raise ImportError(
+            "Unable to import onnx which is required {}".format(exception)
+        ) from exception
 
     return str(TENSOR_TYPE_TO_NP_TYPE[elem_type])
 
@@ -85,7 +91,7 @@ def get_info(info_proto: onnx.onnx_ml_pb2.ValueInfoProto) -> Tuple[str, List, st
         name = dim.dim_param
         value = dim.dim_value
         if value is None or value == 0:
-            value = tvm.tir.Var("dyn", "int64")
+            value = tvm.tir.Var("d", "int64")
             shape_name.append(name)
         else:
             shape_name.append(value)
@@ -104,7 +110,9 @@ def get_numpy(tensor_proto: onnx.onnx_ml_pb2.TensorProto) -> _np.ndarray:
     try:
         from onnx.numpy_helper import to_array  # pylint: disable=import-outside-toplevel
     except ImportError as exception:
-        raise ImportError("Unable to import onnx which is required {}".format(exception))
+        raise ImportError(
+            "Unable to import onnx which is required {}".format(exception)
+        ) from exception
     return to_array(tensor_proto)
 
 
@@ -156,74 +164,21 @@ class OnnxOpConverter(object):
         )
 
 
-class MatMul(OnnxOpConverter):
-    """Converts an onnx MatMul node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.matmul, inputs[0], inputs[1])
-
-
-class Div(OnnxOpConverter):
-    """Converts an onnx Div node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v14(cls, bb, inputs, attr):
-        return bb.emit_te(topi.divide, inputs[0], inputs[1])
-
-
-class Sigmoid(OnnxOpConverter):
-    """Converts an onnx Sigmoid node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.sigmoid, inputs[0])
-
-
-class Softmax(OnnxOpConverter):
-    """Converts an onnx Softmax node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        axis = attr.get("axis", -1)
-        return bb.emit_te(topi.nn.softmax, inputs[0], axis=axis)
-
-
-class Transpose(OnnxOpConverter):
-    """Converts an onnx Transpose node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        perm = attr.get("perm", None)
-        return bb.emit_te(topi.transpose, inputs[0], axes=perm)
-
-
-class Unsqueeze(OnnxOpConverter):
-    """Converts an onnx Unsqueeze node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        input = inputs[0]
-        axes = inputs[1]
-
-        if isinstance(axes, relax.Constant):
-            constant_axes = list(axes.data.numpy())
-            constant_axes = list(map(int, constant_axes))
-            constant_axes = sorted(constant_axes)
-            for axis in constant_axes:
-                input = bb.emit_te(topi.expand_dims, input, axis=axis, num_newaxis=1)
-            return input
-
-        raise NotImplementedError("Unsqueeze with dynamic axes is not supported.")
-
-
 class Concat(OnnxOpConverter):
     """Convert an onnx Concat node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         axis = attr.get("axis", 0)
-        return bb.emit_te(topi.concatenate, inputs, axis)
+        return bb.normalize(R.concat(inputs, axis))
+
+
+class Matmul(OnnxOpConverter):
+    """Convert an onnx Matmul node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.normalize(relax.op.linear_algebra.matmul(inputs[0], inputs[1]))
 
 
 class Add(OnnxOpConverter):
@@ -231,15 +186,7 @@ class Add(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.add, inputs[0], inputs[1])
-
-
-class Mul(OnnxOpConverter):
-    """Convert an onnx Mul node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.multiply, inputs[0], inputs[1])
+        return bb.normalize(relax.op.add(inputs[0], inputs[1]))
 
 
 class Cast(OnnxOpConverter):
@@ -248,7 +195,7 @@ class Cast(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         to_type = get_type(attr["to"])
-        return bb.emit_te(topi.cast, inputs[0], to_type)
+        return bb.normalize(relax.op.astype(inputs[0], to_type))
 
 
 class Gather(OnnxOpConverter):
@@ -256,9 +203,9 @@ class Gather(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        # TODO This assumes positive only indices.
         axis = attr.get("axis", 0)
-        return bb.emit_te(topi.take, inputs[0], inputs[1], axis)
+        # This assumes that the indices are 1-d and positive
+        return bb.normalize(relax.op.take(inputs[0], inputs[1], axis))
 
 
 class Gemm(OnnxOpConverter):
@@ -278,16 +225,36 @@ class Gemm(OnnxOpConverter):
         # Compute Y = alpha * A X B + beta * C
 
         if alpha is not None:
-            A = bb.emit_te(topi.multiply, A, relax.const(alpha, dtype=dtype))
+            if transA:
+                A = relax.op.permute_dims(A)
+            if transB:
+                B = relax.op.permute_dims(B)
 
-        Y = bb.emit_te(topi.matmul, A, B, transA, transB)
+            Y = relax.op.multiply(
+                relax.op.linear_algebra.matmul(A, B),
+                relax.const(alpha, dtype=dtype),
+            )
 
         if C is not None:
             if beta is not None:
-                C = bb.emit_te(topi.multiply, C, relax.const(beta, dtype=dtype))
-            Y = bb.emit_te(topi.add, Y, C)
+                C = relax.op.multiply(C, relax.const(beta, dtype=dtype))
+            if alpha is not None:
+                Y = relax.op.add(Y, C)
+            else:
+                Y = C
+        else:
+            if alpha is None:
+                Y = relax.const(0, dtype=dtype)
 
-        return Y
+        return bb.normalize(Y)
+
+
+class Mul(OnnxOpConverter):
+    """Convert an onnx Mul node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.normalize(relax.op.multiply(inputs[0], inputs[1]))
 
 
 class Reshape(OnnxOpConverter):
@@ -295,149 +262,179 @@ class Reshape(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        data = inputs[0]
-        # TODO We assume new_shape is a constant, need to enable tensor input to reshape
-        # for full support.
-        if not isinstance(inputs[1], relax.Constant):
-            return inputs[0]
-        new_shape = inputs[1].data.numpy().tolist()
-
-        # Convert -1 dims in new_shape into positive equivalent.
-        if -1 in new_shape:
-            if new_shape.count(-1) != 1:
-                raise ValueError("Reshape with multiple -1 is not supported.")
-
-            data_shape = [dim.value for dim in data.struct_info.shape.values]
-            total_elements = _np.prod(data_shape)
-            new_product = 1
-            for dim in new_shape:
-                if dim > 0:
-                    new_product *= dim
-
-            # Replace -1 with positive equivalent
-            for i, dim in enumerate(new_shape):
-                if dim == -1:
-                    new_shape[i] = int(total_elements / new_product)
-
-        return bb.emit_te(topi.reshape, data, new_shape)
+        assert isinstance(inputs[1], relax.Constant), """Currently only supports constant shape."""
+        shape = inputs[1].data.numpy().tolist()
+        assert shape.count(-1) <= 1, """Reshape only supports at most one -1 in shape."""
+        return bb.normalize(relax.op.reshape(inputs[0], shape))
 
 
-class Gelu(OnnxOpConverter):
-    """Operator converter for Gelu from Microsoft onnxruntime contrib opset.
-
-    gelu(x) = 0.5x(1 + erf(x/sqrt(2)))
-    """
+class Shape(OnnxOpConverter):
+    """Convert an onnx Shape node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v1(cls, bb, inputs, attr):
-        x = inputs[0]
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.normalize(relax.op.shape_of(inputs[0]))
 
-        # Declare constants
-        const_dtype = x.checked_type.dtype
-        half = relax.const(0.5, dtype=const_dtype)
-        one = relax.const(1.0, dtype=const_dtype)
-        sqrt2 = relax.const(math.sqrt(2.0), dtype=const_dtype)
 
-        # Compute gelu
-        term1 = bb.emit_te(topi.multiply, half, x)
-        erf = bb.emit_te(topi.fast_erf, bb.emit_te(topi.divide, x, sqrt2))
-        term2 = bb.emit_te(topi.add, one, erf)
-        return bb.emit_te(topi.multiply, term1, term2)
+class Clip(OnnxOpConverter):
+    """Convert an onnx Clip node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        if len(inputs) >= 2:
+            min_value = inputs[1]
+            assert isinstance(
+                min_value, relax.Constant
+            ), """Currently only supports constant min."""
+            min_value = min_value.data.numpy().tolist()
+            assert isinstance(min_value, (int, float)), """Clip only supports scalar min."""
+        else:
+            min_value = None
+
+        if len(inputs) >= 3:
+            max_value = inputs[2]
+            assert isinstance(
+                max_value, relax.Constant
+            ), """Currently only supports constant max."""
+            max_value = max_value.data.numpy().tolist()
+            assert isinstance(max_value, (int, float)), """Clip only supports scalar max."""
+        else:
+            max_value = None
+        return bb.normalize(relax.op.clip(data, min_value, max_value))
+
+
+class Div(OnnxOpConverter):
+    """Convert an onnx Div node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.normalize(relax.op.divide(inputs[0], inputs[1]))
+
+
+class Expand(OnnxOpConverter):
+    """Convert an onnx Expand node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        shape = inputs[1]
+
+        shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
+        shape_dataflow_var = bb.emit(
+            relax.Call(
+                relax.ExternFunc("vm.builtin.tensor_to_shape"),
+                [shape],
+                sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)],
+            )
+        )
+
+        shape_vars = []
+        for i in range(shape_ndim):
+            shape_vars.append(tvm.tir.Var("shape_var_%d" % i, "int64"))
+        # TODO: confirm this is the correct way to do this
+        bb.match_cast(shape_dataflow_var, R.Shape(shape_vars))
+        return bb.normalize(relax.op.broadcast_to(data, relax.ShapeExpr(shape_vars)))
+
+
+class ReduceMean(OnnxOpConverter):
+    """Convert an onnx ReduceMean node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        axes = attr.get("axes", None)
+        keepdims = attr.get("keepdims", 1)
+        return bb.normalize(relax.op.mean(inputs[0], axes, keepdims))
+
+
+class Sigmoid(OnnxOpConverter):
+    """Convert an onnx Sigmoid node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.normalize(relax.op.sigmoid(inputs[0]))
+
+
+class Slice(OnnxOpConverter):
+    """Convert an onnx Slice node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        starts = inputs[1]
+        ends = inputs[2]
+        axes = inputs[3] if len(inputs) >= 4 else None
+        steps = inputs[4] if len(inputs) >= 5 else None
+
+        # TODO (jwfromm) currently only supports constant parameters.
+        if not all(
+            [
+                (isinstance(param, relax.Constant) or param is None)
+                for param in [starts, ends, axes, steps]
+            ]
+        ):
+            raise ValueError("Only constant Slice parameters are currently supported.")
+
+        # Convert parameters to constant lists.
+        starts = starts.data.numpy().tolist()
+        ends = ends.data.numpy().tolist()
+        if axes is not None:
+            axes = axes.data.numpy().tolist()
+        else:
+            axes = list(range(len(starts)))
+        if steps is not None:
+            steps = steps.data.numpy().tolist()
+        else:
+            steps = [1] * len(axes)
+        return bb.normalize(relax.op.strided_slice(data, axes, starts, ends, steps))
+
+
+class Softmax(OnnxOpConverter):
+    """Convert an onnx Softmax node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        axis = attr.get("axis", -1)
+        return bb.normalize(relax.op.nn.softmax(inputs[0], axis))
+
+
+class Transpose(OnnxOpConverter):
+    """Convert an onnx Transpose node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        axes = attr.get("perm", None)
+        return bb.normalize(relax.op.permute_dims(inputs[0], axes))
+
+
+class Unsqueeze(OnnxOpConverter):
+    """Convert an onnx Unsqueeze node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        axes = inputs[1]
+
+        if isinstance(axes, relax.Constant):
+            constant_axes = list(axes.data.numpy())  # convert to list
+            constant_axes = list(map(int, constant_axes))  # dedupulicate
+            constant_axes = sorted(constant_axes)  # sort
+            return bb.normalize(relax.op.expand_dims(data, constant_axes))
+        raise NotImplementedError("Unsqueeze with dynamic axes is not supported.")
 
 
 class BiasGelu(OnnxOpConverter):
-    """Operator converter for BiasGelu from Microsoft onnxruntime contrib opset.
-
-    bias_gelu(x, b) = 0.5(x + b)(1 + erf((x + b)/sqrt(2)))
-    """
+    """Convert an onnx BiasGelu node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v1(cls, bb, inputs, attr):
-        x = inputs[0]
+    def _impl_v13(cls, bb, inputs, attr):
+        a = inputs[0]
         b = inputs[1]
 
         b_dims = b.checked_type.ndim
         assert b_dims == 1, "BiasGelu bias term must be a 1D tensor."
 
-        inp = bb.emit_te(topi.add, x, b)
-        return Gelu._impl_v1(bb, [inp], attr)
-
-
-class Where(OnnxOpConverter):
-    """Convert an onnx Where node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v16(cls, bb, inputs, attr):
-        return bb.emit_te(topi.where, *inputs)
-
-
-class Clip(OnnxOpConverter):
-    """Converts an onnx Clip node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        results = inputs[0]
-        if inputs[1] is not None:
-            results = bb.emit_te(topi.maximum, results, inputs[1])
-        if inputs[2] is not None:
-            results = bb.emit_te(topi.minimum, results, inputs[2])
-        return results
-
-
-class Equal(OnnxOpConverter):
-    """Converts an onnx Equal node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.equal, inputs[0], inputs[1])
-
-
-class Shape(OnnxOpConverter):
-    """Converts an onnx Equal node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.shape, inputs[0], "int64")
-
-
-class Not(OnnxOpConverter):
-    """Converts an onnx Not node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.bitwise_not, inputs[0])
-
-
-class Tanh(OnnxOpConverter):
-    """Converts an onnx Tanh node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.tanh, inputs[0])
-
-
-class Sqrt(OnnxOpConverter):
-    """Converts an onnx Sqrt node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.sqrt, inputs[0])
-
-
-class Relu(OnnxOpConverter):
-    """Converts an onnx Relu node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.nn.relu, inputs[0])
-
-
-class Pow(OnnxOpConverter):
-    """Converts an onnx Pow node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.power, inputs[0], inputs[1])
+        return bb.normalize(relax.op.nn.gelu(relax.op.add(a, b)))
 
 
 class Conv(OnnxOpConverter):
@@ -445,69 +442,170 @@ class Conv(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        # not supported yet
-        assert "auto_pad" not in attr
-        assert "group" not in attr
-        # supported conv2d
-        return bb.emit_te(
-            topi.add,
-            bb.emit_te(
-                topi.nn.conv2d,
+        assert (
+            inputs[0].checked_type.ndim == 4 and inputs[1].checked_type.ndim == 4
+        ), """Only 2D convolutions are supported for now."""
+
+        strides = attr.get("strides", [1, 1])
+        if "auto_pad" not in attr or attr["auto_pad"] == b"NOTSET":
+            padding = attr.get("pads", None)
+        elif attr["auto_pad"] == b"VALID":
+            padding = [0, 0, 0, 0]
+        elif attr["auto_pad"] == b"SAME_UPPER" or attr["auto_pad"] == b"SAME_LOWER":
+            padding_front = []
+            padding_back = []
+            for i in range(2):
+                pad = max(strides[i] - (inputs[0].struct_info.shape.values[i + 2] % strides[i]), 0)
+                pad_front = pad // 2
+                if pad % 2 == 1 and attr["auto_pad"] == "SAME_LOWER":
+                    pad_front += 1
+                pad_back = pad - pad_front
+                padding_front.append(pad_front)
+                padding_back.append(pad_back)
+                padding = padding_front + padding_back
+        else:
+            raise ValueError("Unsupported auto_pad value: {}".format(attr["auto_pad"]))
+        # default NCHW / OIHW layout
+        return bb.normalize(
+            relax.op.nn.conv2d(
                 inputs[0],
                 inputs[1],
-                strides=attr.get("strides", 1),
-                padding=attr.get("pads", 0),
-                dilation=attr.get("dilations", 1),
-            ),
-            bb.emit_te(topi.expand_dims, inputs[2], axis=1, num_newaxis=2),
+                padding=padding,
+                strides=strides,
+                dilation=attr.get("dilations", [1, 1]),
+                groups=attr.get("group", 1),
+            )
         )
 
 
-class Erf(OnnxOpConverter):
-    """Converts an onnx Erf node into an equivalent Relax expression."""
+class Equal(OnnxOpConverter):
+    """Convert an onnx Equal node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.fast_erf, inputs[0])
+        return bb.normalize(relax.op.equal(inputs[0], inputs[1]))
 
 
-class CumSum(OnnxOpConverter):
-    """Converts an onnx CumSum node into an equivalent Relax expression."""
+class Erf(OnnxOpConverter):
+    """Convert an onnx Erf node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        x = inputs[0]
+        sqrt2 = relax.op.sqrt(relax.const(2, dtype="float32"))
+        # TODO: replace with erf operator once it is implemented
+        return bb.normalize(
+            relax.op.add(
+                relax.op.divide(
+                    relax.op.multiply(relax.op.nn.gelu(relax.op.multiply(x, sqrt2)), sqrt2), x
+                ),
+                relax.const(-1, dtype="float32"),
+            )
+        )
+
+
+class Not(OnnxOpConverter):
+    """Convert an onnx Not node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.normalize(relax.op.equal(inputs[0], relax.const(0, dtype="bool")))
+
+
+class Pow(OnnxOpConverter):
+    """Convert an onnx Pow node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        x = inputs[0]
+        y = inputs[1]
+        return bb.normalize(relax.op.exp(relax.op.multiply(relax.op.log(x), y)))
+
+
+class SkipLayerNormalization(OnnxOpConverter):
+    """Convert an onnx SkipLayerNormalization node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        eps = attr.get("epsilon", 1e-12)
+        data = inputs[0]
+        assert data.checked_type.ndim == 3, "SkipLayerNormalization input must be 3D tensor."
+        skip = inputs[1]
+        assert skip.checked_type.ndim == 3, "SkipLayerNormalization skip must be 3D tensor."
+        gamma = inputs[2]
+        beta = inputs[3] if len(inputs) > 3 else None
+        bias = inputs[4] if len(inputs) > 4 else None
+
+        x = relax.op.add(data, skip)
+        if bias is not None:
+            x = relax.op.add(x, bias)
+        output = relax.op.nn.layer_norm(
+            x,
+            gamma,
+            beta,
+            axes=2,  # feature dimension
+            epsilon=eps,
+        )
+
+        placeholder = relax.const(0, dtype="float32")
+
+        # TODO: according to relay documentation, onnxruntime doesn't compute
+        # the other outputs, despite the documentation. Need to confirm and
+        # make sure this is the correct way to handle relax tuple return.
+        return relax.Tuple([output, placeholder, placeholder, placeholder])
+
+
+class Sqrt(OnnxOpConverter):
+    """Convert an onnx Sqrt node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.normalize(relax.op.sqrt(inputs[0]))
+
+
+class Squeeze(OnnxOpConverter):
+    """Convert an onnx Squeeze node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
         if len(inputs) > 1:
-            axis = int(inputs[1].data.numpy())
+            axes = inputs[1]
+            assert isinstance(axes, relax.Constant), "Currently only support constant axes."
+            axes = axes.data.numpy().tolist()
+            for axis in axes:
+                assert data.struct_info.shape[axis] == 1, "Squeeze axis must be 1."
         else:
-            axis = None
-        if attr.get("reverse", 0) != 0:
-            data = bb.emit_te(topi.flip, data, axis=axis if axis else 0)
-        data = bb.emit_te(
-            topi.cumsum,
-            data=data,
-            axis=axis,
-            exclusive=attr.get("exclusive", None),
-        )
-        if attr.get("reverse", 0) != 0:
-            data = bb.emit_te(topi.flip, data, axis=axis if axis else 0)
-        return data
+            axes = None
+        return bb.normalize(relax.op.squeeze(data, axes))
 
 
-class Squeeze(OnnxOpConverter):
-    """Converts an onnx Squeeze node into an equivalent Relax expression."""
+class Sub(OnnxOpConverter):
+    """Convert an onnx Sub node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        if len(inputs) > 1:
-            axis = [int(x) for x in inputs[1].data.numpy()]
-        else:
-            axis = None
-        return bb.emit_te(topi.squeeze, inputs[0], axis=axis)
+        return bb.normalize(relax.op.subtract(inputs[0], inputs[1]))
+
+
+class Tanh(OnnxOpConverter):
+    """Convert an onnx Tanh node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.normalize(relax.op.tanh(inputs[0]))
+
+
+class Where(OnnxOpConverter):
+    """Convert an onnx Where node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.normalize(relax.op.where(inputs[0], inputs[1], inputs[2]))
 
 
 class Constant(OnnxOpConverter):
-    """Converts an onnx Constant node into an equivalent Relax expression."""
+    """Convert an onnx Constant node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
@@ -526,206 +624,139 @@ class Constant(OnnxOpConverter):
         return value
 
 
-class ConstantOfShape(OnnxOpConverter):
-    """Converts an onnx ConstantOfShape node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v9(cls, bb, inputs, attr):
-        shape = inputs[0]
-        shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
-        value = get_numpy(attr.get("value", 0))
-        if isinstance(value, _np.ndarray):
-            dtype = str(value.dtype)
-        else:
-            dtype = "float32"
-        # Create a constant for the new value.
-        const_value = relax.const(value, dtype)
-
-        # Broadcast the constant to the input shape.
-        shape_dataflow_var = bb.emit(
-            relax.Call(
-                relax.ExternFunc("vm.builtin.tensor_to_shape"),
-                [shape],
-                sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)],
-            )
-        )
-        shape_vars = []
-        for i in range(shape_ndim):
-            shape_vars.append(tvm.tir.Var("x_%d" % i, "int64"))
-        bb.match_cast(shape_dataflow_var, relax.ShapeStructInfo(shape_vars))
-        return bb.normalize(relax.op.broadcast_to(const_value, relax.ShapeExpr(shape_vars)))
-
-
-class Sub(OnnxOpConverter):
-    """Converts an onnx Sub node into an equivalent Relax expression."""
+class Relu(OnnxOpConverter):
+    """Convert an onnx Relu node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.subtract, inputs[0], inputs[1])
+        return bb.normalize(relax.op.nn.relu(inputs[0]))
 
 
 class Split(OnnxOpConverter):
-    """Converts an onnx Split node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v1(cls, bb, inputs, attr):
-        splits = attr.get("split", None)
-        if splits is not None and len(splits) > 1:
-            indices = []
-            index = 0
-            for i in splits[:-1]:
-                index += i
-                indices.append(index)
-        # When splits isnt specified divide evenly over axis.
-        else:
-            indices = attr["tvm_custom"]["num_outputs"]
-        output = bb.emit_te(topi.split, inputs[0], indices, attr.get("axis", 0))
-        return output
+    """Convert an onnx Split node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        splits = inputs[1]
-        splits_rank = None
-        if splits is not None:
-            splits_rank = splits.checked_type.ndim
-        if splits is not None and splits_rank > 0:
-            if isinstance(splits, relax.Constant):
-                splits = splits.data.asnumpy()
-                indices = []
-                index = 0
-                for i in splits[:-1]:
-                    index += i
-                    indices.append(index)
-            else:
-                raise ValueError("Dynamic Split not yet supported")
-        # When splits isnt specified divide evenly over axis.
-        else:
-            indices = attr["tvm_custom"]["num_outputs"]
-        output = bb.emit_te(topi.split, inputs[0], indices, axis=attr.get("axis", 0))
-        return output
+        axis = attr.get("axis", 0)
+        input = inputs[0]
+        split = inputs[1] if len(inputs) > 1 else None
+        if split is None:
+            raise ValueError("split is required for Split")
+        assert isinstance(split, relax.Constant), "Currently only support constant split."
+        split = split.data.numpy().tolist()
+        assert sum(split) == input.struct_info.shape[axis], "Split sum must equal input size."
+        return bb.normalize(relax.op.split(input, split, axis))
 
 
-class Slice(OnnxOpConverter):
-    """Converts an onnx Splice node into an equivalent Relax expression."""
+class EmbedLayerNormalization(OnnxOpConverter):
+    """Convert an onnx EmbedLayerNormalization node into an equivalent Relax expression."""
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        # TODO (jwfromm) currently only supports constant parameters.
-        data = inputs[0]
-        starts = inputs[1]
-        ends = inputs[2]
-        axes = inputs[3]
-        steps = inputs[4]
-        if not all(
-            [
-                (isinstance(param, relax.Constant) or param is None)
-                for param in [starts, ends, axes, steps]
-            ]
+        eps = attr.get("epsilon", 1e-12)
+        input_ids = inputs[0]
+        assert (
+            input_ids.checked_type.ndim == 2
+        ), "EmbedLayerNormalization input ids must be 2D tensor."
+
+        segment_ids = inputs[1]
+        assert (
+            segment_ids.checked_type.ndim == 2
+        ), "EmbedLayerNormalization segment ids must be 2D tensor."
+        if (
+            segment_ids.struct_info.shape[0] != input_ids.struct_info.shape[0]
+            or segment_ids.struct_info.shape[1] != input_ids.struct_info.shape[1]
         ):
-            raise ValueError("Only constant Slice parameters are currently supported.")
-        # Convert parameters to constant lists.
-        starts = starts.data.numpy().tolist()
-        ends = ends.data.numpy().tolist()
-        if axes is not None:
-            axes = axes.data.numpy().tolist()
+            # segment_ids is optional
+            segment_ids = None
+            next_input_id = 1
         else:
-            axes = list(range(len(starts)))
-        if steps is not None:
-            steps = steps.data.numpy().tolist()
+            next_input_id = 2
+
+        word_embedding = inputs[next_input_id]
+        assert (
+            word_embedding.checked_type.ndim == 2
+        ), "EmbedLayerNormalization word embedding must be 2D tensor."
+        position_embedding = inputs[next_input_id + 1]
+        assert (
+            position_embedding.checked_type.ndim == 2
+        ), "EmbedLayerNormalization position embedding must be 2D tensor."
+        next_input_id += 2
+        segment_embedding = inputs[next_input_id]
+        if segment_embedding.checked_type.ndim != 2:
+            # segment embedding is optional
+            segment_embedding = None
         else:
-            steps = [1] * len(axes)
-        return bb.emit_te(topi.strided_slice, data, starts, ends, strides=steps, axes=axes)
+            next_input_id += 1
+        gamma = inputs[next_input_id]
+        beta = inputs[next_input_id + 1]
+        mask = inputs[next_input_id + 2] if len(inputs) > next_input_id + 2 else None
+        position_ids = inputs[next_input_id + 3] if len(inputs) > next_input_id + 3 else None
 
+        (batch_size, seq_len) = input_ids.struct_info.shape
+        batch_size = int(batch_size)
+        seq_len = int(seq_len)
 
-class Pad(OnnxOpConverter):
-    """Converts an onnx Pad node into an equivalent Relax expression."""
+        if segment_ids:
+            assert segment_embedding is not None
 
-    @classmethod
-    def _impl_v11(cls, bb, inputs, attr):
-        pads = inputs[1]
-        if len(inputs) == 3 and inputs[2] is not None:
-            constant_value = inputs[2].data.numpy().item()
-        else:
-            constant_value = 0.0
+        if position_ids is None:
+            position_ids = relax.const([list(range(int(seq_len)))] * int(batch_size), dtype="int64")
 
-        if isinstance(pads, relax.Constant):
-            pad_before, pad_after = _np.split(pads.data.numpy(), 2)
-            pad_before = _np.ndarray.tolist(pad_before)
-            pad_after = _np.ndarray.tolist(pad_after)
-        else:
-            raise ValueError("Dynamic pads are not supported yet.")
+        input_ids_1d = bb.normalize(relax.op.reshape(input_ids, [-1]))
+        word_vec_2d = bb.normalize(relax.op.take(word_embedding, input_ids_1d, axis=0))
+        word_vec = bb.normalize(relax.op.reshape(word_vec_2d, [batch_size, seq_len, -1]))
 
-        pad_mode = attr.get("mode", b"constant").decode("utf-8")
-        if not pad_mode in ["constant", "edge", "reflect"]:
-            raise tvm.error.OpAttributeInvalid(
-                "Value " + pad_mode + ' in attribute "mode" is invalid for operator Pad.'
-            )
+        segment_ids_1d = bb.normalize(relax.op.reshape(segment_ids, [-1]))
+        segment_vec_2d = bb.normalize(relax.op.take(segment_embedding, segment_ids_1d, axis=0))
+        segment_vec = bb.normalize(relax.op.reshape(segment_vec_2d, [batch_size, seq_len, -1]))
 
-        if pad_mode == "constant":
-            return bb.emit_te(topi.nn.pad, inputs[0], pad_before, pad_after, constant_value)
-        elif pad_mode == "reflect":
-            return bb.emit_te(topi.nn.mirror_pad, inputs[0], pad_before, pad_after, "REFLECT")
-        else:
-            # TODO(gigiblender) Support edge mode.
-            raise NotImplementedError("Pad mode {} not implemented".format(pad_mode))
+        pos_ids_1d = bb.normalize(relax.op.reshape(position_ids, [-1]))
+        pos_vec_2d = bb.normalize(relax.op.take(position_embedding, pos_ids_1d, axis=0))
+        pos_vec = bb.normalize(relax.op.reshape(pos_vec_2d, [batch_size, seq_len, -1]))
 
+        vec_sum = bb.normalize(relax.op.add(word_vec, pos_vec))
+        if segment_ids:
+            vec_sum = bb.normalize(relax.op.add(vec_sum, segment_vec))
 
-class Tile(OnnxOpConverter):
-    """Converts an onnx Tile node into an equivalent Relax expression."""
+        vec_sum_2d = bb.normalize(relax.op.reshape(vec_sum, [batch_size * seq_len, -1]))
+        ln = bb.normalize(relax.op.nn.layer_norm(vec_sum_2d, gamma, beta, axes=1, epsilon=eps))
+        ln = bb.normalize(relax.op.reshape(ln, [batch_size, seq_len, -1]))
 
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        reps = inputs[1]
-        if isinstance(reps, relax.Constant):
-            reps = reps.data.numpy().tolist()
-        else:
-            raise ValueError("Dynamic reps for Tile are supported yet.")
-        return bb.emit_te(topi.tile, inputs[0], reps)
-
-
-class Expand(OnnxOpConverter):
-    """Converts an onnx Expand node into an equivalent Relax expression."""
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        data = inputs[0]
-        shape = inputs[1]
-        shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
-        shape_dataflow_var = bb.emit(
-            relax.Call(
-                relax.ExternFunc("vm.builtin.tensor_to_shape"),
-                [shape],
-                sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)],
-            )
+        mask_index = relax.const(
+            _np.zeros(
+                batch_size,
+            ),
+            dtype="int64",
         )
-
-        shape_vars = []
-        for i in range(shape_ndim):
-            shape_vars.append(tvm.tir.Var("x_%d" % i, "int64"))
-        bb.match_cast(shape_dataflow_var, relax.ShapeStructInfo(shape_vars))
-        return bb.normalize(relax.op.broadcast_to(data, relax.ShapeExpr(shape_vars)))
+        if mask:
+            # calculate number of words per sentence
+            mask_index = bb.normalize(relax.op.sum(mask, axis=1))
+        return relax.Tuple([ln, mask_index, vec_sum])
 
 
 class Attention(OnnxOpConverter):
-    """Converts an onnx.microsoft Attention node into an equivalent Relax expression."""
+    """Transform an onnx Attention node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v1(cls, bb, inputs, attr):
-        num_heads = attr["num_heads"]
-
+    def _impl_v13(cls, bb, inputs, attr):
+        # mask_filter_value = attr.get("mask_filter_value", -1e4)
+        num_heads = attr.pop("num_heads")
+        # past_present_share_buffer = attr.pop("past_present_share_buffer")
         assert (
             "qkv_hidden_sizes" not in attr
         ), "different hidden sizes for Q, K, V are not currently supported"
+        # scale = attr.pop("scale")
         assert "unidirectional" not in attr, "unidirectional attention not current supported"
 
         # (batch, seq, in_hidden)
         input_emb = inputs[0]
 
         # (in_hidden, 3 * out_hidden), where out_hidden = num_heads * head_size
-        weight = bb.normalize(inputs[1])
+        weight = inputs[1]
 
         # (3 * out_hidden,)
-        bias = bb.normalize(inputs[2])
+        bias = inputs[2]
 
         # 1. (    batch,              1,        max_seq, max_seq)
         # 2. (    batch, past_seq + seq,)
@@ -733,17 +764,16 @@ class Attention(OnnxOpConverter):
         # 4. (    batch,)
         # 5. (2 * batch,)
         # For now, we only support case 2.
-        mask_index = bb.normalize(inputs[3])
+        mask_index = inputs[3]
 
         # (2, batch, num_heads, past_seq, head_size)
         past = inputs[4]
 
         # (batch, num_heads, seq, seq)
         extra_add = inputs[5]
-        input_emb_shape = [val.value for val in input_emb.struct_info.shape.values]
-        (batch_size, seq_len, _) = input_emb_shape
 
-        (out_hidden_x3,) = [val.value for val in bias.struct_info.shape.values]
+        (batch_size, seq_len, _) = input_emb.struct_info.shape
+        (out_hidden_x3,) = bias.struct_info.shape
         assert out_hidden_x3 % 3 == 0, "bias shape should be divisible by 3"
         out_hidden = out_hidden_x3 // 3
         assert (
@@ -754,7 +784,7 @@ class Attention(OnnxOpConverter):
         assert (
             mask_index is not None
         ), "Attention import currently only supports required mask_index"
-        mask_index_shape = [val.value for val in mask_index.struct_info.shape.values]
+        mask_index_shape = mask_index.struct_info.shape
         assert (
             len(mask_index_shape) == 2
             and mask_index_shape[0] == batch_size
@@ -764,99 +794,59 @@ class Attention(OnnxOpConverter):
         assert past is None, "past K, V state is not currently supported"
         assert extra_add is None, "extra add to QxK not currently supported"
 
-        split_1 = bb.emit_te(topi.split, weight, 3, 1)
         # split weight and biases and do the matmuls
-        w_Q, w_K, w_V = bb.emit(split_1[0]), bb.emit(split_1[1]), bb.emit(split_1[2])
-
-        split_2 = bb.emit_te(topi.split, bias, 3, 0)
-        b_Q, b_K, b_V = bb.emit(split_2[0]), bb.emit(split_2[1]), bb.emit(split_2[2])
+        w_Q, w_K, w_V = relax.op.split(weight, 3, axis=1)
+        b_Q, b_K, b_V = relax.op.split(bias, 3, axis=0)
         # need to merge batch dimensions since TVM matmul is 2D
-
-        # TODO(@yuchen): check reverse_reshape, a hack here
-        input_emb = bb.emit_te(
-            topi.reshape, input_emb, (input_emb_shape[0] * input_emb_shape[1], input_emb_shape[2])
-        )
-
-        mul = bb.emit_te(topi.nn.matmul, input_emb, w_Q)
-
-        Q = bb.emit_te(topi.add, mul, b_Q)
-
-        mul2 = bb.emit_te(topi.nn.matmul, input_emb, w_K)
-        K = bb.emit_te(topi.add, mul2, b_K)
-
-        mul3 = bb.emit_te(topi.nn.matmul, input_emb, w_V)
-        V = bb.emit_te(topi.add, mul3, b_V)
+        input_emb = relax.op.reshape(input_emb, (-1, 0))
+        Q = relax.op.add(relax.op.linear_algebra.matmul(input_emb, w_Q), b_Q)
+        K = relax.op.add(relax.op.linear_algebra.matmul(input_emb, w_K), b_K)
+        V = relax.op.add(relax.op.linear_algebra.matmul(input_emb, w_V), b_V)
 
         # massage tensors in preparation for batched matmul
-        def massage(bb, tensor):
-            tensor = bb.emit_te(topi.reshape, tensor, (batch_size, seq_len, num_heads, head_size))
+        def massage(tensor):
+            tensor = relax.op.reshape(tensor, (batch_size, seq_len, num_heads, head_size))
 
             # (batch_size, num_heads, seq_len, head_size)
-            tensor = bb.emit_te(topi.transpose, tensor, [0, 2, 1, 3])
-            tensor_shape = [val.value for val in tensor.struct_info.shape.values]
+            tensor = relax.op.permute_dims(tensor, axes=[0, 2, 1, 3])
 
             # (batch_size * num_heads, seq_len, head_size)
-            # TODO(@yuchen): check reverse_reshape, hack here
-            return bb.emit_te(
-                topi.reshape,
-                tensor,
-                (tensor_shape[0] * tensor_shape[1], tensor_shape[2], tensor_shape[3]),
-            )
+            return relax.op.reshape(tensor, (-1, 0, 0))
 
-        Q = massage(bb, Q)
-        K = massage(bb, K)
-        V = massage(bb, V)
+        Q = massage(Q)
+        K = massage(K)
+        V = massage(V)
 
-        K_present = bb.emit_te(topi.reshape, K, (batch_size, num_heads, seq_len, head_size))
-        V_present = bb.emit_te(topi.reshape, V, (batch_size, num_heads, seq_len, head_size))
-        present = bb.emit_te(topi.stack, [K_present, V_present], 0)
+        K_present = relax.op.reshape(K, (batch_size, num_heads, seq_len, head_size))
+        V_present = relax.op.reshape(V, (batch_size, num_heads, seq_len, head_size))
+        present = relax.op.concat([K_present, V_present], axis=0)
 
-        att_scores = bb.emit_te(topi.nn.batch_matmul, Q, K, transpose_a=False, transpose_b=True)
-        score_dtype = att_scores.checked_type.dtype
-        att_scores = bb.emit_te(
-            topi.multiply,
-            att_scores,
-            relax.const(1 / _np.sqrt(head_size), dtype=att_scores.checked_type.dtype),
+        K_T = relax.op.permute_dims(K)
+        att_scores = relax.op.linear_algebra.matmul(Q, K_T)
+        score_dtype = att_scores.struct_info.dtype
+        att_scores = relax.op.divide(
+            att_scores, relax.const(_np.sqrt(head_size), dtype=att_scores.struct_info.dtype)
         )
-        att_scores = bb.emit_te(topi.reshape, att_scores, (batch_size, num_heads, seq_len, seq_len))
+        att_scores = relax.op.reshape(att_scores, (batch_size, num_heads, seq_len, seq_len))
 
         # build the attention mask
-        att_mask = bb.emit_te(topi.cast, mask_index, score_dtype)
-        att_mask = bb.emit_te(topi.expand_dims, att_mask, 1, num_newaxis=2)
-        att_mask = bb.emit_te(topi.subtract, relax.const(1, dtype=score_dtype), att_mask)
-        att_mask = bb.emit_te(topi.multiply, att_mask, relax.const(-10000, dtype=score_dtype))
+        att_mask = relax.op.astype(mask_index, score_dtype)
+        att_mask = relax.op.expand_dims(att_mask, 1)
+        att_mask = relax.op.subtract(relax.const(1, dtype=score_dtype), att_mask)
+        att_mask = relax.op.multiply(att_mask, relax.const(-10000, dtype=score_dtype))
 
         # apply the mask
-        att_scores = bb.emit_te(topi.add, att_scores, att_mask)
-        att_scores = bb.emit_te(
-            topi.reshape, att_scores, (batch_size * num_heads, seq_len, seq_len)
-        )
+        att_scores = relax.op.add(att_scores, att_mask)
+        att_scores = relax.op.reshape(att_scores, (batch_size * num_heads, seq_len, seq_len))
 
-        att_probs = bb.emit_te(topi.nn.softmax, att_scores, axis=-1)
+        att_probs = relax.op.nn.softmax(att_scores, axis=-1)
 
-        output = bb.emit_te(
-            topi.nn.batch_matmul, att_probs, V, transpose_a=False, transpose_b=False
-        )
+        output = relax.op.matmul(att_probs, V)
+        output = relax.op.reshape(output, (-1, num_heads, 0, 0))
+        output = relax.op.permute_dims(output, axes=[0, 2, 1, 3])
+        output = relax.op.reshape(output, (0, 0, out_hidden))
 
-        # TODO(@yuchen): check reverse_reshape, hack here
-        output_shape = [val.value for val in output.struct_info.shape.values]
-        output = bb.emit_te(
-            topi.reshape,
-            output,
-            (
-                int(output_shape[0]) // num_heads,
-                num_heads,
-                int(output_shape[1]),
-                int(output_shape[2]),
-            ),
-        )
-
-        output = bb.emit_te(topi.transpose, output, axes=[0, 2, 1, 3])
-        output_shape = [val.value for val in output.struct_info.shape.values]
-        output = bb.emit_te(
-            topi.reshape, output, (int(output_shape[0]), int(output_shape[1]), out_hidden)
-        )
-        return relax.Tuple([output, present])
+        return relax.Tuple(bb.emit(output), present)
 
 
 # pylint: enable=invalid-name, import-self, len-as-condition, unused-argument, too-many-lines
@@ -864,61 +854,41 @@ class Attention(OnnxOpConverter):
 
 def _get_convert_map():
     return {
-        "MatMul": relay.frontend.onnx.MatMul,
         "Concat": Concat,
+        "MatMul": Matmul,
         "Add": Add,
-        "Mul": Mul,
         "Cast": Cast,
         "Gather": Gather,
         "Gemm": Gemm,
+        "Mul": Mul,
         "Reshape": Reshape,
+        "Shape": Shape,
+        "Clip": Clip,
         "Div": Div,
+        "Expand": Expand,
+        "ReduceMean": ReduceMean,
         "Sigmoid": Sigmoid,
+        "Slice": Slice,
         "Softmax": Softmax,
         "Transpose": Transpose,
         "Unsqueeze": Unsqueeze,
-        "Gelu": Gelu,
         "BiasGelu": BiasGelu,
-        "Where": Where,
-        "Clip": Clip,
+        "Conv": Conv,
         "Equal": Equal,
-        "Shape": Shape,
-        "Not": Not,
-        "Tanh": Tanh,
-        "Sqrt": Sqrt,
-        "Relu": Relu,
-        "Conv": relay.frontend.onnx.Conv,
-        "Pow": Pow,
         "Erf": Erf,
-        "CumSum": CumSum,
+        "Not": Not,
+        "Pow": Pow,
+        "SkipLayerNormalization": SkipLayerNormalization,
+        "Sqrt": Sqrt,
         "Squeeze": Squeeze,
-        "Constant": Constant,
         "Sub": Sub,
-        "LayerNormalization": relay.frontend.onnx.LayerNormalization,
-        "SkipLayerNormalization": relay.frontend.onnx.SkipLayerNormalization,
-        "EmbedLayerNormalization": relay.frontend.onnx.EmbedLayerNormalization,
-        # defs/reduction
-        "ReduceMax": relay.frontend.onnx.ReduceMax,
-        "ReduceMin": relay.frontend.onnx.ReduceMin,
-        "ReduceSum": relay.frontend.onnx.ReduceSum,
-        "ReduceMean": relay.frontend.onnx.ReduceMean,
-        "ReduceProd": relay.frontend.onnx.ReduceProd,
-        "ReduceLogSumExp": relay.frontend.onnx.ReduceLogSumExp,
-        "ReduceLogSum": relay.frontend.onnx.ReduceLogSum,
-        "ReduceSumSquare": relay.frontend.onnx.ReduceSumSquare,
-        "ReduceL1": relay.frontend.onnx.ReduceL1,
-        "ReduceL2": relay.frontend.onnx.ReduceL2,
-        "Expand": Expand,
-        "ConstantOfShape": ConstantOfShape,
-        "Slice": Slice,
-        "Attention": Attention,
-        "Pad": Pad,
+        "Tanh": Tanh,
+        "Where": Where,
+        "Constant": Constant,
+        "Relu": Relu,
         "Split": Split,
-        "Tile": Tile,
-        "BatchNormalization": relay.frontend.onnx.BatchNorm,
-        "GlobalAveragePool": relay.frontend.onnx.GlobalAveragePool,
-        "Flatten": relay.frontend.onnx.Flatten,
-        "MaxPool": relay.frontend.onnx.MaxPool,
+        "EmbedLayerNormalization": EmbedLayerNormalization,
+        "Attention": Attention,
     }
 
 
@@ -934,30 +904,20 @@ class ONNXGraphImporter:
         The input types to the graph
     target : tvm.target.Target
         The target device of the compiled functions when using the translator.
-    sanitize : bool
-        Whether to sanitize the input names to be valid Relax identifiers.
     """
 
     current = None
 
-    def __init__(
-        self,
-        shape: Dict[str, List],
-        dtype: Union[str, Dict[str, str]],
-        target: Target,
-        sanitize: bool = True,
-    ):
-        self._nodes: Dict[str, relax.Expr] = {}
-        self._inputs: Dict[str, relax.Var] = {}
-        self._num_input: int = 0
+    def __init__(self, shape: Dict[str, Tuple], dtype: Union[str, Dict[str, str]], target: Target):
+        self._nodes = {}
+        self._inputs = {}
+        self._num_input = 0
         self._shape = shape.copy() if shape else {}
-        self._input_names: List[str] = []
+        self._input_names = []
         self._dtype = dtype
-        self.opset: int = None
-        self._target: Union[tvm.target.Target, str] = target
-        self._name_supply = NameSupply()
-        self._sanitize: bool = sanitize
-        self.bb: relax.BlockBuilder = relax.BlockBuilder()  # pylint: disable=invalid-name
+        self.opset = None
+        self._target = target
+        self.bb = relax.BlockBuilder()  # pylint: disable=invalid-name
 
     def from_onnx(
         self, graph: onnx.onnx_ml_pb2.ModelProto, opset: int
@@ -993,7 +953,7 @@ class ONNXGraphImporter:
                 outputs = outputs[0] if len(outputs) == 1 else relax.Tuple(outputs)
 
                 # Create a function from our output expression and all input variables.
-                param_list = [v for k, v in self._inputs.items() if isinstance(v, relax.Var)]
+                param_list = [v for k, v in self._inputs.items()]
                 output_var = self.bb.emit_output(outputs)
             self.bb.emit_func_output(output_var, params=param_list)
         return self.bb.get()
@@ -1005,39 +965,6 @@ class ONNXGraphImporter:
                 raise ValueError("Tensor's name is required.")
             array = self._parse_array(init_tensor)
             self._nodes[init_tensor.name] = relax.const(array)
-
-    def _sanitize_name(self, name: str) -> str:
-        """Sanitize a name to make it a valid identifier.
-        If the name is None, returns a string input_0, input_1, etc.
-        If the input is an empty string, returns empty_0, empty_1, etc.
-        If the input is a string that does not start with a letter or underscore,
-        returns input_<name>. Otherwise, returns an unique input name.
-
-        Parameters
-        ----------
-        name : str
-            The name to sanitize
-        Returns
-        -------
-        new_name : str
-        """
-
-        if name == "":
-            return self._name_supply.fresh_name("empty_")
-
-        new_name = name.replace(".", "_")
-        if not new_name[0].isalpha() and new_name[0] != "_":
-            new_name = str(self._name_supply.fresh_name("input_" + new_name))
-        else:
-            new_name = str(self._name_supply.fresh_name(new_name))
-
-        if new_name != name:
-            warnings.warn(("Renaming name %s to %s" % (name, new_name)))
-        return new_name
-
-    def _new_var(self, var_name: str, shape: List, dtype: str = "float32"):
-        """Creates a new Relax variable."""
-        return testing.nn.Parameter(shape=shape, dtype=dtype, name=var_name)
 
     def _parse_graph_input(self, graph: onnx.onnx_ml_pb2.GraphProto):
         """Parse model inputs to Relax parameters."""
@@ -1062,8 +989,7 @@ class ONNXGraphImporter:
                     dtype = self._dtype[i_name] if i_name in self._dtype else d_type
                 else:
                     dtype = d_type
-                var_name = self._sanitize_name(i_name) if self._sanitize else i_name
-                self._nodes[i_name] = self._new_var(var_name, shape=i_shape, dtype=dtype)
+                self._nodes[i_name] = new_var(i_name, shape=i_shape, dtype=dtype)
             self._inputs[i_name] = self._nodes[i_name]
 
     def _check_for_unsupported_ops(self, graph: onnx.onnx_ml_pb2.GraphProto):
@@ -1222,11 +1148,11 @@ class ONNXGraphImporter:
         relay_var_inputs = [input for input in relay_inputs if isinstance(input, relay.Var)]
         function = relay.Function(relay_var_inputs, relay_output)
         # Save the current in-use block builder. The translator uses its own block builder.
-        prev_bb = relax.BlockBuilder._current
-        relax.BlockBuilder._current = None
+        prev_bb = relax.BlockBuilder._current  # pylint: disable=protected-access
+        relax.BlockBuilder._current = None  # pylint: disable=protected-access
         relax_mod = testing.relay_translator.from_relay(function, self._target)
         # Restore the block builder used by the frontend.
-        relax.BlockBuilder._current = prev_bb
+        relax.BlockBuilder._current = prev_bb  # pylint: disable=protected-access
 
         # This dict is used by the Mapper mutator to replace the globar vars
         # in the relax_mod with global_vars registered with the in-use block builder.
@@ -1252,12 +1178,16 @@ class ONNXGraphImporter:
             def visit_span(self, span: relax.Span):
                 return span
 
-            def visit_var_(self, var_node: Var):  # pylint: disable=arguments-differ
+            def visit_var_(
+                self, var_node: Var
+            ):  # pylint: disable=arguments-differ,arguments-renamed
                 if var_node.name_hint in relax_input_dict:
                     return relax_input_dict[var_node.name_hint]
                 return var_node
 
-            def visit_global_var_(self, gv_node: GlobalVar):  # pylint: disable=arguments-differ
+            def visit_global_var_(
+                self, gv_node: GlobalVar
+            ):  # pylint: disable=arguments-differ,arguments-renamed
                 if gv_node in global_var_dict:
                     return global_var_dict[gv_node]
                 return gv_node
@@ -1325,11 +1255,10 @@ class ONNXGraphImporter:
 
 def from_onnx(
     model: onnx.onnx_ml_pb2.GraphProto,
-    shape: Dict[str, List] = None,
+    shape: Dict[str, Tuple] = None,
     dtype: str = "float32",
     opset: int = None,
     target: Union[str, Target] = "llvm",
-    sanitize_input_names: bool = True,
 ) -> Tuple[IRModule, Dict]:
     """Convert a ONNX model into an equivalent Relax Function.
     ONNX graphs are represented as Python Protobuf objects.
@@ -1349,8 +1278,6 @@ def from_onnx(
         This can be helpful for some testing.
     target : str or Target, optional
         The compilation target used by the Relay to Relax translator.
-    sanitize_input_names : bool, optional
-        Whether to sanitize the input names to ensure they are valid Relax identifiers.
 
     Returns
     -------
@@ -1377,12 +1304,14 @@ def from_onnx(
             except Exception as exception:  # pylint: disable=c-extension-no-member, broad-except
                 # the checker is a bit violent about errors, so simply print warnings here
                 warnings.warn(str(exception))
-    except ImportError as error:
-        raise ImportError("Unable to import onnx which is required {}".format(error))
+    except ImportError as exception:
+        raise ImportError(
+            "Unable to import onnx which is required {}".format(exception)
+        ) from exception
 
     if isinstance(target, str):
         target = Target(target)
-    g = ONNXGraphImporter(shape, dtype, target, sanitize_input_names)
+    g = ONNXGraphImporter(shape, dtype, target)
     graph = model.graph
 
     try:
