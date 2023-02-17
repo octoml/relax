@@ -15,8 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 """Manipulation operators."""
-from typing import List, Optional, Tuple, Union, Callable
+from typing import List, Optional, Tuple, Union, Callable, Any
 
+import numpy as np
+import tvm
 from tvm.ir.expr import PrimExpr
 from tvm.tir import IntImm, FloatImm, IndexMap
 
@@ -261,3 +263,9 @@ def squeeze(x: Expr, axis: Optional[Union[int, List[int]]] = None) -> Expr:
     if isinstance(axis, int):
         axis = [axis]
     return _ffi_api.squeeze(x, axis)  # type: ignore
+
+
+@tvm.register_func("relax.run.broadcast_to")
+def numpy_broadcast_to(data: tvm.nd.array, shape: List[Any]) -> tvm.nd.array:
+    out = np.broadcast_to(data.numpy(), shape)
+    return tvm.nd.array(out)
