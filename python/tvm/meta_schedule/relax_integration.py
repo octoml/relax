@@ -146,11 +146,11 @@ def tune_relax(
     target: Union[str, Target],
     work_dir: str,
     max_trials_global: int,
-    *,
     max_trials_per_task: Optional[int] = None,
     num_trials_per_iter: int = 64,
     builder: Builder.BuilderType = "local",
     runner: Runner.RunnerType = "local",
+    *,
     database: Database.DatabaseType = "json",
     cost_model: CostModel.CostModelType = "xgb",
     measure_callbacks: MeasureCallback.CallbackListType = "default",
@@ -231,11 +231,11 @@ def _tune_relax(
     target: Union[str, Target],
     work_dir: str,
     max_trials_global: int,
-    *,
     max_trials_per_task: Optional[int] = None,
     num_trials_per_iter: int = 64,
     builder: Builder.BuilderType = "local",
     runner: Runner.RunnerType = "local",
+    *,
     database: Database.DatabaseType = "json",
     cost_model: CostModel.CostModelType = "xgb",
     measure_callbacks: MeasureCallback.CallbackListType = "default",
@@ -286,6 +286,13 @@ def _tune_relax(
     ret_mod : IRModule
         IRModule
     """
+
+    if isinstance(num_trials_per_iter, IntImm):
+        num_trials_per_iter = int(num_trials_per_iter)
+
+    if isinstance(max_trials_per_task, IntImm):
+        max_trials_per_task = int(max_trials_per_task)
+
     if isinstance(max_trials_global, IntImm):
         max_trials_global = int(max_trials_global)
 
