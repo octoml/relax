@@ -17,7 +17,7 @@
 # pylint: disable=invalid-name, wrong-import-position
 """Utility functions for finding information about current device."""
 import os
-import re
+import regex as re
 import sys
 import tvm
 import psutil
@@ -116,15 +116,40 @@ def get_llvm_target() -> tvm.target.Target:
         # Now we can add more information to the llvm target.
         target = "%s -mattr=%s" % (target, attrs_string)
 
-    return target
+    return tvm.target.Target(target)
 
 
-def get_default_target(ctx: str) -> str:
+def get_cuda_target() -> tvm.target.Target:
+    """Extract the proper cuda target for the current device.
+
+    Returns
+    -------
+    target : tvm.target.Target
+        A TVM target that fully describes the current devices CPU.
+    """
+    # If we cant find nvidia-smi, we wont be able to extract more information.
+    if shutil.which("llc") is None:
+        return "cuda"
+
+    # Otherwise, query nvidia-smi to learn which gpu this is.
+    stream = subprocess.run(["nvidia-smi", "-q"], stdout=subprocess.PIPE)
+    gpu_info = stream.stdout.decode("utf-8")
+    product_name = re.search("(?<=Product Name\s+: NVIDIA ).+", gpu_info).group(0)
+
+    # TVM contains prebuilt targets for most GPUs, we need only create a mapping between the
+    # official product name and the corresponding target.
+    # To do so, lowercase the name and replace spaces with dases.
+    target_name = "nvidia/" + product_name.replace(" ", "-").lower()
+
+    return tvm.target.Target(target_name)
+
+
+def get_default_target(ctx: str) -> tvm.target.Target:
     if ctx == "cpu":
         target = get_llvm_target()
-    elif ctx == "gpu":
+    elif ctx == "cuda":
         if tvm.gpu(0).exist:
-            target = "cuda"
+            target = get_cuda_target()
         elif tvm.rocm(0).exist:
             target = "rocm"
         else:
@@ -133,6 +158,9 @@ def get_default_target(ctx: str) -> str:
         raise NotImplementedError(
             "Context %s does not have a clear target. Please specify one explicitly" % target
         )
+
+    if isinstance(target, str):
+        target = tvm.target.Target(target)
 
     return target
 
