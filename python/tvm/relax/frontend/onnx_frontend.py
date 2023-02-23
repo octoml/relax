@@ -49,7 +49,6 @@ from tvm.ir.supply import NameSupply
 from tvm.relax import testing, PyExprMutator
 from tvm.relay.expr import TupleWrapper, Var, GlobalVar
 from tvm.relay.frontend.onnx import OnnxOpConverter as RelayOnnxOpConverter
-from tvm.script import tir as T
 
 
 def get_type(elem_type: Union[str, int]) -> str:
