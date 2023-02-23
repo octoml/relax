@@ -147,6 +147,70 @@ def test_sanitize(input_names, expected_names):
         assert param.name_hint == expected_names[i]
 
 
+def verify_unary(op_name, shape, attrs={}, domain=None):
+    test_node = helper.make_node(op_name, ["x"], ["y"], **attrs, domain=domain)
+    graph = helper.make_graph(
+        [test_node],
+        "elemwise_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="elemwise_test")
+    check_correctness(model)
+
+
+def verify_binary(op_name, shape_a, shape_b, shape_c, attrs={}, domain=None):
+    test_node = helper.make_node(op_name, ["a", "b"], ["c"], **attrs, domain=domain)
+    graph = helper.make_graph(
+        [test_node],
+        "binary_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, shape_a),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, shape_b),
+        ],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, shape_c)],
+    )
+
+    model = helper.make_model(graph, producer_name="binary_test")
+    check_correctness(model)
+
+
+def verify_compare(op_name, shape, attrs={}, domain=None):
+    test_node = helper.make_node(op_name, ["a", "b"], ["c"], **attrs, domain=domain)
+    graph = helper.make_graph(
+        [test_node],
+        "compare_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, shape),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, shape),
+        ],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.BOOL, shape)],
+    )
+
+    model = helper.make_model(graph, producer_name="compare_test")
+    check_correctness(model)
+
+
+def verify_ternary(op_name, shape_a, shape_b, shape_c, shape_d, attrs={}, domain=None):
+    test_node = helper.make_node(op_name, ["a", "b", "c"], ["d"], **attrs, domain=domain)
+    graph = helper.make_graph(
+        [test_node],
+        "ternary_test",
+        inputs=[
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, shape_a),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, shape_b),
+            helper.make_tensor_value_info("c", TensorProto.FLOAT, shape_c),
+        ],
+        outputs=[helper.make_tensor_value_info("d", TensorProto.FLOAT, shape_d)],
+    )
+
+    model = helper.make_model(graph, producer_name="ternary_test")
+    check_correctness(model)
+
+
 @pytest.mark.parametrize("dynamic", [True, False])
 def test_matmul(dynamic):
     matmul_node = helper.make_node("MatMul", ["a", "b"], ["c"])
@@ -176,54 +240,15 @@ def test_matmul(dynamic):
 
 
 def test_concat():
-    concat_node = helper.make_node("Concat", ["a", "b"], ["ab"], axis=0)
-
-    graph = helper.make_graph(
-        [concat_node],
-        "concat_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [1, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32]),
-        ],
-        outputs=[helper.make_tensor_value_info("ab", TensorProto.FLOAT, [2, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="concat_test")
-    check_correctness(model)
+    verify_binary("Concat", [1, 32], [1, 32], [2, 32], attrs={"axis": 0})
 
 
 def test_add():
-    add_node = helper.make_node("Add", ["a", "b"], ["ab"])
-
-    graph = helper.make_graph(
-        [add_node],
-        "add_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [1, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32]),
-        ],
-        outputs=[helper.make_tensor_value_info("ab", TensorProto.FLOAT, [1, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="add_test")
-    check_correctness(model)
+    verify_binary("Add", [1, 32], [1, 32], [1, 32])
 
 
 def test_mul():
-    mul_node = helper.make_node("Mul", ["a", "b"], ["ab"])
-
-    graph = helper.make_graph(
-        [mul_node],
-        "mul_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [1, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 32]),
-        ],
-        outputs=[helper.make_tensor_value_info("ab", TensorProto.FLOAT, [1, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="mul_test")
-    check_correctness(model)
+    verify_binary("Mul", [1, 32], [1, 32], [1, 32])
 
 
 @pytest.mark.parametrize(
@@ -324,62 +349,19 @@ def test_reshape(in_shape, shape, out_shape):
 
 
 def test_div():
-    div_node = helper.make_node("Div", ["a", "b"], ["c"])
-
-    graph = helper.make_graph(
-        [div_node],
-        "div_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
-        ],
-        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="div_test")
-    check_correctness(model)
+    verify_binary("Div", [32, 32], [32, 32], [32, 32])
 
 
 def test_sigmoid():
-    sigmoid_node = helper.make_node("Sigmoid", ["a"], ["b"])
-
-    graph = helper.make_graph(
-        [sigmoid_node],
-        "sigmoid_test",
-        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32])],
-        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="sigmoid_test")
-    check_correctness(model)
+    verify_unary("Sigmoid", [32, 32])
 
 
 def test_softmax():
-    softmax_node = helper.make_node("Softmax", ["a"], ["b"])
-
-    graph = helper.make_graph(
-        [softmax_node],
-        "softmax_test",
-        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32, 32])],
-        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="softmax_test")
-    check_correctness(model)
+    verify_unary("Softmax", [32, 32, 32])
 
 
 def test_transpose():
-    transpose_node = helper.make_node("Transpose", ["a"], ["b"], perm=[1, 2, 0])
-
-    graph = helper.make_graph(
-        [transpose_node],
-        "transpose_test",
-        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32, 32])],
-        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="transpose_test")
-    check_correctness(model)
+    verify_unary("Transpose", [32, 32, 32], attrs={"perm": [1, 2, 0]})
 
 
 def test_unsqueeze():
@@ -398,34 +380,11 @@ def test_unsqueeze():
 
 
 def test_gelu():
-    gelu_node = helper.make_node("Gelu", ["a"], ["b"], domain="com.microsoft")
-
-    graph = helper.make_graph(
-        [gelu_node],
-        "gelu_test",
-        inputs=[helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32])],
-        outputs=[helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="gelu_test")
-    check_correctness(model)
+    verify_unary("Gelu", [32, 32], domain="com.microsoft")
 
 
 def test_bias_gelu():
-    bias_gelu_node = helper.make_node("BiasGelu", ["a", "b"], ["c"], domain="com.microsoft")
-
-    graph = helper.make_graph(
-        [bias_gelu_node],
-        "bias_gelu_test",
-        inputs=[
-            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32]),
-        ],
-        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])],
-    )
-
-    model = helper.make_model(graph, producer_name="bias_gelu_test")
-    check_correctness(model)
+    verify_binary("BiasGelu", [32, 32], [32], [32, 32], domain="com.microsoft")
 
 
 def test_where():
@@ -532,51 +491,15 @@ def test_not():
 
 
 def test_tanh():
-    tanh_node = helper.make_node("Tanh", ["x"], ["y"])
-    shape = [9, 8, 7, 6]
-    graph = helper.make_graph(
-        [tanh_node],
-        "tanh_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="tanh_test")
-    check_correctness(model)
+    verify_unary("Tanh", [9, 8, 7, 6])
 
 
 def test_sqrt():
-    sqrt_node = helper.make_node("Sqrt", ["x"], ["y"])
-    shape = [32, 32]
-    graph = helper.make_graph(
-        [sqrt_node],
-        "sqrt_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="sqrt_test")
-    check_correctness(model)
+    verify_unary("Sqrt", [32, 32])
 
 
 def test_relu():
-    relu_node = helper.make_node("Relu", ["x"], ["y"])
-    shape = [32, 32]
-    graph = helper.make_graph(
-        [relu_node],
-        "relu_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="relu_test")
-    check_correctness(model)
+    verify_unary("Relu", [32, 32])
 
 
 def test_conv():
@@ -598,36 +521,11 @@ def test_conv():
 
 
 def test_pow():
-    pow_node = helper.make_node("Pow", ["x", "y"], ["z"])
-    shape = [32, 32]
-    graph = helper.make_graph(
-        [pow_node],
-        "pow_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-            helper.make_tensor_value_info("y", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("z", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="pow_test")
-    check_correctness(model)
+    verify_binary("Pow", [32, 32], [32, 32], [32, 32])
 
 
 def test_erf():
-    erf_node = helper.make_node("Erf", ["x"], ["y"])
-    shape = [32, 32]
-    graph = helper.make_graph(
-        [erf_node],
-        "erf_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)],
-    )
-
-    model = helper.make_model(graph, producer_name="erf_test")
-    check_correctness(model)
+    verify_unary("Erf", [32, 32])
 
 
 @pytest.mark.parametrize("reverse", [True, False])
@@ -699,20 +597,45 @@ def test_const():
 
 
 def test_sub():
-    sub_node = helper.make_node("Sub", ["x", "y"], ["z"])
-    shape = [32, 16]
-    graph = helper.make_graph(
-        [sub_node],
-        "sub_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, shape),
-            helper.make_tensor_value_info("y", TensorProto.FLOAT, shape),
-        ],
-        outputs=[helper.make_tensor_value_info("z", TensorProto.FLOAT, shape)],
-    )
+    verify_binary("Sub", [32, 16], [32, 16], [32, 16])
 
-    model = helper.make_model(graph, producer_name="sub_test")
-    check_correctness(model)
+
+def test_min():
+    verify_binary("Min", [32, 16], [32, 16], [32, 16])
+
+
+def test_max():
+    verify_binary("Max", [32, 16], [32, 16], [32, 16])
+
+
+def test_sin():
+    verify_unary("Sin", [32, 16])
+
+
+def test_cos():
+    verify_unary("Cos", [32, 16])
+
+
+def test_identity():
+    verify_unary("Identity", [32, 16])
+
+
+def test_neg():
+    verify_unary("Neg", [32, 16])
+
+
+def test_abs():
+    verify_unary("Abs", [32, 16])
+
+
+def test_log():
+    verify_unary("Log", [32, 16])
+
+
+def test_instance_norm():
+    verify_ternary(
+        "InstanceNormalization", [1, 32, 32], [32], [32], [1, 32, 32], attrs={"epsilon": 1e-12}
+    )
 
 
 def test_layer_norm():
@@ -1399,6 +1322,79 @@ def test_tile(dynamic):
     repeats = np.random.randint(low=1, high=10, size=(np.ndim(x),)).astype(np.int64)
     z_array = np.tile(x, repeats)
     verify_tile(x.shape, repeats, z_array.shape)
+
+
+def test_resize():
+    resize_node = helper.make_node("Resize", ["X", "", "scales"], ["Y"], mode="cubic")
+
+    graph = helper.make_graph(
+        [resize_node],
+        "resize_test",
+        inputs=[
+            helper.make_tensor_value_info("X", TensorProto.FLOAT, [1, 3, 32, 32]),
+        ],
+        initializer=[
+            helper.make_tensor("scales", TensorProto.FLOAT, [4], [1.0, 1.0, 2.0, 2.0]),
+        ],
+        outputs=[
+            helper.make_tensor_value_info("Y", TensorProto.FLOAT, [1, 3, 64, 64]),
+        ],
+    )
+
+    model = helper.make_model(graph, producer_name="resize_test")
+    check_correctness(model)
+
+
+def test_einsum():
+    eqn = "ij->i"
+    einsum_node = helper.make_node("Einsum", ["x"], ["y"], equation=eqn)
+
+    graph = helper.make_graph(
+        [einsum_node],
+        "einsum_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, [3, 4]),
+        ],
+        outputs=[
+            helper.make_tensor_value_info("y", TensorProto.FLOAT, [3]),
+        ],
+    )
+
+    model = helper.make_model(graph, producer_name="einsum_test")
+    check_correctness(model)
+
+
+def test_range():
+    range_node = helper.make_node(
+        "Range",
+        ["start", "limit", "delta"],
+        ["output"],
+    )
+
+    graph = helper.make_graph(
+        [range_node],
+        "range_test",
+        inputs=[],
+        initializer=[
+            helper.make_tensor("start", TensorProto.INT64, [], [1]),
+            helper.make_tensor("limit", TensorProto.INT64, [], [5]),
+            helper.make_tensor("delta", TensorProto.INT64, [], [2]),
+        ],
+        outputs=[
+            helper.make_tensor_value_info("output", TensorProto.INT64, [2]),
+        ],
+    )
+
+    model = helper.make_model(graph, producer_name="range_test")
+    check_correctness(model)
+
+
+def test_less():
+    verify_compare("Less", [32, 32])
+
+
+def test_less_equal():
+    verify_compare("LessOrEqual", [32, 32])
 
 
 if __name__ == "__main__":

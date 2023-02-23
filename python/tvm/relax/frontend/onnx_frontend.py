@@ -49,6 +49,7 @@ from tvm.ir.supply import NameSupply
 from tvm.relax import testing, PyExprMutator
 from tvm.relay.expr import TupleWrapper, Var, GlobalVar
 from tvm.relay.frontend.onnx import OnnxOpConverter as RelayOnnxOpConverter
+from tvm.script import tir as T
 
 
 def get_type(elem_type: Union[str, int]) -> str:
@@ -564,6 +565,84 @@ class Sub(OnnxOpConverter):
         return bb.emit_te(topi.subtract, inputs[0], inputs[1])
 
 
+class Sin(OnnxOpConverter):
+    """Converts an onnx Sin node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v7(cls, bb, inputs, attr):
+        return bb.emit_te(topi.sin, inputs[0])
+
+
+class Cos(OnnxOpConverter):
+    """Converts an onnx Cos node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v7(cls, bb, inputs, attr):
+        return bb.emit_te(topi.cos, inputs[0])
+
+
+class Neg(OnnxOpConverter):
+    """Converts an onnx Neg node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.emit_te(topi.negative, inputs[0])
+
+
+class Abs(OnnxOpConverter):
+    """Converts an onnx Abs node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.emit_te(topi.abs, inputs[0])
+
+
+class Min(OnnxOpConverter):
+    """Converts an onnx Min node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        # Expand inputs, stack them, then perform minimum over the new axis.
+        inputs = [bb.emit_te(topi.expand_dims, i, 0) for i in inputs]
+        stacked_tensor = bb.emit_te(topi.concatenate, inputs, 0)
+        return bb.emit_te(topi.min, stacked_tensor, 0)
+
+
+class Max(OnnxOpConverter):
+    """Converts an onnx Max node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        # Expand inputs, stack them, then perform maximum over the new axis.
+        inputs = [bb.emit_te(topi.expand_dims, i, 0) for i in inputs]
+        stacked_tensor = bb.emit_te(topi.concatenate, inputs, 0)
+        return bb.emit_te(topi.max, stacked_tensor, 0)
+
+
+class Log(OnnxOpConverter):
+    """Converts an onnx Log node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.emit_te(topi.log, inputs[0])
+
+
+class Less(OnnxOpConverter):
+    """Converts an onnx Less node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.emit_te(topi.less, inputs[0], inputs[1])
+
+
+class LessOrEqual(OnnxOpConverter):
+    """Converts an onnx LessOrEqual node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        return bb.emit_te(topi.less_equal, inputs[0], inputs[1])
+
+
 class Split(OnnxOpConverter):
     """Converts an onnx Split node into an equivalent Relax expression."""
 
@@ -859,7 +938,109 @@ class Attention(OnnxOpConverter):
         return relax.Tuple([output, present])
 
 
-# pylint: enable=invalid-name, import-self, len-as-condition, unused-argument, too-many-lines
+class Identity(OnnxOpConverter):
+    """Converts an onnx Identity node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        return inputs[0]
+
+
+class Resize(OnnxOpConverter):
+    """Converts an onnx Resize node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v18(cls, bb, inputs, attr):
+        # Extract the many attributes of resize.
+        coord_mode = attr.get("coordinate_transformation_mode", b"half_pixel").decode("ascii")
+        cubic_coeff_a = attr.get("cubic_coeff_a", -0.75)
+        exclude_outside = attr.get("exclude_outside", 0)
+        extrapolation_value = attr.get("extrapolation_value", 0.0)
+        mode = attr.get("mode", b"nearest").decode("ascii")
+        rounding_method = attr.get("nearest_mode", b"round_prefer_floor").decode("ascii")
+
+        # Adapt attributes to fit TVM definition.
+        if mode == "nearest":
+            mode = "nearest_neighbor"
+
+        # Unpack inputs.
+        x = inputs[0]
+        roi = inputs[1]
+        scales = inputs[2]
+        sizes = inputs[3]
+        ndims = len(x.struct_info.shape)
+        assert ndims == 4, "Only resize2d is currently supported."
+
+        assert (
+            scales is None or sizes is None
+        ), "Only one of scales and sizes can be provided in Resize."
+
+        # Define relax implementation.
+        if roi is not None:
+            roi = relax.op.concat(
+                [
+                    relax.op.strided_slice(roi, axes=[0], begin=[2], end=[ndims]),
+                    relax.op.strided_slice(roi, axes=[0], begin=[ndims + 2], end=[2 * ndims]),
+                ],
+                axis=0,
+            )
+        else:
+            roi = [0.0] * 4
+
+        # Convert scales to sizes if needed.
+        if scales is not None:
+            assert isinstance(scales, relax.Constant), "Only constant scales currently supported."
+            scales = scales.data.numpy()
+            sizes_shape = [dim.value for dim in x.struct_info.shape]
+            sizes = (sizes_shape * scales)[2:].astype("int64").tolist()
+        else:
+            assert isinstance(
+                sizes, relax.Constant
+            ), "Only constant output size currently supported."
+            sizes = sizes.data.numpy().astype("int64").tolist()[2:]
+
+        # TODO(jwfromm) replace with real relax op once legalizing is possible.
+        return bb.emit_te(
+            topi.image.resize2d,
+            x,
+            roi,
+            sizes,
+            layout="NCHW",
+            method=mode,
+            coordinate_transformation_mode=coord_mode,
+            rounding_method=rounding_method,
+            bicubic_alpha=cubic_coeff_a,
+            bicubic_exclude=exclude_outside,
+            extrapolation_value=extrapolation_value,
+        )
+
+
+class Einsum(OnnxOpConverter):
+    """Converts an onnx Einsum node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v12(cls, bb, inputs, attr):
+        equation = attr["equation"].decode("utf-8")
+        return bb.emit_te(topi.einsum, equation, *inputs)
+
+
+class Range(OnnxOpConverter):
+    """Converts an onnx Range node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v12(cls, bb, inputs, attr):
+        # TODO(jwfromm) Something is wrong with topi.arange, doesnt work with any relax expressions.
+        # Unpack inputs
+        start = inputs[0]
+        assert isinstance(start, relax.Constant), "Constant start required for range."
+        start = start.data.numpy().tolist()
+        limit = inputs[1]
+        assert isinstance(limit, relax.Constant), "Constant limit required for range."
+        limit = limit.data.numpy().tolist()
+        delta = inputs[2]
+        assert isinstance(delta, relax.Constant), "Constant delta required for Range."
+        step = delta.data.numpy().tolist()
+        return bb.emit_te(topi.arange, start, limit, step)
 
 
 def _get_convert_map():
@@ -894,9 +1075,19 @@ def _get_convert_map():
         "Squeeze": Squeeze,
         "Constant": Constant,
         "Sub": Sub,
+        "Sin": Sin,
+        "Cos": Cos,
+        "Neg": Neg,
+        "Abs": Abs,
+        "Min": Min,
+        "Max": Max,
+        "Log": Log,
+        "Less": Less,
+        "LessOrEqual": LessOrEqual,
         "LayerNormalization": relay.frontend.onnx.LayerNormalization,
         "SkipLayerNormalization": relay.frontend.onnx.SkipLayerNormalization,
         "EmbedLayerNormalization": relay.frontend.onnx.EmbedLayerNormalization,
+        "InstanceNormalization": relay.frontend.onnx.InstanceNorm,
         # defs/reduction
         "ReduceMax": relay.frontend.onnx.ReduceMax,
         "ReduceMin": relay.frontend.onnx.ReduceMin,
@@ -919,6 +1110,10 @@ def _get_convert_map():
         "GlobalAveragePool": relay.frontend.onnx.GlobalAveragePool,
         "Flatten": relay.frontend.onnx.Flatten,
         "MaxPool": relay.frontend.onnx.MaxPool,
+        "Identity": Identity,
+        "Resize": Resize,
+        "Einsum": Einsum,
+        "Range": Range,
     }
 
 
@@ -1101,7 +1296,6 @@ class ONNXGraphImporter:
             attr["tvm_custom"]["num_outputs"] = len(outputs)
 
             op = self._convert_operator(op_name, inputs, attr, self.opset)
-
             if not isinstance(op, relax.Tuple):
                 if isinstance(op.checked_type, tvm.ir.type.TupleType):
                     # This is a var bound to a tuple. We need to unpack it and create
