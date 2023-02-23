@@ -1295,6 +1295,7 @@ class ONNXGraphImporter:
             attr["tvm_custom"]["num_outputs"] = len(outputs)
 
             op = self._convert_operator(op_name, inputs, attr, self.opset)
+
             if not isinstance(op, relax.Tuple):
                 if isinstance(op.checked_type, tvm.ir.type.TupleType):
                     # This is a var bound to a tuple. We need to unpack it and create
