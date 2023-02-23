@@ -161,7 +161,7 @@ class MatMul(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.matmul, inputs[0], inputs[1])
+        return relax.op.matmul(inputs[0], inputs[1])
 
 
 class Div(OnnxOpConverter):
@@ -169,7 +169,7 @@ class Div(OnnxOpConverter):
 
     @classmethod
     def _impl_v14(cls, bb, inputs, attr):
-        return bb.emit_te(topi.divide, inputs[0], inputs[1])
+        return relax.op.divide(inputs[0], inputs[1])
 
 
 class Sigmoid(OnnxOpConverter):
@@ -177,7 +177,7 @@ class Sigmoid(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.sigmoid, inputs[0])
+        return relax.op.sigmoid(inputs[0])
 
 
 class Softmax(OnnxOpConverter):
@@ -186,7 +186,7 @@ class Softmax(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         axis = attr.get("axis", -1)
-        return bb.emit_te(topi.nn.softmax, inputs[0], axis=axis)
+        return relax.op.nn.softmax(inputs[0], axis=axis)
 
 
 class Transpose(OnnxOpConverter):
@@ -203,7 +203,7 @@ class Unsqueeze(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        input = inputs[0]
+        data = inputs[0]
         axes = inputs[1]
 
         if isinstance(axes, relax.Constant):
@@ -211,8 +211,8 @@ class Unsqueeze(OnnxOpConverter):
             constant_axes = list(map(int, constant_axes))
             constant_axes = sorted(constant_axes)
             for axis in constant_axes:
-                input = bb.emit_te(topi.expand_dims, input, axis=axis, num_newaxis=1)
-            return input
+                data = relax.op.expand_dims(data, axis=axis)
+            return data
 
         raise NotImplementedError("Unsqueeze with dynamic axes is not supported.")
 
@@ -223,7 +223,7 @@ class Concat(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         axis = attr.get("axis", 0)
-        return bb.emit_te(topi.concatenate, inputs, axis)
+        return relax.op.concat(inputs, axis=axis)
 
 
 class Add(OnnxOpConverter):
@@ -231,7 +231,7 @@ class Add(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.add, inputs[0], inputs[1])
+        return relax.op.add(inputs[0], inputs[1])
 
 
 class Mul(OnnxOpConverter):
@@ -239,7 +239,7 @@ class Mul(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.multiply, inputs[0], inputs[1])
+        return relax.op.multiply(inputs[0], inputs[1])
 
 
 class Cast(OnnxOpConverter):
@@ -278,14 +278,14 @@ class Gemm(OnnxOpConverter):
         # Compute Y = alpha * A X B + beta * C
 
         if alpha is not None:
-            A = bb.emit_te(topi.multiply, A, relax.const(alpha, dtype=dtype))
+            A = bb.normalize(relax.op.multiply(A, relax.const(alpha, dtype=dtype)))
 
         Y = bb.emit_te(topi.matmul, A, B, transA, transB)
 
         if C is not None:
             if beta is not None:
-                C = bb.emit_te(topi.multiply, C, relax.const(beta, dtype=dtype))
-            Y = bb.emit_te(topi.add, Y, C)
+                C = bb.normalize(relax.op.multiply(C, relax.const(beta, dtype=dtype)))
+            Y = relax.op.add(Y, C)
 
         return Y
 
@@ -330,19 +330,7 @@ class Gelu(OnnxOpConverter):
 
     @classmethod
     def _impl_v1(cls, bb, inputs, attr):
-        x = inputs[0]
-
-        # Declare constants
-        const_dtype = x.checked_type.dtype
-        half = relax.const(0.5, dtype=const_dtype)
-        one = relax.const(1.0, dtype=const_dtype)
-        sqrt2 = relax.const(math.sqrt(2.0), dtype=const_dtype)
-
-        # Compute gelu
-        term1 = bb.emit_te(topi.multiply, half, x)
-        erf = bb.emit_te(topi.fast_erf, bb.emit_te(topi.divide, x, sqrt2))
-        term2 = bb.emit_te(topi.add, one, erf)
-        return bb.emit_te(topi.multiply, term1, term2)
+        return relax.op.nn.gelu(inputs[0])
 
 
 class BiasGelu(OnnxOpConverter):
@@ -353,14 +341,8 @@ class BiasGelu(OnnxOpConverter):
 
     @classmethod
     def _impl_v1(cls, bb, inputs, attr):
-        x = inputs[0]
-        b = inputs[1]
-
-        b_dims = b.checked_type.ndim
-        assert b_dims == 1, "BiasGelu bias term must be a 1D tensor."
-
-        inp = bb.emit_te(topi.add, x, b)
-        return Gelu._impl_v1(bb, [inp], attr)
+        inp = relax.op.add(inputs[0], inputs[1])
+        return relax.op.nn.gelu(inp)
 
 
 class Where(OnnxOpConverter):
@@ -368,7 +350,7 @@ class Where(OnnxOpConverter):
 
     @classmethod
     def _impl_v16(cls, bb, inputs, attr):
-        return bb.emit_te(topi.where, *inputs)
+        return relax.op.where(inputs[0], inputs[1], inputs[2])
 
 
 class Clip(OnnxOpConverter):
@@ -389,7 +371,7 @@ class Equal(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.equal, inputs[0], inputs[1])
+        return relax.op.equal(inputs[0], inputs[1])
 
 
 class Shape(OnnxOpConverter):
@@ -397,7 +379,7 @@ class Shape(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.shape, inputs[0], "int64")
+        return relax.op.shape_of(inputs[0])
 
 
 class Not(OnnxOpConverter):
@@ -413,7 +395,7 @@ class Tanh(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.tanh, inputs[0])
+        return relax.op.tanh(inputs[0])
 
 
 class Sqrt(OnnxOpConverter):
@@ -421,7 +403,7 @@ class Sqrt(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.sqrt, inputs[0])
+        return relax.op.sqrt(inputs[0])
 
 
 class Relu(OnnxOpConverter):
@@ -429,7 +411,7 @@ class Relu(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.nn.relu, inputs[0])
+        return relax.op.nn.relu(inputs[0])
 
 
 class Pow(OnnxOpConverter):
@@ -444,23 +426,23 @@ class Conv(OnnxOpConverter):
     """Convert an onnx Conv node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        # not supported yet
-        assert "auto_pad" not in attr
-        assert "group" not in attr
-        # supported conv2d
-        return bb.emit_te(
-            topi.add,
-            bb.emit_te(
-                topi.nn.conv2d,
-                inputs[0],
-                inputs[1],
+    def _impl_v11(cls, bb, inputs, attr):
+        conv_out = bb.normalize(
+            relax.op.nn.conv2d(
+                data=inputs[0],
+                weight=inputs[1],
                 strides=attr.get("strides", 1),
                 padding=attr.get("pads", 0),
-                dilation=attr.get("dilations", 1),
-            ),
-            bb.emit_te(topi.expand_dims, inputs[2], axis=1, num_newaxis=2),
+                dilation=attr.get("dilation", 1),
+                groups=attr.get("group", 1),
+                data_layout="NCHW",
+                kernel_layout="OIHW",
+            )
         )
+        if inputs[2] is not None:
+            conv_out = relax.op.add(conv_out, inputs[2])
+
+        return conv_out
 
 
 class Erf(OnnxOpConverter):
@@ -499,11 +481,10 @@ class Squeeze(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        if len(inputs) > 1:
+        axis = inputs[1]
+        if axis is not None:
             axis = [int(x) for x in inputs[1].data.numpy()]
-        else:
-            axis = None
-        return bb.emit_te(topi.squeeze, inputs[0], axis=axis)
+        return relax.op.squeeze(inputs[0], axis)
 
 
 class Constant(OnnxOpConverter):
@@ -553,7 +534,7 @@ class ConstantOfShape(OnnxOpConverter):
         for i in range(shape_ndim):
             shape_vars.append(tvm.tir.Var("x_%d" % i, "int64"))
         bb.match_cast(shape_dataflow_var, relax.ShapeStructInfo(shape_vars))
-        return bb.normalize(relax.op.broadcast_to(const_value, relax.ShapeExpr(shape_vars)))
+        return relax.op.broadcast_to(const_value, relax.ShapeExpr(shape_vars))
 
 
 class Sub(OnnxOpConverter):
@@ -561,7 +542,7 @@ class Sub(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.subtract, inputs[0], inputs[1])
+        return relax.op.subtract(inputs[0], inputs[1])
 
 
 class Sin(OnnxOpConverter):
@@ -569,7 +550,7 @@ class Sin(OnnxOpConverter):
 
     @classmethod
     def _impl_v7(cls, bb, inputs, attr):
-        return bb.emit_te(topi.sin, inputs[0])
+        return relax.op.sin(inputs[0])
 
 
 class Cos(OnnxOpConverter):
@@ -577,7 +558,7 @@ class Cos(OnnxOpConverter):
 
     @classmethod
     def _impl_v7(cls, bb, inputs, attr):
-        return bb.emit_te(topi.cos, inputs[0])
+        return relax.op.cos(inputs[0])
 
 
 class Neg(OnnxOpConverter):
@@ -585,7 +566,7 @@ class Neg(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.negative, inputs[0])
+        return relax.op.negative(inputs[0])
 
 
 class Abs(OnnxOpConverter):
@@ -593,7 +574,7 @@ class Abs(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.abs, inputs[0])
+        return relax.op.abs(inputs[0])
 
 
 class Min(OnnxOpConverter):
@@ -602,9 +583,9 @@ class Min(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         # Expand inputs, stack them, then perform minimum over the new axis.
-        inputs = [bb.emit_te(topi.expand_dims, i, 0) for i in inputs]
-        stacked_tensor = bb.emit_te(topi.concatenate, inputs, 0)
-        return bb.emit_te(topi.min, stacked_tensor, 0)
+        inputs = [bb.normalize(relax.op.expand_dims(i, axis=0)) for i in inputs]
+        stacked_tensor = relax.op.concat(inputs, axis=0)
+        return relax.op.min(stacked_tensor, axis=0)
 
 
 class Max(OnnxOpConverter):
@@ -613,9 +594,9 @@ class Max(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         # Expand inputs, stack them, then perform maximum over the new axis.
-        inputs = [bb.emit_te(topi.expand_dims, i, 0) for i in inputs]
-        stacked_tensor = bb.emit_te(topi.concatenate, inputs, 0)
-        return bb.emit_te(topi.max, stacked_tensor, 0)
+        inputs = [bb.normalize(relax.op.expand_dims(i, axis=0)) for i in inputs]
+        stacked_tensor = relax.op.concat(inputs, axis=0)
+        return relax.op.max(stacked_tensor, axis=0)
 
 
 class Log(OnnxOpConverter):
@@ -623,7 +604,7 @@ class Log(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.log, inputs[0])
+        return relax.op.log(inputs[0])
 
 
 class Less(OnnxOpConverter):
@@ -631,7 +612,7 @@ class Less(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.less, inputs[0], inputs[1])
+        return relax.op.less(inputs[0], inputs[1])
 
 
 class LessOrEqual(OnnxOpConverter):
@@ -639,7 +620,7 @@ class LessOrEqual(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.less_equal, inputs[0], inputs[1])
+        return relax.op.less_equal(inputs[0], inputs[1])
 
 
 class Split(OnnxOpConverter):
@@ -657,8 +638,7 @@ class Split(OnnxOpConverter):
         # When splits isnt specified divide evenly over axis.
         else:
             indices = attr["tvm_custom"]["num_outputs"]
-        output = bb.emit_te(topi.split, inputs[0], indices, attr.get("axis", 0))
-        return output
+        return bb.emit_te(topi.split, inputs[0], indices, attr.get("axis", 0))
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
@@ -679,8 +659,7 @@ class Split(OnnxOpConverter):
         # When splits isnt specified divide evenly over axis.
         else:
             indices = attr["tvm_custom"]["num_outputs"]
-        output = bb.emit_te(topi.split, inputs[0], indices, axis=attr.get("axis", 0))
-        return output
+        return bb.emit_te(topi.split, inputs[0], indices, axis=attr.get("axis", 0))
 
 
 class Slice(OnnxOpConverter):
@@ -998,7 +977,7 @@ class Resize(OnnxOpConverter):
             ), "Only constant output size currently supported."
             sizes = sizes.data.numpy().astype("int64").tolist()[2:]
 
-        # TODO(jwfromm) replace with real relax op once legalizing is possible.
+        # TODO(jwfromm) relax.image.resize2d runs into some issues with dynamism.
         return bb.emit_te(
             topi.image.resize2d,
             x,
@@ -1029,7 +1008,7 @@ class Range(OnnxOpConverter):
     @classmethod
     def _impl_v12(cls, bb, inputs, attr):
         # TODO(jwfromm) Something is wrong with topi.arange, doesnt work with any relax expressions.
-        # Unpack inputs
+        # Unpack inputs. Need to add relax.op.resize
         start = inputs[0]
         assert isinstance(start, relax.Constant), "Constant start required for range."
         start = start.data.numpy().tolist()
@@ -1295,6 +1274,8 @@ class ONNXGraphImporter:
             attr["tvm_custom"]["num_outputs"] = len(outputs)
 
             op = self._convert_operator(op_name, inputs, attr, self.opset)
+            # Create struct information for the new operator.
+            op = self.bb.normalize(op)
 
             if not isinstance(op, relax.Tuple):
                 if isinstance(op.checked_type, tvm.ir.type.TupleType):
