@@ -344,7 +344,7 @@ def check_pr(pr_number) {
 
 def prepare() {
   stage('Prepare') {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/prepare") {
         init_git()
 
@@ -489,7 +489,7 @@ prepare()
 def build() {
   stage('Build') {
     if (!skip_ci && is_docs_only_build != 1) {
-      node('CPU-SMALL') {
+      node('CPU-SMALL-SPOT') {
         ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/build-i386") {
           init_git()
           docker_init(ci_i386)
@@ -520,7 +520,7 @@ build()
 
 def shard_run_python_i386_1_of_3() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/integration-python-i386") {
         try {
           init_git()
@@ -568,7 +568,7 @@ def shard_run_python_i386_1_of_3() {
 
 def shard_run_python_i386_2_of_3() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/integration-python-i386") {
         try {
           init_git()
@@ -615,7 +615,7 @@ def shard_run_python_i386_2_of_3() {
 
 def shard_run_python_i386_3_of_3() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/integration-python-i386") {
         try {
           init_git()

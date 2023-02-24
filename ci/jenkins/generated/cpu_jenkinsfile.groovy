@@ -344,7 +344,7 @@ def check_pr(pr_number) {
 
 def prepare() {
   stage('Prepare') {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/prepare") {
         init_git()
 
@@ -489,7 +489,7 @@ prepare()
 def build() {
   stage('Build') {
     if (!skip_ci && is_docs_only_build != 1) {
-      node('CPU-SMALL') {
+      node('CPU-SMALL-SPOT') {
         ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/build-cpu") {
           init_git()
           docker_init(ci_cpu)
@@ -525,7 +525,7 @@ build()
 
 def shard_run_integration_CPU_1_of_4() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/integration-python-cpu") {
         try {
           init_git()
@@ -570,7 +570,7 @@ def shard_run_integration_CPU_1_of_4() {
 
 def shard_run_integration_CPU_2_of_4() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/integration-python-cpu") {
         try {
           init_git()
@@ -615,7 +615,7 @@ def shard_run_integration_CPU_2_of_4() {
 
 def shard_run_integration_CPU_3_of_4() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/integration-python-cpu") {
         try {
           init_git()
@@ -660,7 +660,7 @@ def shard_run_integration_CPU_3_of_4() {
 
 def shard_run_integration_CPU_4_of_4() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/integration-python-cpu") {
         try {
           init_git()
@@ -707,7 +707,7 @@ def shard_run_integration_CPU_4_of_4() {
 
 def shard_run_unittest_CPU_1_of_1() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/ut-python-cpu") {
         try {
           init_git()
@@ -757,7 +757,7 @@ def shard_run_unittest_CPU_1_of_1() {
 
 def shard_run_frontend_CPU_1_of_1() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/frontend-python-cpu") {
         try {
           init_git()

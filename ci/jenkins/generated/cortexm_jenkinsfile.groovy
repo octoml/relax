@@ -344,7 +344,7 @@ def check_pr(pr_number) {
 
 def prepare() {
   stage('Prepare') {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/prepare") {
         init_git()
 
@@ -489,7 +489,7 @@ prepare()
 def build() {
   stage('Build') {
     if (!skip_ci && is_docs_only_build != 1) {
-      node('CPU-SMALL') {
+      node('CPU-SMALL-SPOT') {
         ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/build-cortexm") {
           init_git()
           docker_init(ci_cortexm)
@@ -519,7 +519,7 @@ build()
 
 def shard_run_test_Cortex_M_1_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()
@@ -570,7 +570,7 @@ def shard_run_test_Cortex_M_1_of_12() {
 
 def shard_run_test_Cortex_M_2_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()
@@ -615,7 +615,7 @@ def shard_run_test_Cortex_M_2_of_12() {
 
 def shard_run_test_Cortex_M_3_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()
@@ -660,7 +660,7 @@ def shard_run_test_Cortex_M_3_of_12() {
 
 def shard_run_test_Cortex_M_4_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()
@@ -705,7 +705,7 @@ def shard_run_test_Cortex_M_4_of_12() {
 
 def shard_run_test_Cortex_M_5_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()
@@ -750,7 +750,7 @@ def shard_run_test_Cortex_M_5_of_12() {
 
 def shard_run_test_Cortex_M_6_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()
@@ -795,7 +795,7 @@ def shard_run_test_Cortex_M_6_of_12() {
 
 def shard_run_test_Cortex_M_7_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()
@@ -840,7 +840,7 @@ def shard_run_test_Cortex_M_7_of_12() {
 
 def shard_run_test_Cortex_M_8_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()
@@ -885,7 +885,7 @@ def shard_run_test_Cortex_M_8_of_12() {
 
 def shard_run_test_Cortex_M_9_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()
@@ -930,7 +930,7 @@ def shard_run_test_Cortex_M_9_of_12() {
 
 def shard_run_test_Cortex_M_10_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()
@@ -975,7 +975,7 @@ def shard_run_test_Cortex_M_10_of_12() {
 
 def shard_run_test_Cortex_M_11_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()
@@ -1020,7 +1020,7 @@ def shard_run_test_Cortex_M_11_of_12() {
 
 def shard_run_test_Cortex_M_12_of_12() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-cortexm") {
         try {
           init_git()

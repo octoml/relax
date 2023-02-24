@@ -19,7 +19,7 @@
 
 {% call m.invoke_build(
   name='BUILD: CPU',
-  node='CPU-SMALL',
+  node='CPU-SMALL-SPOT',
   condition='!skip_ci && is_docs_only_build != 1',
   ws='tvm/build-cpu',
   docker_image='ci_cpu',
@@ -43,7 +43,7 @@
 
 {% call(shard_index, num_shards) m.sharded_test_step(
   name="integration: CPU",
-  node="CPU-SMALL",
+  node="CPU-SMALL-SPOT",
   num_shards=4,
   ws="tvm/integration-python-cpu",
   platform="cpu",
@@ -60,7 +60,7 @@
 
 {% call(shard_index, num_shards) m.sharded_test_step(
   name="unittest: CPU",
-  node="CPU-SMALL",
+  node="CPU-SMALL-SPOT",
   ws="tvm/ut-python-cpu",
   platform="cpu",
   num_shards=1,
@@ -80,7 +80,7 @@
 {% endcall %}
 {% call(shard_index, num_shards) m.sharded_test_step(
   name="frontend: CPU",
-  node="CPU-SMALL",
+  node="CPU-SMALL-SPOT",
   ws="tvm/frontend-python-cpu",
   platform="cpu",
   num_shards=1,

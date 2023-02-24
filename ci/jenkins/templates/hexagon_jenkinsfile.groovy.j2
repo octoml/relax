@@ -19,7 +19,7 @@
 
 {% call m.invoke_build(
   name='BUILD: Hexagon',
-  node='CPU-SMALL',
+  node='CPU-SMALL-SPOT',
   condition='!skip_ci && is_docs_only_build != 1',
   ws='tvm/build-hexagon',
   docker_image='ci_hexagon',
@@ -42,7 +42,7 @@
 
 {% call(shard_index, num_shards) m.sharded_test_step(
   name="test: Hexagon",
-  node="CPU-SMALL",
+  node="CPU-SMALL-SPOT",
   ws="tvm/test-hexagon",
   platform="hexagon",
   docker_image="ci_hexagon",

@@ -19,7 +19,7 @@
 
 {% call m.invoke_build(
   name='BUILD: CPU MINIMAL CROSS ISA',
-  node='CPU-SMALL',
+  node='CPU-SMALL-SPOT',
   condition='!skip_ci && is_docs_only_build != 1',
   ws='tvm/build-cpu-minimal-cross-isa',
   docker_image='ci_minimal',

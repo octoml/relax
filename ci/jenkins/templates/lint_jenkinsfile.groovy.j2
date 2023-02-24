@@ -44,7 +44,7 @@ stage('Lint') {
     {% call sharded_lint_step(
       name='Lint',
       num_shards=2,
-      node='CPU-SMALL',
+      node='CPU-SMALL-SPOT',
       ws='tvm/lint',
       docker_image='ci_lint',
     )

@@ -19,7 +19,7 @@
 
 {% call m.invoke_build(
   name='BUILD: CPU MINIMAL',
-  node='CPU-SMALL',
+  node='CPU-SMALL-SPOT',
   condition='!skip_ci && is_docs_only_build != 1',
   ws='tvm/build-cpu-minimal',
   docker_image='ci_minimal',
@@ -39,7 +39,7 @@
 
 {% call(shard_index, num_shards) m.sharded_test_step(
   name="unittest: CPU MINIMAL",
-  node="CPU-SMALL",
+  node="CPU-SMALL-SPOT",
   num_shards=1,
   ws="tvm/ut-python-cpu-minimal",
   platform="minimal",

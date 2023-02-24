@@ -344,7 +344,7 @@ def check_pr(pr_number) {
 
 def prepare() {
   stage('Prepare') {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/prepare") {
         init_git()
 
@@ -489,7 +489,7 @@ prepare()
 def build() {
   stage('Build') {
     if (!skip_ci && is_docs_only_build != 1) {
-      node('CPU-SMALL') {
+      node('CPU-SMALL-SPOT') {
         ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/build-hexagon") {
           init_git()
           docker_init(ci_hexagon)
@@ -523,7 +523,7 @@ build()
 
 def shard_run_test_Hexagon_1_of_8() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-hexagon") {
         try {
           init_git()
@@ -569,7 +569,7 @@ def shard_run_test_Hexagon_1_of_8() {
 
 def shard_run_test_Hexagon_2_of_8() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-hexagon") {
         try {
           init_git()
@@ -614,7 +614,7 @@ def shard_run_test_Hexagon_2_of_8() {
 
 def shard_run_test_Hexagon_3_of_8() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-hexagon") {
         try {
           init_git()
@@ -659,7 +659,7 @@ def shard_run_test_Hexagon_3_of_8() {
 
 def shard_run_test_Hexagon_4_of_8() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-hexagon") {
         try {
           init_git()
@@ -704,7 +704,7 @@ def shard_run_test_Hexagon_4_of_8() {
 
 def shard_run_test_Hexagon_5_of_8() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-hexagon") {
         try {
           init_git()
@@ -749,7 +749,7 @@ def shard_run_test_Hexagon_5_of_8() {
 
 def shard_run_test_Hexagon_6_of_8() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-hexagon") {
         try {
           init_git()
@@ -794,7 +794,7 @@ def shard_run_test_Hexagon_6_of_8() {
 
 def shard_run_test_Hexagon_7_of_8() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-hexagon") {
         try {
           init_git()
@@ -839,7 +839,7 @@ def shard_run_test_Hexagon_7_of_8() {
 
 def shard_run_test_Hexagon_8_of_8() {
   if (!skip_ci && is_docs_only_build != 1) {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-hexagon") {
         try {
           init_git()

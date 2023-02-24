@@ -19,7 +19,7 @@
 
 {% call m.invoke_build(
   name='BUILD: i386',
-  node='CPU-SMALL',
+  node='CPU-SMALL-SPOT',
   condition='!skip_ci && is_docs_only_build != 1',
   ws='tvm/build-i386',
   docker_image='ci_i386',
@@ -39,7 +39,7 @@
 
 {% call(shard_index, num_shards) m.sharded_test_step(
   name="python: i386",
-  node="CPU-SMALL",
+  node="CPU-SMALL-SPOT",
   num_shards=3,
   ws="tvm/integration-python-i386",
   platform="i386",

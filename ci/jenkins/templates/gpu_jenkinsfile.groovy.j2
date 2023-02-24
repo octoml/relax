@@ -19,7 +19,7 @@
 
 {% call m.invoke_build(
   name='BUILD: GPU',
-  node='CPU-SMALL',
+  node='CPU-SMALL-SPOT',
   condition='!skip_ci',
   ws='tvm/build-gpu',
   docker_image='ci_gpu',

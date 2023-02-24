@@ -19,7 +19,7 @@
 
 {% call m.invoke_build(
   name='BUILD: WASM',
-  node='CPU-SMALL',
+  node='CPU-SMALL-SPOT',
   condition='!skip_ci && is_docs_only_build != 1',
   ws='tvm/build-wasm',
   docker_image='ci_wasm',

@@ -344,7 +344,7 @@ def check_pr(pr_number) {
 
 def prepare() {
   stage('Prepare') {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/prepare") {
         init_git()
 
@@ -489,7 +489,7 @@ prepare()
 def build() {
   stage('Build') {
     if (!skip_ci && is_docs_only_build != 1) {
-      node('CPU-SMALL') {
+      node('CPU-SMALL-SPOT') {
         ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/build-wasm") {
           init_git()
           docker_init(ci_wasm)

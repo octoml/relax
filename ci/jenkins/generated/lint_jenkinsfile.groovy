@@ -344,7 +344,7 @@ def check_pr(pr_number) {
 
 def prepare() {
   stage('Prepare') {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/prepare") {
         init_git()
 
@@ -490,7 +490,7 @@ prepare()
 stage('Lint') {
   parallel(
   'Lint 1 of 2': {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/lint") {
         init_git()
         docker_init(ci_lint)
@@ -510,7 +510,7 @@ stage('Lint') {
     }
   },
   'Lint 2 of 2': {
-    node('CPU-SMALL') {
+    node('CPU-SMALL-SPOT') {
       ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/lint") {
         init_git()
         docker_init(ci_lint)
