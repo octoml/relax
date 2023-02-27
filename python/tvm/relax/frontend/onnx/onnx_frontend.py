@@ -637,7 +637,7 @@ class Exp(OnnxOpConverter):
     """Converts an onnx Exp node into an equivalent Relax expression."""
 
     @classmethod
-    def _check_type(dtype, valid_types):
+    def _check_type(cls, dtype, valid_types):
         assert dtype in valid_types, "Types {} are supported only, but {} is given".format(
             valid_types, dtype
         )
