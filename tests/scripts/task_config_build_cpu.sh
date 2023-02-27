@@ -30,9 +30,11 @@ echo set\(USE_MICRO ON\) >> config.cmake
 # echo set\(USE_DNNL_CODEGEN ON\) >> config.cmake
 # echo set\(USE_ARM_COMPUTE_LIB ON\) >> config.cmake
 echo set\(USE_LLVM llvm-config-11\) >> config.cmake
-echo set\(USE_NNPACK ON\) >> config.cmake
-echo set\(NNPACK_PATH /NNPACK/build/\) >> config.cmake
-echo set\(USE_ANTLR ON\) >> config.cmake
+echo set\(USE_BLAS openblas\) >> config.cmake
+# echo set\(USE_NNPACK ON\) >> config.cmake
+# echo set\(NNPACK_PATH /NNPACK/build/\) >> config.cmake
+# echo set\(USE_ANTLR ON\) >> config.cmake
+# echo set\(CMAKE_CXX_COMPILER g++\) >> config.cmake # NOTE: don't set this to use sccache in CI.
 echo set\(CMAKE_CXX_FLAGS -Werror\) >> config.cmake
 echo set\(HIDE_PRIVATE_SYMBOLS ON\) >> config.cmake
 echo set\(USE_VTA_TSIM ON\) >> config.cmake
