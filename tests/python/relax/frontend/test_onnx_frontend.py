@@ -661,6 +661,10 @@ def test_log():
     verify_unary("Log", [32, 16])
 
 
+def test_exp():
+    verify_unary("Exp", [32, 16])
+
+
 def test_instance_norm():
     verify_ternary(
         "InstanceNormalization", [1, 3, 32, 32], [3], [3], [1, 3, 32, 32], attrs={"epsilon": 1e-12}
