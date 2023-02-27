@@ -1073,6 +1073,58 @@ class InstanceNormalization(OnnxOpConverter):
         return out
 
 
+class BatchNormalization(OnnxOpConverter):
+    """Converts an onnx BatchNormalization node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v16(cls, bb, inputs, attr):
+        # Unpack inputs
+        data = inputs[0]
+        scale = inputs[1]
+        bias = inputs[2]
+        mean = inputs[3]
+        var = inputs[4]
+        epsilon = attr.get("epsilon", 1e-05)
+        return relax.op.nn.batch_norm(data, scale, bias, mean, var, axis=1, epsilon=epsilon)
+
+
+class MaxPool(OnnxOpConverter):
+    """Converts an onnx MaxPool node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v12(cls, bb, inputs, attr):
+        # Unpack inputs and attributes.
+        data = inputs[0]
+        auto_pad = attr.get("auto_pad", b"NOTSET").decode("utf-8")
+        ceil_mode = attr.get("ceil_mode", 0)
+        dilations = attr.get("dilations", [1, 1])
+        kernel_shape = attr.get("kernel_shape")
+        pads = attr.get("pads", 0)
+        strides = attr.get("strides", 1)
+        if auto_pad != "NOTSET":
+            raise NotImplementedError("Auto padding not yet supported.")
+        return relax.op.nn.max_pool2d(data, kernel_shape, strides, pads, dilations, ceil_mode)
+
+
+class GlobalAveragePool(OnnxOpConverter):
+    """Converts an onnx GlobalAveragePool node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        return relax.op.nn.adaptive_avg_pool2d(inputs[0], 1)
+
+
+class Flatten(OnnxOpConverter):
+    """Converts an onnx Flatten node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        axis = attr.get("axis", 1)
+        data_shape = [i.value for i in inputs[0].struct_info.shape]
+        new_shape = (1, -1) if axis == 0 else (_np.prod(data_shape[0:axis]).astype("int64"), -1)
+        return relax.op.reshape(inputs[0], new_shape)
+
+
 def _get_convert_map():
     return {
         "MatMul": relay.frontend.onnx.MatMul,
@@ -1136,10 +1188,10 @@ def _get_convert_map():
         "Pad": Pad,
         "Split": Split,
         "Tile": Tile,
-        "BatchNormalization": relay.frontend.onnx.BatchNorm,
-        "GlobalAveragePool": relay.frontend.onnx.GlobalAveragePool,
-        "Flatten": relay.frontend.onnx.Flatten,
-        "MaxPool": relay.frontend.onnx.MaxPool,
+        "BatchNormalization": BatchNormalization,
+        "GlobalAveragePool": GlobalAveragePool,
+        "Flatten": Flatten,
+        "MaxPool": MaxPool,
         "Identity": Identity,
         "Resize": Resize,
         "Einsum": Einsum,
@@ -1325,7 +1377,6 @@ class ONNXGraphImporter:
             attr["tvm_custom"]["name"] = i_name
             attr["tvm_custom"]["num_outputs"] = len(outputs)
 
-            print(op_name, node.name)
             op = self._convert_operator(op_name, inputs, attr, self.opset)
             # Create struct information for the new operator.
             op = self.bb.normalize(op)

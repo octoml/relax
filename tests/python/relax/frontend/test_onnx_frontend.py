@@ -1432,5 +1432,51 @@ def test_less_equal():
     verify_compare("LessOrEqual", [32, 32])
 
 
+def test_batch_norm():
+    batch_norm_node = helper.make_node(
+        "BatchNormalization", ["x", "s", "bias", "mean", "var"], ["y"], epsilon=1e-2
+    )
+    graph = helper.make_graph(
+        [batch_norm_node],
+        "batch_norm_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4, 5]),
+            helper.make_tensor_value_info("s", TensorProto.FLOAT, [3]),
+            helper.make_tensor_value_info("bias", TensorProto.FLOAT, [3]),
+            helper.make_tensor_value_info("mean", TensorProto.FLOAT, [3]),
+            helper.make_tensor_value_info("var", TensorProto.FLOAT, [3]),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3, 4, 5])],
+    )
+
+    model = helper.make_model(graph, producer_name="batch_norm_test")
+    check_correctness(model)
+
+
+def test_max_pool():
+    max_pool_node = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[2, 2])
+    graph = helper.make_graph(
+        [max_pool_node],
+        "max_pool_test",
+        inputs=[
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 32, 32]),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 16, 16])],
+    )
+
+    model = helper.make_model(graph, producer_name="max_pool_test")
+    check_correctness(model)
+
+
+def test_global_average_pool():
+    verify_unary("GlobalAveragePool", [1, 3, 32, 32])
+
+
+def test_flatten():
+    verify_unary("Flatten", [1, 3, 32, 32], attrs={"axis": 0})
+    verify_unary("Flatten", [1, 3, 32, 32], attrs={"axis": -1})
+    verify_unary("Flatten", [1, 3, 32, 32], attrs={"axis": 2})
+
+
 if __name__ == "__main__":
     tvm.testing.main()
