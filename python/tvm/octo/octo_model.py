@@ -19,6 +19,7 @@
 import json
 import tarfile
 import tvm
+import numpy as np
 from tvm import relax
 from tvm.contrib import utils
 from pathlib import Path
@@ -64,7 +65,7 @@ class OctoModel(object):
         self.input_info = input_info
 
         # Create a vm from exe.
-        self.vm = relax.VirtualMachine(self.exe, self.dev)
+        self.vm = relax.VirtualMachine(self.exe, self.dev, profile=True)
 
     def save(
         self, model_path: Union[str, Path]
@@ -97,7 +98,7 @@ class OctoModel(object):
             tar.add(input_info_path, "input_info.json")
             tar.add(metadata_path, "metadata.json")
 
-    def load(self, model_path: Union[str, Path]):
+    def load(self, model_path: Union[str, Path]) -> Tuple[relax.vm.Executable, Dict[List, str]]:
         """Load a saved OctoModel back into memory.
 
         Parameters
@@ -132,3 +133,59 @@ class OctoModel(object):
         self.target = tvm.target.Target(metadata["target"])
 
         return exe, input_info
+
+    def generate_inputs(self) -> Dict[str, np.array]:
+        """Generate random inputs for inference or benchmarking
+
+        Returns
+        -------
+        input_dict : Dict[str, np.array]
+        """
+        input_dict = {}
+        for name, (shape, dtype) in self.input_info.items():
+            input_dict[name] = np.random.normal(size=shape).astype(dtype)
+        return input_dict
+
+    def run(self, inputs: Optional[Dict[str, np.array]] = None) -> List[np.array]:
+        """Perform an inference of the model.
+
+        Parameters
+        ----------
+        inputs : Optional[Dict[str, np.array]]
+            An optional input dictionary containing the values to perform
+            inference with. If not provided, random values will be generated
+            instead.
+
+        Returns
+        -------
+        outputs : List[np.array]
+            The output values from the inference.
+        """
+        # Generate random inputs if none are provided.
+        if inputs is None:
+            inputs = self.generate_inputs()
+
+        # Assign inputs.
+        self.vm.set_input("main", **inputs)
+        # Run the modeel.
+        self.vm.invoke_stateful("main")
+        # Get and return the outputs.
+        outputs = self.vm.get_outputs("main")
+        if isinstance(outputs, tuple):
+            outputs = [output.numpy() for output in outputs]
+        else:
+            outputs = [outputs.numpy()]
+        return outputs
+
+    def profile(self) -> tvm.runtime.profiling.Report:
+        """Measures the model's performance.
+
+        Returns
+        -------
+        report : tvm.runtime.profiling.Report
+            A breakdown of the runtime and per layer metrics.
+        """
+        inputs = self.generate_inputs()
+        self.vm.set_input("main", **inputs)
+        report = self.vm.profile("main")
+        return report

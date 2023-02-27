@@ -58,3 +58,9 @@ def test_e2e_flow():
     tvm.ir.assert_structural_equal(octo_model.exe.as_text(), loaded_model.exe.as_text())
     # Confirm targets were saved and loaded correctly.
     assert str(octo_model.target) == str(loaded_model.target)
+
+    # Test the running and benchmarking helpers.
+    outputs = octo_model.run()
+    assert list(outputs[0].shape) == [1, 16, 30, 30]
+    report = octo_model.profile()
+    assert "conv2d" in str(report)
