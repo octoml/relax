@@ -633,6 +633,30 @@ class Log(OnnxOpConverter):
         return relax.op.log(inputs[0])
 
 
+class Exp(OnnxOpConverter):
+    """Converts an onnx Exp node into an equivalent Relax expression."""
+
+    @classmethod
+    def _check_type(dtype, valid_types):
+        assert dtype in valid_types, "Types {} are supported only, but {} is given".format(
+            valid_types, dtype
+        )
+
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        data = inputs[0]
+        cls._check_type(data.checked_type.dtype, ["float", "double", "float16"])
+
+        return relax.op.exp(data)
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        cls._check_type(data.checked_type.dtype, ["float", "double", "float16", "bfloat16"])
+
+        return relax.op.exp(data)
+
+
 class Less(OnnxOpConverter):
     """Converts an onnx Less node into an equivalent Relax expression."""
 
@@ -1458,6 +1482,7 @@ def _get_convert_map():
         "Min": Min,
         "Max": Max,
         "Log": Log,
+        "Exp": Exp,
         "Less": Less,
         "LessOrEqual": LessOrEqual,
         "LayerNormalization": LayerNormalization,
