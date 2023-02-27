@@ -645,14 +645,16 @@ class Exp(OnnxOpConverter):
     @classmethod
     def _impl_v1(cls, bb, inputs, attr):
         data = inputs[0]
-        cls._check_type(data.checked_type.dtype, ["float", "double", "float16"])
+        valid_types = ["float", "float32", "double", "float64", "float16"]
+        cls._check_type(data.checked_type.dtype, valid_types)
 
         return relax.op.exp(data)
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
-        cls._check_type(data.checked_type.dtype, ["float", "double", "float16", "bfloat16"])
+        valid_types = ["float", "float32", "double", "float64", "float16", "bfloat16"]
+        cls._check_type(data.checked_type.dtype, valid_types)
 
         return relax.op.exp(data)
 
