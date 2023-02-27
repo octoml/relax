@@ -24,6 +24,7 @@ from typing import Union, Optional, Dict, List
 from pathlib import Path
 import onnx
 from .utils import *
+from .octo_model import OctoModel
 
 
 def load_onnx_model(
@@ -123,7 +124,7 @@ def compile(
     # Determine current target.
     if target is None:
         # Check if this is gpu enabled.
-        if tvm.gpu(0).exist:
+        if tvm.cuda(0).exist:
             target = get_cuda_target()
         else:
             target = get_llvm_target()
@@ -132,20 +133,27 @@ def compile(
     # Convert model into a relax module.
     relax_mod = load_onnx_model(model, shape_dict)
 
+    # Extract information about input shapes and types so we can
+    # randomly generate them later if needed.
+    input_info = {}
+    for inp in relax_mod["main"].params:
+        input_shape = [i.value for i in inp.struct_info.shape]
+        input_dtype = inp.struct_info.dtype
+        input_info[inp.name_hint] = (input_shape, input_dtype)
+
     # Match subgraphs that can be offloaded to cutlass and offload them.
-    offload_cutlass(relax_mod, target)
+    # TODO(jwfromm) Currently doesnt work, get one e2e example.
+    # offload_cutlass(relax_mod, target)
+
+    # Perform legalization to lower Relax operators.
+    relax_mod = relax.transform.LegalizeOps()(relax_mod)
 
     # Schedule all remaining functions to be compatible with gpu if needed.
     if str(target.kind) == "cuda":
         relax_mod = relax.transform.ScheduleForTarget(target)(relax_mod)
 
     # Compile the module.
-    ex = relax.vm.build(relax_mod, target)
-    # Compile exported cutlass functions.
-    ex = finalize_modules_relax(ex)
+    exe = relax.vm.build(relax_mod, target)
 
-    # Create a VM that can run the model.
-    dev = tvm.device(target.get_target_device_type())
-    vm = relax.VirtualMachine(ex, dev)
-
-    return vm
+    # Create an OctoModel from the compiled artifact.
+    return OctoModel(exe, input_info, target=target)

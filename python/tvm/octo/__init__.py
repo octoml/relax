@@ -19,3 +19,4 @@
 
 from . import utils
 from .compile import compile
+from .octo_model import OctoModel
