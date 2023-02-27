@@ -18,3 +18,4 @@
 """OctoML Simplified API utilities."""
 
 from . import utils
+from .compile import compile

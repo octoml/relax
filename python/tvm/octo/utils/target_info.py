@@ -148,7 +148,7 @@ def get_default_target(ctx: str) -> tvm.target.Target:
     if ctx == "cpu":
         target = get_llvm_target()
     elif ctx == "cuda":
-        if tvm.gpu(0).exist:
+        if tvm.cuda(0).exist:
             target = get_cuda_target()
         elif tvm.rocm(0).exist:
             target = "rocm"
