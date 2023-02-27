@@ -256,9 +256,21 @@ class Gather(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        # TODO This assumes positive only indices.
+        # Unpack inputs
+        data = inputs[0]
+        indices = inputs[1]
+        # Indices must be rank 1, if we're given a scalar, expand it.
+        scalar_indices = False
+        if len(indices.struct_info.shape) == 0:
+            scalar_indices = True
+            indices = bb.normalize(relax.op.expand_dims(indices, axis=0))
+
         axis = attr.get("axis", 0)
-        return bb.emit_te(topi.take, inputs[0], inputs[1], axis)
+        out = relax.op.take(data, indices, axis)
+        # If indices were scalar, output dimension needs to be reduced.
+        if scalar_indices:
+            out = relax.op.squeeze(out, axis)
+        return out
 
 
 class Gemm(OnnxOpConverter):
@@ -296,30 +308,10 @@ class Reshape(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
-        # TODO We assume new_shape is a constant, need to enable tensor input to reshape
-        # for full support.
-        if not isinstance(inputs[1], relax.Constant):
-            return inputs[0]
-        new_shape = inputs[1].data.numpy().tolist()
-
-        # Convert -1 dims in new_shape into positive equivalent.
-        if -1 in new_shape:
-            if new_shape.count(-1) != 1:
-                raise ValueError("Reshape with multiple -1 is not supported.")
-
-            data_shape = [dim.value for dim in data.struct_info.shape.values]
-            total_elements = _np.prod(data_shape)
-            new_product = 1
-            for dim in new_shape:
-                if dim > 0:
-                    new_product *= dim
-
-            # Replace -1 with positive equivalent
-            for i, dim in enumerate(new_shape):
-                if dim == -1:
-                    new_shape[i] = int(total_elements / new_product)
-
-        return bb.emit_te(topi.reshape, data, new_shape)
+        new_shape = inputs[1]
+        if isinstance(inputs[1], relax.Constant):
+            new_shape = inputs[1].data.numpy().tolist()
+        return relax.op.reshape(data, new_shape)
 
 
 class Gelu(OnnxOpConverter):
@@ -379,6 +371,12 @@ class Shape(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        # See if we can extract a constant shape.
+        if all(["int" in i.dtype for i in inputs[0].struct_info.shape]):
+            # If so, return the shape as a constant.
+            data_shape = [i.value for i in inputs[0].struct_info.shape]
+            return relax.const(data_shape, "int64")
+        # Otherwise compute it dynamically.
         return relax.op.shape_of(inputs[0])
 
 
@@ -427,20 +425,44 @@ class Conv(OnnxOpConverter):
 
     @classmethod
     def _impl_v11(cls, bb, inputs, attr):
-        conv_out = bb.normalize(
-            relax.op.nn.conv2d(
-                data=inputs[0],
-                weight=inputs[1],
-                strides=attr.get("strides", 1),
-                padding=attr.get("pads", 0),
-                dilation=attr.get("dilation", 1),
-                groups=attr.get("group", 1),
-                data_layout="NCHW",
-                kernel_layout="OIHW",
+        ndim = len(inputs[0].struct_info.shape)
+        if ndim == 3:
+            conv_out = bb.emit_te(
+                topi.nn.conv1d,
+                inputs[0],
+                inputs[1],
+                attr.get("strides", 1),
+                attr.get("pads", 0),
+                attr.get("dilation", 1),
+                "NCHW",
+                "OIHW",
             )
-        )
+        elif ndim == 4:
+            conv_out = bb.normalize(
+                relax.op.nn.conv2d(
+                    data=inputs[0],
+                    weight=inputs[1],
+                    strides=attr.get("strides", 1),
+                    padding=attr.get("pads", 0),
+                    dilation=attr.get("dilation", 1),
+                    groups=attr.get("group", 1),
+                    data_layout="NCHW",
+                    kernel_layout="OIHW",
+                )
+            )
+        else:
+            raise NotImplementedError("Only 1d and 2d conv currently supported.")
+
         if inputs[2] is not None:
-            conv_out = relax.op.add(conv_out, inputs[2])
+            bias = relax.op.reshape(
+                inputs[2],
+                [1, -1]
+                + [
+                    1,
+                ]
+                * (ndim - 2),
+            )
+            conv_out = relax.op.add(conv_out, bias)
 
         return conv_out
 
@@ -1021,6 +1043,36 @@ class Range(OnnxOpConverter):
         return bb.emit_te(topi.arange, start, limit, step)
 
 
+class InstanceNormalization(OnnxOpConverter):
+    """Converts an onnx InstanceNormalization node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v6(cls, bb, inputs, attr):
+        data = inputs[0]
+        scale = inputs[1]
+        B = inputs[2]
+        epsilon = attr.get("epsilon", 1e-05)
+        epsilon = relax.const(epsilon, dtype=data.struct_info.dtype)
+
+        ndim = len(data.struct_info.shape)
+        redux_axes = list(range(2, ndim))
+
+        mean = relax.op.mean(data, axis=redux_axes, keepdims=True)
+        var = relax.op.variance(data, axis=redux_axes, keepdims=True)
+        sqrt = relax.op.sqrt(var + epsilon)
+        out = relax.op.divide(relax.op.subtract(data, mean), sqrt)
+        broadcast_shape = [-1] + [
+            1,
+        ] * (ndim - 2)
+        if scale is not None:
+            scale = relax.op.reshape(scale, broadcast_shape)
+            out = relax.op.multiply(out, scale)
+        if B is not None:
+            B = relax.op.reshape(B, broadcast_shape)
+            out = relax.op.add(out, B)
+        return out
+
+
 def _get_convert_map():
     return {
         "MatMul": relay.frontend.onnx.MatMul,
@@ -1046,7 +1098,7 @@ def _get_convert_map():
         "Tanh": Tanh,
         "Sqrt": Sqrt,
         "Relu": Relu,
-        "Conv": relay.frontend.onnx.Conv,
+        "Conv": Conv,
         "Pow": Pow,
         "Erf": Erf,
         "CumSum": CumSum,
@@ -1065,7 +1117,7 @@ def _get_convert_map():
         "LayerNormalization": relay.frontend.onnx.LayerNormalization,
         "SkipLayerNormalization": relay.frontend.onnx.SkipLayerNormalization,
         "EmbedLayerNormalization": relay.frontend.onnx.EmbedLayerNormalization,
-        "InstanceNormalization": relay.frontend.onnx.InstanceNorm,
+        "InstanceNormalization": InstanceNormalization,
         # defs/reduction
         "ReduceMax": relay.frontend.onnx.ReduceMax,
         "ReduceMin": relay.frontend.onnx.ReduceMin,
@@ -1273,6 +1325,7 @@ class ONNXGraphImporter:
             attr["tvm_custom"]["name"] = i_name
             attr["tvm_custom"]["num_outputs"] = len(outputs)
 
+            print(op_name, node.name)
             op = self._convert_operator(op_name, inputs, attr, self.opset)
             # Create struct information for the new operator.
             op = self.bb.normalize(op)

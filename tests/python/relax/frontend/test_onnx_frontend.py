@@ -286,24 +286,33 @@ def test_cast(from_type, to_type):
 
 
 def test_gather():
-    gather_node = helper.make_node("Gather", ["data", "indices"], ["y"], axis=0)
+    def _verify_gather(data_shape, indices, out_shape):
+        gather_node = helper.make_node("Gather", ["data", "indices"], ["y"], axis=0)
 
-    graph = helper.make_graph(
-        [gather_node],
-        "gather_test",
-        inputs=[
-            helper.make_tensor_value_info("data", TensorProto.FLOAT, [5, 4, 3, 2]),
-            helper.make_tensor_value_info("indices", TensorProto.INT32, [3]),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 4, 3, 2])],
-    )
+        if isinstance(indices, (list, tuple)):
+            indices_shape = [len(indices)]
+        else:
+            indices_shape = []
 
-    model = helper.make_model(graph, producer_name="gather_test")
-    input_values = {
-        "data": np.random.randn(5, 4, 3, 2).astype("float32"),
-        "indices": np.array([0, 1, 3]).astype("int32"),
-    }
-    check_correctness(model, inputs=input_values)
+        graph = helper.make_graph(
+            [gather_node],
+            "gather_test",
+            inputs=[
+                helper.make_tensor_value_info("data", TensorProto.FLOAT, data_shape),
+                helper.make_tensor_value_info("indices", TensorProto.INT32, indices_shape),
+            ],
+            outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, out_shape)],
+        )
+
+        model = helper.make_model(graph, producer_name="gather_test")
+        input_values = {
+            "data": np.random.randn(*data_shape).astype("float32"),
+            "indices": np.array(indices).astype("int32"),
+        }
+        check_correctness(model, inputs=input_values)
+
+    _verify_gather([5, 4, 3, 2], [0, 1, 3], [3, 4, 3, 2])
+    _verify_gather([3], 0, [])
 
 
 @pytest.mark.parametrize("alpha", [None, 0.25])
@@ -339,7 +348,11 @@ def test_gemm(alpha, beta, useC):
 
 @pytest.mark.parametrize(
     "in_shape, shape, out_shape",
-    [([7, 32, 32, 8], [224, 256], [224, 256]), ([7, 32, 32, 8], [-1, 8192], [7, 8192])],
+    [
+        ([7, 32, 32, 8], [224, 256], [224, 256]),
+        ([7, 32, 32, 8], [-1, 8192], [7, 8192]),
+        ([7, 32, 32, 8], [0, 32, 32, 8], [7, 32, 32, 8]),
+    ],
 )
 def test_reshape(in_shape, shape, out_shape):
     reshape_node = helper.make_node("Reshape", ["data", "shape"], ["reshaped"])
@@ -515,21 +528,24 @@ def test_relu():
 
 
 def test_conv():
-    conv_node = helper.make_node("Conv", ["x", "w", "b"], ["y"])
-    nchw_shape = [3, 12, 32, 32]
-    graph = helper.make_graph(
-        [conv_node],
-        "conv_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, nchw_shape),
-            helper.make_tensor_value_info("w", TensorProto.FLOAT, [4, 12, 3, 3]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [4]),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 4, 30, 30])],
-    )
+    def _verify_conv(input_shape, weight_shape, output_shape):
+        bias_shape = [output_shape[1]]
+        conv_node = helper.make_node("Conv", ["x", "w", "b"], ["y"])
+        graph = helper.make_graph(
+            [conv_node],
+            "conv_test",
+            inputs=[
+                helper.make_tensor_value_info("x", TensorProto.FLOAT, input_shape),
+                helper.make_tensor_value_info("w", TensorProto.FLOAT, weight_shape),
+                helper.make_tensor_value_info("b", TensorProto.FLOAT, bias_shape),
+            ],
+            outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, output_shape)],
+        )
 
-    model = helper.make_model(graph, producer_name="conv_test")
-    check_correctness(model)
+        model = helper.make_model(graph, producer_name="conv_test")
+        check_correctness(model)
+
+    _verify_conv([3, 12, 32, 32], [4, 12, 3, 3], [3, 4, 30, 30])
 
 
 def test_pow():
@@ -645,6 +661,9 @@ def test_log():
 
 
 def test_instance_norm():
+    verify_ternary(
+        "InstanceNormalization", [1, 3, 32, 32], [3], [3], [1, 3, 32, 32], attrs={"epsilon": 1e-12}
+    )
     verify_ternary(
         "InstanceNormalization", [1, 32, 32], [32], [32], [1, 32, 32], attrs={"epsilon": 1e-12}
     )
