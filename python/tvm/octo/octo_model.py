@@ -18,12 +18,12 @@
 """Wrapper class for compiled models."""
 import json
 import tarfile
-import tvm
 import numpy as np
-from tvm import relax
-from tvm.contrib import utils
 from pathlib import Path
 from typing import Optional, Union, Dict, Tuple, List
+import tvm
+from tvm import relax
+from tvm.contrib import utils
 
 
 class OctoModel(object):

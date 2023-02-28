@@ -14,16 +14,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-# pylint: disable=invalid-name, wrong-import-position
+# pylint: disable=invalid-name, wrong-import-position, redefined-builtin, not-callable
 """Simplified interface for TVM Unity Flow."""
-
+import onnx
+from pathlib import Path
+from typing import Union, Optional, Dict, List
 import tvm
 from tvm import relax
-from tvm.contrib.cutlass.build import finalize_modules_relax
-from typing import Union, Optional, Dict, List
-from pathlib import Path
-import onnx
-from .utils import *
+from .utils import get_cuda_target, get_llvm_target
 from .octo_model import OctoModel
 
 
@@ -73,7 +71,7 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
         The input graph with all possible subgraphs rewritten.
     """
     # Extract the sm version of the current target.
-    assert target.arch is not "", "Target architecture must be specified."
+    assert target.arch, "Target architecture must be specified."
     sm = int(target.arch.split("_")[1])
 
     # Construct CUTLASS codegen pass.

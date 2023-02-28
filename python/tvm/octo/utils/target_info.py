@@ -19,7 +19,6 @@
 import os
 import re
 import sys
-import tvm
 import psutil
 import subprocess
 import shutil
@@ -48,7 +47,7 @@ def get_llvm_target() -> tvm.target.Target:
     # Next extract attribute string.
     platform = sys.platform
     # Linux
-    if platform == "linux" or platform == "linux2":
+    if platform in ["linux", "linux2"]:
         output = subprocess.check_output("lscpu", shell=True).decode()
         pattern = r"^([^:]+):\s+(.*)$"
         cpu_info = {}
@@ -149,28 +148,8 @@ def get_cuda_target() -> tvm.target.Target:
     return tvm.target.Target(target_name)
 
 
-def get_default_target(ctx: str) -> tvm.target.Target:
-    if ctx == "cpu":
-        target = get_llvm_target()
-    elif ctx == "cuda":
-        if tvm.cuda(0).exist:
-            target = get_cuda_target()
-        elif tvm.rocm(0).exist:
-            target = "rocm"
-        else:
-            raise NotImplementedError("Only cuda and rocm GPUs currently supported.")
-    else:
-        raise NotImplementedError(
-            "Context %s does not have a clear target. Please specify one explicitly" % target
-        )
-
-    if isinstance(target, str):
-        target = tvm.target.Target(target)
-
-    return target
-
-
 def get_default_threads() -> int:
+    """Extract the number of threads supported on this device."""
     n = os.environ.get("TVM_NUM_THREADS")
     if n is not None:
         return int(n)
