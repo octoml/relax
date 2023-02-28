@@ -35,8 +35,29 @@ def _reshape(
     return reshape_call_te
 
 
+def _rd_reshape(bb: BlockBuilder, call: Call) -> Expr:
+    shape = call.args[1]
+    shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
+    shape_dataflow_var = bb.emit(
+        relax.Call(
+            relax.ExternFunc("vm.builtin.tensor_to_shape"),
+            [shape],
+            sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)],
+        )
+    )
+
+    shape_vars = []
+    for i in range(shape_ndim):
+        shape_vars.append(tvm.tir.Var("x_%d" % i, "int64"))
+    bb.match_cast(shape_dataflow_var, relax.ShapeStructInfo(shape_vars))
+    return bb.call_te(
+        topi.reshape, call.args[0], relax.ShapeExpr(shape_vars), primfunc_name_hint="rd_reshape"
+    )
+
+
 register_legalize("relax.broadcast_to", _reshape(topi.broadcast_to, "broadcast_to"))
 register_legalize("relax.reshape", _reshape(topi.reshape, "reshape"))
+register_legalize("relax.rd_reshape", _rd_reshape)
 register_legalize(
     "relax.collapse_sum_like",
     _reshape(topi.collapse_sum, "collapse_sum", is_collapse_sum_like=True),

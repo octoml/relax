@@ -207,6 +207,34 @@ def reshape(x: Expr, shape: Union[Tuple[PrimExprLike], Expr]) -> Expr:
     return _ffi_api.reshape(x, shape)  # type: ignore
 
 
+def rd_reshape(x: Expr, shape: Expr) -> Expr:
+    """Runtime-dependent version of Reshape.
+       This operator will reshape the input array based on shape tensor
+       that can be computed at runtime.
+
+    Parameters
+    ----------
+    x : relax.Expr
+        The input data to the operator.
+
+    shape : relax.Expr
+        The new shape tensor computed at runtime.
+
+    Returns
+    -------
+    result : relax.Expr
+        The reshaped result.
+
+    Note
+    ----
+    TODO(@sungg): Update this
+    The ``-1`` inference will be performed at compile-time during legalization.
+    That is to say, in any case the dimension length of ``-1`` cannot be inferred at
+    compile time, an error will be thrown.
+    """
+    return _ffi_api.rd_reshape(x, shape)  # type: ignore
+
+
 def split(
     x: Expr,
     indices_or_sections: Union[int, List[PrimExprLike]],

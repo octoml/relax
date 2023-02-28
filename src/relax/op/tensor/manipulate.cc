@@ -654,6 +654,49 @@ TVM_REGISTER_OP("relax.reshape")
     .add_argument("shape", "Shape", "The input new shape.")
     .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoReshape);
 
+Expr rd_reshape(Expr x, Expr shape) {
+  static const Op& op = Op::Get("relax.rd_reshape");
+  return Call(op, {std::move(x), std::move(shape)}, Attrs(), {});
+}
+
+TVM_REGISTER_GLOBAL("relax.op.rd_reshape").set_body_typed(rd_reshape);
+
+StructInfo InferStructInfoRDReshape(const Call& call, const BlockBuilder& ctx) {
+  if (call->args.size() != 2) {
+    ctx->ReportFatal(Diagnostic::Error(call) << "Reshape op should take 2 arguments");
+  }
+  const auto* data_sinfo = GetStructInfoAs<TensorStructInfoNode>(call->args[0]);
+  const auto* shape_sinfo = GetStructInfoAs<TensorStructInfoNode>(call->args[1]);
+  if (data_sinfo == nullptr) {
+    ctx->ReportFatal(Diagnostic::Error(call)
+                     << "Reshape requires the input data to be Tensor. However, the given one is "
+                     << call->args[0]->struct_info_->GetTypeKey());
+  }
+  if (shape_sinfo == nullptr) {
+    ctx->ReportFatal(
+        Diagnostic::Error(call)
+        << "Reshape requires the input new shape to be Shape. However, the given one is "
+        << call->args[1]->struct_info_->GetTypeKey());
+  }
+
+  int ndim = -1;
+  if (shape_sinfo->shape.defined()) {
+    const auto* new_shape_sinfo = GetStructInfoAs<ShapeStructInfoNode>(shape_sinfo->shape.value());
+    ICHECK_NOTNULL(new_shape_sinfo);
+    auto _ndim = new_shape_sinfo->values.value()[0].as<IntImmNode>();
+    ICHECK_NOTNULL(_ndim);
+    ndim = _ndim->value;
+  }
+
+  return TensorStructInfo(data_sinfo->dtype, ndim);
+}
+
+TVM_REGISTER_OP("relax.rd_reshape")
+    .set_num_inputs(2)
+    .add_argument("x", "Tensor", "The input tensor.")
+    .add_argument("shape", "Shape", "The input tensor for new shape.")
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoRDReshape);
+
 /* relax.split */
 TVM_REGISTER_NODE_TYPE(SplitAttrs);
 

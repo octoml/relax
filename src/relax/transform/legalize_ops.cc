@@ -84,12 +84,14 @@ class LegalizeMutator : public ExprMutator {
 
     // Not all shape values are known
     if (!std::all_of(visited_call->args.begin(), visited_call->args.end(),
-                     [](Expr arg) { return KnowAllShapeValues(GetStructInfo(arg)); }) ||
-        !KnowAllShapeValues(GetStructInfo(visited_call))) {
+                     [](Expr arg) { return KnowAllShapeValues(GetStructInfo(arg)); })) {
       return visited_call;
     }
 
     auto op = GetRef<Op>(op_node);
+    if(op->name != "relax.rd_reshape" && !KnowAllShapeValues(GetStructInfo(visited_call))){
+      return visited_call;
+    }
 
     // Priority: customize > default.
     // Check if it has customize legalization registered.

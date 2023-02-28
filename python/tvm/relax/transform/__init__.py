@@ -21,4 +21,5 @@ from .transform import *
 
 # Import to register the legalization functions.
 from . import legalize_ops
+from .convert_rd import ConvertRDOps
 from .schedule import ScheduleForTarget

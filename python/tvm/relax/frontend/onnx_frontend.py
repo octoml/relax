@@ -306,9 +306,7 @@ class Reshape(OnnxOpConverter):
     def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
         new_shape = inputs[1]
-        if isinstance(inputs[1], relax.Constant):
-            new_shape = inputs[1].data.numpy().tolist()
-        return relax.op.reshape(data, new_shape)
+        return relax.op.rd_reshape(data, new_shape)
 
 
 class Gelu(OnnxOpConverter):
@@ -1575,7 +1573,6 @@ class ONNXGraphImporter:
             attr["tvm_custom"] = {}
             attr["tvm_custom"]["name"] = i_name
             attr["tvm_custom"]["num_outputs"] = len(outputs)
-
             op = self._convert_operator(op_name, inputs, attr, self.opset)
             # Create struct information for the new operator.
             op = self.bb.normalize(op)

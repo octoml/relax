@@ -538,6 +538,63 @@ def test_reshape_symbolic():
     tvm.ir.assert_structural_equal(mod, Expected)
 
 
+def test_rd_reshape():
+    # fmt: off
+    @tvm.script.ir_module
+    class RDReshape:
+        @R.function
+        def main(x: R.Tensor((1, 2, 3, 4), "float32"), s: R.Tensor((8,3), "int64")) -> R.Tensor((8, 3), "float32"):
+            gv: R.Tensor((8, 3), "float32") = R.rd_reshape(x, s)
+            return gv
+
+    @tvm.script.ir_module
+    class Expected:
+        @R.function
+        def main(x: R.Tensor((1, 2, 3, 4), "float32"), s: R.Tensor((8,3), "int64")) -> R.Tensor((8, 3), "float32"):
+            x_0 = T.int64()
+            x_1 = T.int64()
+            gv: R.Shape(ndim=2) = R.call_packed(
+                "vm.builtin.tensor_to_shape", s, sinfo_args=(R.Shape(ndim=2),)
+            )
+            gv1: R.Shape([x_0, x_1]) = R.match_cast(gv, R.Shape([x_0, x_1]))
+            gv2 = R.call_tir(
+                rd_reshape, (x,), out_sinfo=R.Tensor((x_0, x_1), dtype="float32")
+            )
+            return gv2
+
+        @T.prim_func
+        def rd_reshape(
+            rxplaceholder: T.Buffer((T.int64(1), T.int64(2), T.int64(3), T.int64(4)), "float32"),
+            var_T_reshape: T.handle,
+        ):
+            T.func_attr({"tir.noalias": True})
+            x_0 = T.var("int64")
+            x_1 = T.var("int64")
+            T_reshape = T.match_buffer(var_T_reshape, (x_0, x_1))
+            # with T.block("root"):
+            for ax0, ax1 in T.grid(x_0, x_1):
+                with T.block("T_reshape"):
+                    v_ax0, v_ax1 = T.axis.remap("SS", [ax0, ax1])
+                    T.reads(
+                        rxplaceholder[
+                            T.int64(0),
+                            (v_ax0 * x_1 + v_ax1) % T.int64(24) // T.int64(12),
+                            (v_ax0 * x_1 + v_ax1) % T.int64(12) // T.int64(4),
+                            (v_ax0 * x_1 + v_ax1) % T.int64(4),
+                        ]
+                    )
+                    T.writes(T_reshape[v_ax0, v_ax1])
+                    T_reshape[v_ax0, v_ax1] = rxplaceholder[
+                        T.int64(0),
+                        (v_ax0 * x_1 + v_ax1) % T.int64(24) // T.int64(12),
+                        (v_ax0 * x_1 + v_ax1) % T.int64(12) // T.int64(4),
+                        (v_ax0 * x_1 + v_ax1) % T.int64(4),
+                    ]
+    # fmt: on
+    mod = LegalizeOps()(RDReshape)
+    tvm.ir.assert_structural_equal(mod, Expected)
+
+
 def test_split_by_indices():
     # fmt: off
     @tvm.script.ir_module

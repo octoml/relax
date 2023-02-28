@@ -31,6 +31,7 @@ def test_op_correctness():
     assert relax.op.flatten(x).op == Op.get("relax.flatten")
     assert relax.op.permute_dims(x).op == Op.get("relax.permute_dims")
     assert relax.op.reshape(x, (4, 5, 3)).op == Op.get("relax.reshape")
+    assert relax.op.rd_reshape(x, x).op == Op.get("relax.rd_reshape")
     assert relax.op.split(x, indices_or_sections=1).op == Op.get("relax.split")
     assert relax.op.squeeze(x).op == Op.get("relax.squeeze")
     assert relax.op.layout_transform(x, index_map=lambda a, b, c: (b, c, a)).op == Op.get(
@@ -303,6 +304,13 @@ def test_reshape_infer_struct_info_wrong_input_type():
         bb.normalize(relax.op.reshape(x2, ns))
     with pytest.raises(TVMError):
         bb.normalize(relax.op.reshape(x2, [pv]))
+
+
+def test_rd_reshape_infer_struct_info():
+    bb = relax.BlockBuilder()
+    x0 = relax.Var("x", R.Tensor((2, 3, 4, 5), "float32"))
+    s0 = relax.Var("x", R.Tensor((3, 8, 5), "float32"))
+    _check_inference(bb, relax.op.rd_reshape(x0, s0), relax.TensorStructInfo((3, 8, 5), "float32"))
 
 
 def test_permute_dims_infer_struct_info():
