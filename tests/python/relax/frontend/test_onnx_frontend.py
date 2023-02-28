@@ -102,7 +102,7 @@ def check_correctness(
     # Compile the relax graph into a VM then run.
     with tvm.transform.PassContext(opt_level=3):
         # TODO add target configuration.
-        ex = relax.vm.build(tvm_model, target="llvm")
+        ex = relax.build(tvm_model, target="llvm")
         vm = relax.VirtualMachine(ex, tvm.cpu())
     vm.set_input("main", **inputs)
     vm.invoke_stateful("main")
