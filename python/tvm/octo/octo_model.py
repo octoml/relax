@@ -31,7 +31,7 @@ class OctoModel(object):
 
     Parameters
     ----------
-    exe : Optional[relax.vm.Executable]
+    exe : Optional[relax.Executable]
         A compiled executable that can be loaded and run by a relax VM.
     input_info : Optional[Dict[str, Tuple[List, str]]]
         Information about the input names, shapes, and types for the VM.
@@ -45,7 +45,7 @@ class OctoModel(object):
 
     def __init__(
         self,
-        exe: Optional[relax.vm.Executable] = None,
+        exe: Optional[relax.Executable] = None,
         input_info: Optional[Dict[str, Tuple[List, str]]] = None,
         model_path: Optional[Union[str, Path]] = None,
         target: Optional[tvm.target.Target] = None,
@@ -69,7 +69,7 @@ class OctoModel(object):
 
     def save(
         self, model_path: Union[str, Path]
-    ) -> Tuple[relax.vm.Executable, Dict[str, relax.StructInfo]]:
+    ) -> Tuple[relax.Executable, Dict[str, relax.StructInfo]]:
         """Save the OctoModel to disk.
 
         Parameters
@@ -98,7 +98,7 @@ class OctoModel(object):
             tar.add(input_info_path, "input_info.json")
             tar.add(metadata_path, "metadata.json")
 
-    def load(self, model_path: Union[str, Path]) -> Tuple[relax.vm.Executable, Dict[List, str]]:
+    def load(self, model_path: Union[str, Path]) -> Tuple[relax.Executable, Dict[List, str]]:
         """Load a saved OctoModel back into memory.
 
         Parameters
@@ -108,7 +108,7 @@ class OctoModel(object):
 
         Returns
         -------
-        exe : relax.vm.Executable
+        exe : relax.Executable
             A compiled executable that can be loaded and run by a relax VM.
         input_info : Dict[str, Tuple[List, str]]
             Information about the input names, shapes, and types for the VM.
@@ -119,7 +119,7 @@ class OctoModel(object):
 
         # Load executable.
         exe_path = self._tmp_dir.relpath("exe.so")
-        exe = relax.vm.Executable(tvm.runtime.load_module(exe_path))
+        exe = relax.Executable(tvm.runtime.load_module(exe_path))
 
         # Load input info.
         input_info_path = self._tmp_dir.relpath("input_info.json")

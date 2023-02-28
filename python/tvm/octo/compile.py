@@ -151,7 +151,7 @@ def compile(
         relax_mod = relax.transform.ScheduleForTarget(target)(relax_mod)
 
     # Compile the module.
-    exe = relax.vm.build(relax_mod, target)
+    exe = relax.build(relax_mod, target)
 
     # Create an OctoModel from the compiled artifact.
     return OctoModel(exe, input_info, target=target)
