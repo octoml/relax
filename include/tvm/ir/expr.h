@@ -114,10 +114,15 @@ class PrimExprNode : public BaseExprNode {
 class PrimExpr : public BaseExpr {
  public:
   /*!
-   * \brief construct from integer.
+   * \brief construct from 32bit integer.
    * \param value The value to be constructed.
    */
   TVM_DLL PrimExpr(int32_t value);  // NOLINT(*)
+    /*!
+   * \brief construct from 64bit integer.
+   * \param value The value to be constructed.
+   */
+  TVM_DLL  PrimExpr(int64_t value);  // NOLINT(*)
   /*!
    * \brief construct from float.
    * \param value The value to be constructed.
