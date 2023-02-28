@@ -17,7 +17,7 @@
 # pylint: disable=invalid-name, wrong-import-position
 """Utility functions for finding information about current device."""
 import os
-import regex as re
+import re
 import sys
 import tvm
 import psutil
@@ -49,13 +49,21 @@ def get_llvm_target() -> tvm.target.Target:
     platform = sys.platform
     # Linux
     if platform == "linux" or platform == "linux2":
-        stream = subprocess.run("lscpu", stdout=subprocess.PIPE)
-        feature_info = stream.stdout.decode("utf-8")
-        features = re.search("(?<=Flags: ).+", feature_info).group(0)
-        features = features.lower().strip().split(" ")
-        march = re.search("(?<=Architecture: ).+", feature_info).group(0).strip()
-        cores = re.search("(?<=Core\(s\) per socket: ).+", feature_info).group(0).strip()
-        sockets = re.search("(?<=Socket\(s\): ).+", feature_info).group(0).strip()
+        output = subprocess.check_output("lscpu", shell=True).decode()
+        pattern = r"^([^:]+):\s+(.*)$"
+        cpu_info = {}
+
+        for line in output.splitlines():
+            match = re.match(pattern, line)
+            if match:
+                key = match.group(1)
+                value = match.group(2)
+                cpu_info[key] = value.lower().strip()
+
+        features = cpu_info["Flags"].split(" ")
+        march = cpu_info["Architecture"]
+        cores = cpu_info["Core(s) per socket"]
+        sockets = cpu_info["Socket(s)"]
         total_cores = str(int(cores) * int(sockets))
         # Special case for x86_64 mismatch between underscore and hyphen
         if march == "x86_64":
@@ -64,32 +72,29 @@ def get_llvm_target() -> tvm.target.Target:
         raise ValueError("Platform %s is not supported." % platform)
 
     # Now we'll extract the architecture of the target.
-    stream = subprocess.run(["llc", "--version"], stdout=subprocess.PIPE)
-    march_info = stream.stdout.decode("utf-8")
+    output = subprocess.check_output("llc --version", shell=True).decode()
     # Remove header.
-    march_options = re.search("(?<=Registered Targets:).*", march_info, re.DOTALL).group(0)
+    march_options = re.search("(?<=Registered Targets:).*", output, re.DOTALL).group(0)
     march_list = []
     for march_line in march_options.split("\n"):
         if march_line != "":
             march_list.append(march_line.strip().split(" ")[0])
-
     valid_march = False
     if march in march_list:
         valid_march = True
 
     # Build the base target.
     host_target = (
-        subprocess.run(["llvm-config", "--host-target"], stdout=subprocess.PIPE)
-        .stdout.decode("utf-8")
-        .strip("\n")
+        subprocess.check_output("llvm-config --host-target", shell=True).decode().strip("\n")
     )
-    target = "llvm -mcpu=%s -mtriple=%s -num_cores=%s" % (cpu, host_target, total_cores)
+    target = "llvm -mcpu=%s -mtriple=%s -num-cores=%s" % (cpu, host_target, total_cores)
 
     # If possible, add more attribute information.
     if valid_march:
         # Get list of valid attributes for the target architecture.
-        sp = subprocess.run(["llc", "-march=%s" % march, "-mattr=help"], stderr=subprocess.PIPE)
-        attrs_info = sp.stderr.decode("utf-8")
+        attrs_info = subprocess.check_output(
+            "llc -march=%s -mattr=help" % march, shell=True, stderr=subprocess.STDOUT
+        ).decode()
         supported_attrs = re.search(
             r"(?<=Available features for this target:).*(?=Use \+feature to enable a feature)",
             attrs_info,
@@ -132,9 +137,9 @@ def get_cuda_target() -> tvm.target.Target:
         return "cuda"
 
     # Otherwise, query nvidia-smi to learn which gpu this is.
-    stream = subprocess.run(["nvidia-smi", "-q"], stdout=subprocess.PIPE)
-    gpu_info = stream.stdout.decode("utf-8")
-    product_name = re.search("(?<=Product Name\s+: NVIDIA ).+", gpu_info).group(0)
+    gpu_info = subprocess.check_output("nvidia-smi -q", shell=True).decode()
+    product_pattern = r"Product Name\s+:\s+(.*)"
+    product_name = re.search(product_pattern, gpu_info).group(1).strip("NVIDIA").strip()
 
     # TVM contains prebuilt targets for most GPUs, we need only create a mapping between the
     # official product name and the corresponding target.
