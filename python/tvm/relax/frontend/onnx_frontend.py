@@ -42,13 +42,10 @@ import onnx.onnx_ml_pb2
 import numpy as _np
 
 import tvm
-from tvm import relax, topi, relay
-from tvm.target import Target
+from tvm import relax, topi
 from tvm.ir import IRModule
 from tvm.ir.supply import NameSupply
-from tvm.relax import testing, PyExprMutator
-from tvm.relay.expr import TupleWrapper, Var, GlobalVar
-from tvm.relay.frontend.onnx import OnnxOpConverter as RelayOnnxOpConverter
+from tvm.relax import testing
 
 
 def get_type(elem_type: Union[str, int]) -> str:
@@ -1125,9 +1122,215 @@ class Flatten(OnnxOpConverter):
         return relax.op.reshape(inputs[0], new_shape)
 
 
+class LayerNormalization(OnnxOpConverter):
+    """Converts an onnx LayerNormalization node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v17(cls, bb, inputs, attr):
+        data = inputs[0]
+        scale = inputs[1]
+        bias = inputs[2]
+        axis = attr.get("axis", -1)
+        epsilon = attr.get("epsilon", 1e-05)
+
+        output = relax.op.nn.layer_norm(data, scale, bias, axis, epsilon)
+        # Onnx layernorm has 3 outputs but only the first is used.
+        # We construct two empty constants for this.
+        placeholder = relax.const(0, dtype="float32")
+        return relax.Tuple([output, placeholder, placeholder])
+
+
+class ReduceMax(OnnxOpConverter):
+    """Converts an onnx ReduceMax node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        axes = attr.get("axes", None)
+        keepdims = attr.get("keepdims", 1)
+        return relax.op.max(data, axes, keepdims)
+
+
+class ReduceMin(OnnxOpConverter):
+    """Converts an onnx ReduceMin node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        axes = attr.get("axes", None)
+        keepdims = attr.get("keepdims", 1)
+        return relax.op.min(data, axes, keepdims)
+
+
+class ReduceSum(OnnxOpConverter):
+    """Converts an onnx ReduceSum node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        axes = attr.get("axes", None)
+        keepdims = attr.get("keepdims", 1)
+        return relax.op.sum(data, axes, keepdims)
+
+
+class ReduceMean(OnnxOpConverter):
+    """Converts an onnx ReduceMean node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        axes = attr.get("axes", None)
+        keepdims = attr.get("keepdims", 1)
+        return relax.op.mean(data, axes, keepdims)
+
+
+class ReduceProd(OnnxOpConverter):
+    """Converts an onnx ReduceProd node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        axes = attr.get("axes", None)
+        keepdims = attr.get("keepdims", 1)
+        return relax.op.prod(data, axes, keepdims)
+
+
+class ReduceLogSumExp(OnnxOpConverter):
+    """Converts an onnx ReduceLogSumExp node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        x = inputs[0]
+        axes = attr.get("axes", None)
+        keepdims = attr.get("keepdims", 1)
+        max_x = relax.op.max(x, axes, True)
+        exp_x = relax.op.exp(x - max_x)
+        sum_x = relax.op.sum(exp_x, axes, True)
+        out_x = relax.op.log(sum_x) + max_x
+        if not keepdims:
+            out_x = relax.op.squeeze(out_x, axes)
+        return out_x
+
+
+class ReduceLogSum(OnnxOpConverter):
+    """Converts an onnx ReduceLogSum node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        axes = attr.get("axes", None)
+        keepdims = attr.get("keepdims", 1)
+        return relax.op.log(relax.op.sum(data, axes, keepdims))
+
+
+class ReduceSumSquare(OnnxOpConverter):
+    """Converts an onnx ReduceSumSquare node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        axes = attr.get("axes", None)
+        keepdims = attr.get("keepdims", 1)
+        return relax.op.sum(relax.op.multiply(data, data), axes, keepdims)
+
+
+class ReduceL1(OnnxOpConverter):
+    """Converts an onnx ReduceL1 node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        axes = attr.get("axes", None)
+        keepdims = attr.get("keepdims", 1)
+        return relax.op.sum(relax.op.abs(data), axes, keepdims)
+
+
+class ReduceL2(OnnxOpConverter):
+    """Converts an onnx ReduceL2 node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        axes = attr.get("axes", None)
+        keepdims = attr.get("keepdims", 1)
+        return relax.op.sqrt(relax.op.sum(relax.op.multiply(data, data), axes, keepdims))
+
+
+class SkipLayerNormalization(OnnxOpConverter):
+    """Converts a microsoft contrib SkipLayerNormalization node into a Relax expression."""
+
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        data = inputs[0]
+        skip = inputs[1]
+        gamma = inputs[2]
+        beta = inputs[3]
+        bias = inputs[4]
+
+        assert (
+            beta is not None and bias is not None
+        ), "SkipLayerNormalization import currently only supports required beta and bias"
+
+        epsilon = attr.get("epsilon", 1e-12)
+
+        data = relax.op.add(data, skip)
+        if bias is not None:
+            data = relax.op.add(data, bias)
+
+        output = relax.op.nn.layer_norm(data, gamma, beta, axes=-1, epsilon=epsilon)
+
+        # Expects three outputs though only the first is used. Construct a placeholder for others.
+        placeholder = relax.const(0, dtype="float32")
+        return relax.Tuple([output, placeholder, placeholder])
+
+
+class EmbedLayerNormalization(OnnxOpConverter):
+    """Converts a microsoft contrib EmbedLayerNormalization node into a Relax expression."""
+
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        input_ids = inputs[0]
+        segment_ids = inputs[1]
+        word_emb = inputs[2]
+        pos_emb = inputs[3]
+        segment_emb = inputs[4]
+        gamma = inputs[5]
+        beta = inputs[6]
+        mask = inputs[7]
+        pos_ids = inputs[8]
+
+        epsilon = attr.get("epsilon", 1e-12)
+
+        (batch_size, seq_len) = [dim.value for dim in input_ids.struct_info.shape]
+
+        if segment_ids:
+            assert segment_emb
+
+        if pos_ids is None:
+            pos_ids = relax.const([list(range(seq_len))] * batch_size, dtype="int64")
+        # TODO(jwfromm) Replace with relax ops once take has better support.
+        word_vec = bb.emit_te(topi.take, word_emb, input_ids, 0)
+        if segment_ids:
+            segment_vec = bb.emit_te(topi.take, segment_emb, segment_ids, 0)
+        pos_vec = bb.emit_te(topi.take, pos_emb, pos_ids, 0)
+
+        vec_sum = relax.op.add(word_vec, pos_vec)
+        if segment_ids:
+            vec_sum = relax.op.add(vec_sum, segment_vec)
+
+        ln = relax.op.nn.layer_norm(vec_sum, gamma, beta, axes=-1, epsilon=epsilon)
+
+        mask_index = relax.const(_np.zeros((batch_size,), dtype="int64"))
+        if mask:
+            # Caculate number of words per sentence.
+            mask_index = relax.op.sum(mask, axis=1)
+
+        return relax.Tuple([ln, mask_index])
+
+
 def _get_convert_map():
     return {
-        "MatMul": relay.frontend.onnx.MatMul,
+        "MatMul": MatMul,
         "Concat": Concat,
         "Add": Add,
         "Mul": Mul,
@@ -1166,21 +1369,21 @@ def _get_convert_map():
         "Log": Log,
         "Less": Less,
         "LessOrEqual": LessOrEqual,
-        "LayerNormalization": relay.frontend.onnx.LayerNormalization,
-        "SkipLayerNormalization": relay.frontend.onnx.SkipLayerNormalization,
-        "EmbedLayerNormalization": relay.frontend.onnx.EmbedLayerNormalization,
+        "LayerNormalization": LayerNormalization,
+        "SkipLayerNormalization": SkipLayerNormalization,
+        "EmbedLayerNormalization": EmbedLayerNormalization,
         "InstanceNormalization": InstanceNormalization,
         # defs/reduction
-        "ReduceMax": relay.frontend.onnx.ReduceMax,
-        "ReduceMin": relay.frontend.onnx.ReduceMin,
-        "ReduceSum": relay.frontend.onnx.ReduceSum,
-        "ReduceMean": relay.frontend.onnx.ReduceMean,
-        "ReduceProd": relay.frontend.onnx.ReduceProd,
-        "ReduceLogSumExp": relay.frontend.onnx.ReduceLogSumExp,
-        "ReduceLogSum": relay.frontend.onnx.ReduceLogSum,
-        "ReduceSumSquare": relay.frontend.onnx.ReduceSumSquare,
-        "ReduceL1": relay.frontend.onnx.ReduceL1,
-        "ReduceL2": relay.frontend.onnx.ReduceL2,
+        "ReduceMax": ReduceMax,
+        "ReduceMin": ReduceMin,
+        "ReduceSum": ReduceSum,
+        "ReduceMean": ReduceMean,
+        "ReduceProd": ReduceProd,
+        "ReduceLogSumExp": ReduceLogSumExp,
+        "ReduceLogSum": ReduceLogSum,
+        "ReduceSumSquare": ReduceSumSquare,
+        "ReduceL1": ReduceL1,
+        "ReduceL2": ReduceL2,
         "Expand": Expand,
         "ConstantOfShape": ConstantOfShape,
         "Slice": Slice,
@@ -1209,8 +1412,6 @@ class ONNXGraphImporter:
         The input shape to the graph
     dtype : str or dict of str to str
         The input types to the graph
-    target : tvm.target.Target
-        The target device of the compiled functions when using the translator.
     sanitize : bool
         Whether to sanitize the input names to be valid Relax identifiers.
     """
@@ -1221,7 +1422,6 @@ class ONNXGraphImporter:
         self,
         shape: Dict[str, List],
         dtype: Union[str, Dict[str, str]],
-        target: Target,
         sanitize: bool = True,
     ):
         self._nodes: Dict[str, relax.Expr] = {}
@@ -1231,7 +1431,6 @@ class ONNXGraphImporter:
         self._input_names: List[str] = []
         self._dtype = dtype
         self.opset: int = None
-        self._target: Union[tvm.target.Target, str] = target
         self._name_supply = NameSupply()
         self._sanitize: bool = sanitize
         self.bb: relax.BlockBuilder = relax.BlockBuilder()  # pylint: disable=invalid-name
@@ -1443,122 +1642,6 @@ class ONNXGraphImporter:
                 raise ValueError("Cannot parse attribute: \n{}\n.".format(a))
         return attrs
 
-    def _relay_input_adapter(self, inputs: List[relax.Var]) -> List[relay.Var]:
-        """Creates equivalent input Relay vars from the input Relax vars"""
-        relay_vars = onnx_input()
-        for relax_var in inputs:
-            shape_values = []
-            # Some inputs may be None to indicate that input isnt used.
-            if relax_var is None:
-                relay_vars.append(None)
-            # Otherwise construct a new relay variable mirroring the relax one.
-            else:
-                for shape_value in relax_var.struct_info.shape.values:
-                    shape_values.append(shape_value)
-                if isinstance(relax_var, relax.Constant):
-                    relay_vars.append(
-                        relay.const(relax_var.data, dtype=relax_var.checked_type.dtype)
-                    )
-                else:
-                    relay_vars.append(
-                        relay.var(
-                            relax_var.name_hint,
-                            shape=shape_values,
-                            dtype=relax_var.checked_type.dtype,
-                        )
-                    )
-        return relay_vars
-
-    def _relay_output_adapter(
-        self,
-        relax_inputs: List[Union[relax.Var, relax.Constant]],
-        relay_inputs: List[Union[relay.Var, relay.Constant]],
-        relay_output: relay.Expr,
-    ) -> relax.Expr:
-        """Given the output of a relay op from the Onnx relay frontend,
-        calls into the relay to relax translator to obtain the equivalent Relax.
-        Then unpacks the IRModule obtained and adds the TIR funcs and the
-        associated call_tirs to the block builder in use.
-
-        Parameters
-        ----------
-        relax_inputs : list(relax.Var, relay.Constant)
-                The list of relax vars that are inputs to the relax op.
-        relay_inputs : list(relay.Var, relay.Constant)
-                The list of relay vars that are inputs to the relay op. This is
-                obtianed from the _relay_input_adapter function.
-        relay_output : relay.Expr
-                The output of the relay op from the Onnx relay frontend.
-        Returns
-        -------
-        output : relax.Expr
-                The output of the equivalent relax op.
-        """
-        if isinstance(relay_output, TupleWrapper):
-            relay_output = relay_output.tuple_value
-
-        # Create a Relay function with the body returned by the Relay op.
-        relay_var_inputs = [input for input in relay_inputs if isinstance(input, relay.Var)]
-        function = relay.Function(relay_var_inputs, relay_output)
-        # Save the current in-use block builder. The translator uses its own block builder.
-        prev_bb = relax.BlockBuilder._current
-        relax.BlockBuilder._current = None
-        relax_mod = testing.relay_translator.from_relay(function, self._target)
-        # Restore the block builder used by the frontend.
-        relax.BlockBuilder._current = prev_bb
-
-        # This dict is used by the Mapper mutator to replace the globar vars
-        # in the relax_mod with global_vars registered with the in-use block builder.
-        global_var_dict = {}
-        for global_var, func in relax_mod.functions.items():
-            if global_var.name_hint != "main":
-                global_var_dict[global_var] = self.bb.add_func(func, global_var.name_hint)
-
-        # This dict is used by the Mapper mutator to replace the relax vars
-        # with the inputs.
-        relax_input_dict = {}
-        for relax_var in relax_inputs:
-            if isinstance(relax_var, relax.Var):
-                relax_input_dict[relax_var.name_hint] = relax_var
-
-        @relax.expr_functor.mutator
-        class Mapper(PyExprMutator):
-            """Mutator to replace the global vars and relax vars in the relax_mod
-            with the global vars registered with the in-use block builder and the
-            relax vars with the inputs.
-            """
-
-            def visit_span(self, span: relax.Span):
-                return span
-
-            def visit_var_(self, var_node: Var):  # pylint: disable=arguments-differ
-                if var_node.name_hint in relax_input_dict:
-                    return relax_input_dict[var_node.name_hint]
-                return var_node
-
-            def visit_global_var_(self, gv_node: GlobalVar):  # pylint: disable=arguments-differ
-                if gv_node in global_var_dict:
-                    return global_var_dict[gv_node]
-                return gv_node
-
-        assert (
-            len([f for f in relax_mod.functions.values() if isinstance(f, relax.Function)]) == 1
-        ), "Expected only one Relax function in the module."
-        updated_func = Mapper().visit_expr(relax_mod["main"])
-
-        var_bindings = updated_func.body.blocks[0].bindings
-        if isinstance(updated_func.ret_struct_info, relax.TupleStructInfo):
-            # Returning a tuple.
-            final_binding = var_bindings[-2]
-            for binding in var_bindings[:-2]:
-                self.bb.emit_normalized(binding)
-        else:
-            final_binding = var_bindings[-1]
-            for binding in var_bindings[:-1]:
-                self.bb.emit_normalized(binding)
-
-        return final_binding.value
-
     def _convert_operator(
         self, op_name: str, inputs: List[relax.Function], attrs: Dict, opset: int
     ) -> relax.Function:
@@ -1585,18 +1668,7 @@ class ONNXGraphImporter:
         if op_name in convert_map:
             convert_class = convert_map[op_name]
             op_function = convert_class.get_converter(opset)
-            # If the op_function is a subclass of Relay OnnxOpConverter then it is a relay op.
-            if issubclass(convert_class, RelayOnnxOpConverter):
-                relay_inputs = self._relay_input_adapter(inputs)
-                # The op_function might change relay_inputs array. Use a copy of the inputs.
-                relay_inputs_copy = onnx_input()
-                for relay_input in relay_inputs:
-                    relay_inputs_copy.append(relay_input)
-                # TODO handle params passing
-                relay_output = op_function(relay_inputs_copy, attrs, params=[])
-                sym = self._relay_output_adapter(inputs, relay_inputs, relay_output)
-            else:
-                sym = op_function(self.bb, inputs, attrs)
+            sym = op_function(self.bb, inputs, attrs)
         else:
             raise NotImplementedError("Operator {} not implemented.".format(op_name))
         return sym
@@ -1607,7 +1679,6 @@ def from_onnx(
     shape: Dict[str, List] = None,
     dtype: str = "float32",
     opset: int = None,
-    target: Union[str, Target] = "llvm",
     sanitize_input_names: bool = True,
 ) -> Tuple[IRModule, Dict]:
     """Convert a ONNX model into an equivalent Relax Function.
@@ -1626,8 +1697,6 @@ def from_onnx(
     opset : int, optional
         Override to autodetected opset.
         This can be helpful for some testing.
-    target : str or Target, optional
-        The compilation target used by the Relay to Relax translator.
     sanitize_input_names : bool, optional
         Whether to sanitize the input names to ensure they are valid Relax identifiers.
 
@@ -1659,9 +1728,7 @@ def from_onnx(
     except ImportError as error:
         raise ImportError("Unable to import onnx which is required {}".format(error))
 
-    if isinstance(target, str):
-        target = Target(target)
-    g = ONNXGraphImporter(shape, dtype, target, sanitize_input_names)
+    g = ONNXGraphImporter(shape, dtype, sanitize_input_names)
     graph = model.graph
 
     try:
