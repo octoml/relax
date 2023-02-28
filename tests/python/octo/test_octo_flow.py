@@ -18,8 +18,6 @@
 """
 This file tests the functionality of the octoml flow API.
 """
-import os
-import onnx
 from onnx import helper, TensorProto
 import tvm.octo
 from tvm.contrib import utils
