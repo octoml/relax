@@ -118,11 +118,11 @@ class PrimExpr : public BaseExpr {
    * \param value The value to be constructed.
    */
   TVM_DLL PrimExpr(int32_t value);  // NOLINT(*)
-    /*!
+  /*!
    * \brief construct from 64bit integer.
    * \param value The value to be constructed.
    */
-  TVM_DLL  PrimExpr(int64_t value);  // NOLINT(*)
+  TVM_DLL PrimExpr(int64_t value);  // NOLINT(*)
   /*!
    * \brief construct from float.
    * \param value The value to be constructed.
