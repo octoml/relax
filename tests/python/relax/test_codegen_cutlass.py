@@ -151,15 +151,12 @@ def get_result_with_relax_cutlass_offload(mod, *args):
     patterns = [(entry.name, entry.pattern) for entry in get_patterns_with_prefix("cutlass")]
     assert len(patterns) != 0, "Cannot find cutlass patterns"
 
-    mod = partition_for_cutlass(mod)
-    codegen_pass = relax.transform.RunCodegen({"cutlass": {"sm": 80, "find_first_valid": True}})
-    mod = codegen_pass(mod)
-
-    target = tvm.target.Target("cuda")
-    ex = relax.build(mod, target)
-
-    dev = tvm.cuda(0)
-    vm = relax.VirtualMachine(ex, dev)
+    seq = tvm.transform.Sequential(
+        [
+            relax.transform.FuseOpsByPattern(patterns, bind_constants=False, annotate_codegen=True),
+            relax.transform.RunCodegen({"cutlass": {"sm": 80, "find_first_valid": True}}),
+        ]
+    )
 
     return vm["main"](*(tvm.nd.array(arg, dev) for arg in args)).numpy()
 
