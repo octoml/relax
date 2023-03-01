@@ -886,7 +886,8 @@ class Attention(OnnxOpConverter):
         V_present = bb.emit_te(topi.reshape, V, (batch_size, num_heads, seq_len, head_size))
         present = bb.emit_te(topi.stack, [K_present, V_present], 0)
 
-        att_scores = bb.emit_te(topi.nn.batch_matmul, Q, K, transpose_a=False, transpose_b=True)
+        #att_scores = bb.emit_te(topi.nn.batch_matmul, Q, K, transpose_a=False, transpose_b=True)
+        att_scores = bb.normalize(relax.op.matmul(Q, relax.op.permute_dims(K, [0, 2, 1])))
         score_dtype = att_scores.checked_type.dtype
         att_scores = bb.emit_te(
             topi.multiply,
@@ -909,8 +910,11 @@ class Attention(OnnxOpConverter):
 
         att_probs = bb.emit_te(topi.nn.softmax, att_scores, axis=-1)
 
-        output = bb.emit_te(
-            topi.nn.batch_matmul, att_probs, V, transpose_a=False, transpose_b=False
+        #output = bb.emit_te(
+        #    topi.nn.batch_matmul, att_probs, V, transpose_a=False, transpose_b=False
+        #)
+        output = bb.normalize(
+            relax.op.matmul(att_probs, V)
         )
 
         # TODO(@yuchen): check reverse_reshape, hack here

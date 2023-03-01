@@ -20,6 +20,7 @@
 from typing import Mapping, Optional, Tuple
 
 import tvm
+from tvm import relax
 from tvm.contrib.cutlass.build import is_valid_for_cutlass_matmul
 from tvm.relax import Call, Expr, ShapeExpr, transform
 from tvm.relax.dpl import DFPattern
@@ -44,6 +45,8 @@ def _check_matmul(
 ) -> bool:
     matmul_call: Call = None
     for _, expr in match_result.items():
+        if hasattr(expr, "op") and isinstance(expr.op, tvm.ir.expr.GlobalVar):
+            continue
         if isinstance(expr, Call) and expr.op.name == "relax.matmul":
             matmul_call = expr
     if matmul_call is None:
@@ -56,8 +59,8 @@ def _check_matmul(
 
     lhs_dtype = matmul_call.args[0].struct_info.dtype
     rhs_dtype = matmul_call.args[1].struct_info.dtype
-    if lhs_dtype != "float16" or rhs_dtype != "float16":
-        return False
+    #if lhs_dtype != "float16" or rhs_dtype != "float16":
+    #    return False
 
     return is_valid_for_cutlass_matmul(lhs_shape, rhs_shape)
 
@@ -166,4 +169,4 @@ def partition_for_cutlass(mod):
 
     cutlass_pattern_entries = get_patterns_with_prefix("cutlass")
     patterns = [(e.name, e.pattern, e.check) for e in cutlass_pattern_entries]
-    return transform.FuseOpsByPattern(patterns, bind_constants=True, annotate_codegen=True)(mod)
+    return transform.FuseOpsByPattern(patterns, bind_constants=False, annotate_codegen=True)(mod)

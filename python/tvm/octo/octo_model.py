@@ -171,7 +171,7 @@ class OctoModel(object):
         self.vm.invoke_stateful("main")
         # Get and return the outputs.
         outputs = self.vm.get_outputs("main")
-        if isinstance(outputs, tuple):
+        if isinstance(outputs, (tuple, tvm.ir.Array)):
             outputs = [output.numpy() for output in outputs]
         else:
             outputs = [outputs.numpy()]
