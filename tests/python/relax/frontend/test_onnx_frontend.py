@@ -14,14 +14,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-# pylint: disable=unused-argument
+# pylint: disable=unused-argument,missing-function-docstring
 """
 ONNX testcases
 ================
 This file is a test script to test Relax ONNX frontend coverage.
 """
 
-from typing import Optional, Dict
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 import numpy as np
 import pytest
@@ -30,9 +30,33 @@ import tvm
 import tvm.testing
 from tvm import relax
 
-import onnx
-from onnx import helper, TensorProto, ModelProto, ValueInfoProto, mapping
 import onnxruntime
+import onnx
+from onnx import ModelProto, mapping, helper
+
+if TYPE_CHECKING:
+
+    class TensorProto:
+        """ONNX TensorProto values for type checking."""
+
+        UNDEFINED = 0
+        FLOAT = 1
+        UINT8 = 2
+        INT8 = 3
+        UINT16 = 4
+        INT16 = 5
+        INT32 = 6
+        INT64 = 7
+        BOOL = 9
+        FLOAT16 = 10
+        DOUBLE = 11
+        UINT32 = 12
+        COMPLEX64 = 14
+        COMPLEX128 = 15
+        BFLOAT16 = 16
+
+else:
+    from onnx import TensorProto
 
 bg = np.random.MT19937(0)
 rg = np.random.Generator(bg)
@@ -70,7 +94,10 @@ def generate_random_inputs(
 
 
 def check_correctness(
-    model: ModelProto, inputs: Optional[Dict[str, np.ndarray]] = None, opset: int = None
+    model: ModelProto,
+    inputs: Optional[Dict[str, np.ndarray]] = None,
+    opset: int = None,
+    target: str = "llvm",
 ) -> None:
     """Run an onnx model in both onnxruntime and TVM through our importer
        confirm that the results match. Otherwise, an exception will be raised.
@@ -83,9 +110,49 @@ def check_correctness(
         An optional dictionary containing values for each input in the onnx model.
     opset: int
         The opset version to use for the onnx importer.
+    target: str
+        The target to compile the relax graph for.
     """
+
+    @tvm.transform.module_pass(opt_level=0)
+    def thread_bind(tvm_model: tvm.ir.IRModule, ctx: tvm.transform.PassContext):
+        """A relax pass to do thread binding for the relax model."""
+        global_vars = tvm_model.get_global_vars()
+        max_threadblocks = 256
+        max_threads_per_block = tvm.target.Target(target).attrs["max_num_threads"]
+
+        for var in global_vars:
+            if isinstance(tvm_model[var], tvm.tir.PrimFunc):
+                func = tvm_model[var]
+                mod = tvm.IRModule({"main": func.with_attr("global_symbol", "main")})
+                sch = tvm.tir.Schedule(mod)
+                get_blocks_func = tvm.get_global_func("tvm.meta_schedule.collect_blocks")
+                blocks = get_blocks_func(sch, None)  # no filter func
+                for block in blocks:
+                    if len(sch.get_loops(block)) == 0:
+                        continue
+                    loop = sch.fuse(*sch.get_loops(block))
+                    splits = sch.split(
+                        loop, factors=[None, max_threadblocks, max_threads_per_block]
+                    )
+                    sch.reorder(splits[1], splits[2], splits[0])
+                    sch.bind(splits[1], "blockIdx.x")
+                    sch.bind(splits[2], "threadIdx.x")
+
+                tvm_model[var] = sch.mod["main"]
+        return tvm_model
+
     if opset is not None:
         model.opset_import[0].version = opset
+
+    # Set up the target.
+    target = tvm.target.Target(target)
+    if target.kind.name == "cuda":
+        device = tvm.cuda()
+    elif target.kind.name == "llvm":
+        device = tvm.cpu()
+    else:
+        raise ValueError(f"Unsupported target {target.kind.name}")
 
     # If inputs are not provided, extract them from the onnx graph and produce random
     # values that we'll use for testing.
@@ -97,13 +164,17 @@ def check_correctness(
 
     # Convert the onnx model into relax through the onnx importer.
     tvm_model = relax.from_onnx(model, opset=opset)
-    # Legalize any relax ops into tensorir.
-    tvm_model = relax.transform.LegalizeOps()(tvm_model)
-    # Compile the relax graph into a VM then run.
+
+    # Legalize, ThreadBind & Compile the relax graph into a VM then run.
     with tvm.transform.PassContext(opt_level=3):
+        # Legalize any relax ops into tensorir.
+        tvm_model = relax.transform.LegalizeOps()(tvm_model)
+        if target.kind.name == "cuda":
+            # Thread bind the tensorir.
+            tvm_model = thread_bind(tvm_model)  # pylint: disable=no-value-for-parameter
         # TODO add target configuration.
-        ex = relax.build(tvm_model, target="llvm")
-        vm = relax.VirtualMachine(ex, tvm.cpu())
+        ex = relax.build(tvm_model, target=target)  # pylint: disable=invalid-name
+        vm = relax.VirtualMachine(ex, device)  # pylint: disable=invalid-name
     vm.set_input("main", **inputs)
     vm.invoke_stateful("main")
     tvm_output = vm.get_outputs("main")
@@ -947,48 +1018,78 @@ def test_all_reduce_funcs(func, dynamic):
 
 
 @pytest.mark.parametrize("dynamic", [False, True])
-# TODO(jwfromm) Current approach to dynamic expand is technically not well formed. Reenable once fixed.
-@pytest.mark.skip("Produces ill-formed IR")
-def test_expand(dynamic):
-    if dynamic:
-        # TODO: Support dynamic shape for Expand
-        pytest.skip("Dynamic expand is not supported yet")
-
-    def _test_expand(name, data, shape, ref_data):
-        shape_array = np.array(shape)
-        shape_node = onnx.helper.make_node(
-            "Constant",
-            inputs=[],
-            outputs=["shape"],
-            value=onnx.helper.make_tensor(
-                name="const_tensor",
-                data_type=onnx.TensorProto.INT64,
-                dims=shape_array.shape,
-                vals=shape_array.flatten().astype("int64"),
-            ),
-        )
-        expand_node = helper.make_node("Expand", ["in", "shape"], ["out"])
-
+@pytest.mark.parametrize(
+    "target",
+    [
+        "llvm",
+        pytest.param(
+            "nvidia/geforce-rtx-3070"  # , marks=pytest.mark.skip(reason="requires specific GPU")
+        ),
+    ],
+)
+def test_expand(dynamic: bool, target: str):
+    def _test_expand(
+        dynamic: bool,
+        name: str,
+        data: np.ndarray,
+        shape: Tuple[int],
+        ref_data: np.ndarray,
+        target: str,
+    ):
         in_shape = list(data.shape)
+        shape_array = np.array(shape)
+        expand_node = helper.make_node("Expand", ["data", "shape"], ["out"])
         out_shape = list(ref_data.shape)
+
         if dynamic:
-            in_shape = ["?" for _ in range(len(in_shape))]
-            out_shape = ["?" for _ in range(len(out_shape))]
-        graph = helper.make_graph(
-            [shape_node, expand_node],
-            "expand_teint64st",
-            inputs=[helper.make_tensor_value_info("in", TensorProto.FLOAT, in_shape)],
-            outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, out_shape)],
-        )
+            graph = helper.make_graph(
+                [expand_node],
+                "expand_test",
+                inputs=[
+                    helper.make_tensor_value_info("data", TensorProto.FLOAT, in_shape),
+                    helper.make_tensor_value_info("shape", TensorProto.INT64, shape_array.shape),
+                ],
+                outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, out_shape)],
+            )
+        else:
+            shape_node = onnx.helper.make_node(
+                "Constant",
+                inputs=[],
+                outputs=["shape"],
+                value=onnx.helper.make_tensor(
+                    name="const_tensor",
+                    data_type=onnx.TensorProto.INT64,
+                    dims=shape_array.shape,
+                    vals=shape_array.flatten().astype("int64"),
+                ),
+            )
+            graph = helper.make_graph(
+                [shape_node, expand_node],
+                "expand_test",
+                inputs=[helper.make_tensor_value_info("data", TensorProto.FLOAT, in_shape)],
+                outputs=[helper.make_tensor_value_info("out", TensorProto.FLOAT, out_shape)],
+            )
 
         model = helper.make_model(graph, producer_name=name)
-        check_correctness(model, inputs={"in": data})
+        inputs = {"data": data, "shape": shape_array} if dynamic else {"data": data}
+        check_correctness(
+            model,
+            inputs=inputs,
+            target=target,
+        )
 
     in_shape = (3, 1)
     shape = (3, 4)
     data = np.random.uniform(size=in_shape).astype(np.float32)
     ref_data = np.tile(data, 4)
-    _test_expand("expand_with_dim_unchanged_test", data, shape, ref_data)
+    _test_expand(
+        dynamic,
+        f"expand_with_dim_{'dynamic' if dynamic else 'static'}_test",
+        data,
+        shape,
+        ref_data,
+        target=target,
+    )
 
 
 # TODO(jwfromm) Current approach to dynamic expand is technically not well formed. Reenable once fixed.

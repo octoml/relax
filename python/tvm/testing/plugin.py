@@ -170,7 +170,7 @@ def _add_target_specific_marks(metafunc):
                     # defined.
                     param_set = argvalue.values
                     target = param_set[target_i]
-                    additional_marks = argvalue.marks
+                    additional_marks = list(argvalue.marks)
                 elif len(args) == 1:
                     # Single value parametrization, argvalue is a list of values.
                     target = argvalue
