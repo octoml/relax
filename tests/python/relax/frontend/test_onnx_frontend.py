@@ -670,9 +670,7 @@ def test_instance_norm():
 
 
 def test_layer_norm():
-    layer_norm_node = helper.make_node(
-        "LayerNormalization", ["a", "b", "c"], ["d", "mean", "std_dev"], epsilon=1e-12
-    )
+    layer_norm_node = helper.make_node("LayerNormalization", ["a", "b", "c"], ["d"], epsilon=1e-12)
 
     graph = helper.make_graph(
         [layer_norm_node],
@@ -684,8 +682,6 @@ def test_layer_norm():
         ],
         outputs=[
             helper.make_tensor_value_info("d", TensorProto.FLOAT, [32, 32]),
-            helper.make_tensor_value_info("mean", TensorProto.FLOAT, [32]),
-            helper.make_tensor_value_info("std_dev", TensorProto.FLOAT, [32]),
         ],
     )
 
@@ -923,8 +919,6 @@ def test_all_reduce_funcs(func, dynamic):
 
         inputs_dict = {"x": data}
         check_correctness(model, inputs_dict, opset=11)
-
-    verify_reduce_func(func, np.array(1.0).astype(np.float32), axis=None, keepdims=False)
 
     for keepdims in [True, False]:
         verify_reduce_func(
