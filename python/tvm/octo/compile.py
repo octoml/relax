@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Union, Optional, Dict, List
 import tvm
 from tvm import relax
+from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
 from .utils import get_cuda_target, get_llvm_target
 from .octo_model import OctoModel
 
@@ -132,24 +133,22 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
     # Extract the sm version of the current target.
     assert target.arch, "Target architecture must be specified."
     sm = int(target.arch.split("_")[1])
+    # Cutlass only has support up to sm80, future sms will work with
+    # earlier kernels though.
+    if sm > 80:
+        sm = 80
+
+    # Apply partitioning to offload patterns to cutlass.
+    mod = partition_for_cutlass(mod)
 
     # Construct CUTLASS codegen pass.
     cutlass_codegen_pass = relax.transform.RunCodegen(
         {"cutlass": {"sm": sm, "find_first_valid": True}}
     )
 
-    # Construct pattern identification pass.
-    # TODO(jwfromm) rebase on cutlass pattern language
-
-    # Run passes on input module.
-    seq = tvm.transform.Sequential(
-        [
-            # relax.transform.FuseOpPattern(patterns, annotate_codegen=True),
-            cutlass_codegen_pass
-        ]
-    )
-
-    return seq(mod)
+    # Generate code for matched cutlass kernels.
+    mod = cutlass_codegen_pass(mod)
+    return mod
 
 
 def compile(
@@ -200,7 +199,7 @@ def compile(
 
     # Match subgraphs that can be offloaded to cutlass and offload them.
     # TODO(jwfromm) Currently doesnt work, get one e2e example.
-    # offload_cutlass(relax_mod, target)
+    relax_mod = offload_cutlass(relax_mod, target)
 
     # Perform legalization to lower Relax operators.
     relax_mod = relax.transform.LegalizeOps()(relax_mod)
