@@ -25,6 +25,65 @@ from .utils import get_cuda_target, get_llvm_target
 from .octo_model import OctoModel
 
 
+# TODO(jwfromm) This will later be replaced by a full pass from Xiyou.
+def cuda_bind_threads(tvm_model: tvm.ir.IRModule, target: tvm.target.Target):
+    """Schedule an IRModule on Cuda.
+
+    Parameters
+    ----------
+    tvm_model : tvm.ir.IRModule
+        The input module to transform. Each primfunc in the module will be
+        rewritten to include thread and block bindings so that it can be
+        run on cuda.
+    target : tvm.target.Target
+        The full description of the target device.
+
+    Returns
+    -------
+    output_model : tvm.ir.IRModule
+        The rewritten input module that can now be compile and run on cuda.
+    """
+
+    @tvm.transform.module_pass(opt_level=0)
+    def thread_bind(tvm_model: tvm.ir.IRModule, ctx: tvm.transform.PassContext):
+        """A relax pass to do thread binding for the relax model."""
+        global_vars = tvm_model.get_global_vars()
+        max_threadblocks = 256
+        max_threads_per_block = tvm.target.Target(target).attrs["max_num_threads"]
+
+        for var in global_vars:
+            if isinstance(tvm_model[var], tvm.tir.PrimFunc):
+                func = tvm_model[var]
+                mod = tvm.IRModule({"main": func.with_attr("global_symbol", "main")})
+                sch = tvm.tir.Schedule(mod)
+                get_blocks_func = tvm.get_global_func("tvm.meta_schedule.collect_blocks")
+                blocks = get_blocks_func(sch, None)  # no filter func
+                for block in blocks:
+                    if len(sch.get_loops(block)) == 0:
+                        continue
+                    # Only fuse data parallel loops
+                    iter_vars = sch.get(block).iter_vars
+                    loops = sch.get_loops(block)
+                    data_parralel_loops = []
+                    for i, loop in enumerate(loops):
+                        # Check that the corresponding itervar is data parallel.
+                        if iter_vars[i].iter_type == tvm.tir.IterVar.DataPar:
+                            data_parralel_loops.append(loop)
+
+                    loop = sch.fuse(*data_parralel_loops)
+                    splits = sch.split(
+                        loop, factors=[None, max_threadblocks, max_threads_per_block]
+                    )
+                    sch.reorder(splits[1], splits[2], splits[0])
+                    sch.bind(splits[1], "blockIdx.x")
+                    sch.bind(splits[2], "threadIdx.x")
+
+                tvm_model[var] = sch.mod["main"]
+        return tvm_model
+
+    return thread_bind(tvm_model)
+
+
 def load_onnx_model(
     model_file: Union[str, Path, onnx.ModelProto], shape_dict: Optional[Dict[str, List]] = None
 ) -> tvm.IRModule:
@@ -148,7 +207,7 @@ def compile(
 
     # Schedule all remaining functions to be compatible with gpu if needed.
     if str(target.kind) == "cuda":
-        relax_mod = relax.transform.ScheduleForTarget(target)(relax_mod)
+        relax_mod = cuda_bind_threads(relax_mod, target)
 
     # Compile the module.
     exe = relax.build(relax_mod, target)
