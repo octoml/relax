@@ -1478,5 +1478,31 @@ def test_greater():
     verify_compare("Greater", [64, 16])
 
 
+def test_onehot():
+    one_hot_node = helper.make_node("OneHot", ["indices", "depth", "values"], ["y"], axis=1)
+    graph = helper.make_graph(
+        [one_hot_node],
+        "one_hot_test",
+        inputs=[
+            helper.make_tensor_value_info("indices", TensorProto.INT64, [2, 2]),
+        ],
+        initializer=[
+            helper.make_tensor("depth", TensorProto.INT64, [], [10]),
+            helper.make_tensor("values", TensorProto.FLOAT, [2], [3, 1]),
+        ],
+        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 10, 2])],
+    )
+
+    model = helper.make_model(graph, producer_name="one_hot_test")
+    values = {
+        "indices": np.array([[1, 9], [2, 4]], dtype="int64"),
+    }
+    check_correctness(model, inputs=values)
+
+
+def test_reciprocal():
+    verify_unary("Reciprocal", [3, 32, 32])
+
+
 if __name__ == "__main__":
     tvm.testing.main()

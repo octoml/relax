@@ -199,10 +199,14 @@ class Unsqueeze(OnnxOpConverter):
     """Converts an onnx Unsqueeze node into an equivalent Relax expression."""
 
     @classmethod
+    def _impl_v11(cls, bb, inputs, attr):
+        axes = attr.get("axes")
+        return relax.op.expand_dims(inputs[0], axes)
+
+    @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
         axes = inputs[1]
-
         if isinstance(axes, relax.Constant):
             constant_axes = list(axes.data.numpy())
             constant_axes = list(map(int, constant_axes))
@@ -1338,6 +1342,33 @@ class Greater(OnnxOpConverter):
         return relax.op.greater(x, y)
 
 
+class Reciprocal(OnnxOpConverter):
+    """Converts an onnx Reciprocal node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        input_dtype = inputs[0].struct_info.dtype
+        return relax.op.divide(relax.const(1, dtype=input_dtype), inputs[0])
+
+
+class OneHot(OnnxOpConverter):
+    """Converts an onnx OneHot node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v11(cls, bb, inputs, attr):
+        indices = inputs[0]
+        depth = inputs[1]
+        values = inputs[2]
+        axis = attr.get("axis", -1)
+        dtype = values.struct_info.dtype
+        assert isinstance(depth, relax.Constant), "Only constant depth currently supported."
+        depth = depth.data.numpy().tolist()
+        assert isinstance(values, relax.Constant), "Only constant values currently supported."
+        values = values.data.numpy().tolist()
+        off_value, on_value = values
+        return bb.emit_te(topi.one_hot, indices, on_value, off_value, depth, axis, dtype)
+
+
 def _get_convert_map():
     return {
         "MatMul": MatMul,
@@ -1410,6 +1441,8 @@ def _get_convert_map():
         "Einsum": Einsum,
         "Range": Range,
         "Greater": Greater,
+        "Reciprocal": Reciprocal,
+        "OneHot": OneHot,
     }
 
 
