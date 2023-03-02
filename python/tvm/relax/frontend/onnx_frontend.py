@@ -34,18 +34,19 @@ If this fails, there may still be dynamic operations in the model.
 Not all TVM kernels currently support dynamic shapes, please file an issue on
 github.com/apache/tvm/issues if you hit an error with dynamic kernels.
 """
-# import math
+# pylint: disable=consider-using-f-string;disable=raise-missing-from
 import warnings
 from typing import Union, List, Dict, Tuple, Any
-import onnx.onnx_ml_pb2
-
 import numpy as _np
+
 
 import tvm
 from tvm import relax, topi
 from tvm.ir import IRModule
 from tvm.ir.supply import NameSupply
 from tvm.relax import testing
+
+import onnx.onnx_ml_pb2
 
 
 def get_type(elem_type: Union[str, int]) -> str:
@@ -725,7 +726,9 @@ class Pad(OnnxOpConverter):
             constant_value = 0.0
 
         if isinstance(pads, relax.Constant):
-            pad_before, pad_after = _np.split(pads.data.numpy(), 2)
+            pad_before, pad_after = _np.split(  # pylint: disable=unbalanced-tuple-unpacking
+                pads.data.numpy(), 2
+            )
             pad_before = _np.ndarray.tolist(pad_before)
             pad_after = _np.ndarray.tolist(pad_after)
         else:
