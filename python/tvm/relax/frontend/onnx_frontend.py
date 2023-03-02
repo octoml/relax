@@ -34,7 +34,7 @@ If this fails, there may still be dynamic operations in the model.
 Not all TVM kernels currently support dynamic shapes, please file an issue on
 github.com/apache/tvm/issues if you hit an error with dynamic kernels.
 """
-import math
+# import math
 import warnings
 from typing import Union, List, Dict, Tuple, Any
 import onnx.onnx_ml_pb2
