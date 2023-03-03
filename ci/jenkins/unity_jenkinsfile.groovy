@@ -140,7 +140,7 @@ stage('Prepare') {
   node('CPU-SMALL') {
     // When something is provided in ci_*_param, use it, otherwise default with ci_*
     ci_lint = params.ci_lint_param ?: ci_lint
-    ci_cpu = params.ci_cpu_param ?: ci_cpu
+    ci_cpu = 'tlcpack/ci-cpu:relax-20230217-001605-fcb3d9e71'
     ci_gpu = params.ci_gpu_param ?: ci_gpu
     ci_wasm = params.ci_wasm_param ?: ci_wasm
     ci_i386 = params.ci_i386_param ?: ci_i386
@@ -149,6 +149,7 @@ stage('Prepare') {
     ci_hexagon = params.ci_hexagon_param ?: ci_hexagon
 
     sh (script: """
+      echo "params.ci_cpu_param = ${params.ci_cpu_param}"
       echo "Docker images being used in this build:"
       echo " ci_lint = ${ci_lint}"
       echo " ci_cpu  = ${ci_cpu}"
