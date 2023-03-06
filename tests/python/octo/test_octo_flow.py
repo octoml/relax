@@ -24,19 +24,18 @@ from tvm.contrib import utils
 
 
 def get_simple_onnx_model():
-    # Create a single onnx convolution model that can be used for testing.
-    conv_node = helper.make_node("Conv", ["x", "w", "b"], ["y"])
+    # Create a single onnx matmul model that can be used for testing.
+    matmul_node = helper.make_node("MatMul", ["a", "b"], ["c"])
     graph = helper.make_graph(
-        [conv_node],
-        "minimal_conv",
+        [matmul_node],
+        "minimal_matmul",
         inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 32, 32]),
-            helper.make_tensor_value_info("w", TensorProto.FLOAT, [16, 3, 3, 3]),
-            helper.make_tensor_value_info("b", TensorProto.FLOAT, [16]),
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, [32, 32]),
         ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 16, 30, 30])],
+        outputs=[helper.make_tensor_value_info("c", TensorProto.FLOAT, [32, 32])],
     )
-    model = helper.make_model(graph, producer_name="minimal_conv")
+    model = helper.make_model(graph, producer_name="minimal_matmul")
     return model
 
 
@@ -45,7 +44,7 @@ def test_e2e_flow():
     test_model = get_simple_onnx_model()
     octo_model = tvm.octo.compile(test_model)
     # Check that the produced model has properly formed shape info.
-    assert octo_model.input_info["x"] == ([1, 3, 32, 32], "float32")
+    assert octo_model.input_info["a"] == ([32, 32], "float32")
 
     # Test that the OctoModel can be saved and loaded.
     temp = utils.tempdir()
@@ -59,6 +58,7 @@ def test_e2e_flow():
 
     # Test the running and benchmarking helpers.
     outputs = octo_model.run()
-    assert list(outputs[0].shape) == [1, 16, 30, 30]
+    assert list(outputs[0].shape) == [32, 32]
     report = octo_model.profile()
-    assert "conv2d" in str(report)
+    # Confirm cutlass offload was successful.
+    assert "matmul_cutlass" in str(report)
