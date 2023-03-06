@@ -42,7 +42,7 @@ import numpy as _np
 
 import tvm
 from tvm import relax, topi
-from tvm.ir import IRModule, Span, SourceName
+from tvm.ir import IRModule
 from tvm.ir.supply import NameSupply
 from tvm.relax import testing, PyExprVisitor
 
@@ -1773,7 +1773,8 @@ class ONNXGraphImporter:
         if op_name in convert_map:
             convert_class = convert_map[op_name]
             op_function = convert_class.get_converter(opset)
-            sym = op_function(self.bb, inputs, attrs)
+            with relax.SpanContext(op_name):
+                sym = op_function(self.bb, inputs, attrs)
         else:
             raise NotImplementedError("Operator {} not implemented.".format(op_name))
         return sym

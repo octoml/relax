@@ -70,7 +70,7 @@ def concat(tensors: Union[Expr, List[Expr]], axis: Optional[int] = 0) -> Expr:
     """
     if isinstance(tensors, (list, tuple)):
         tensors = RxTuple(tensors)
-    return _ffi_api.concat(tensors, axis)  # type: ignore
+    return _ffi_api.concat(tensors, axis, span)  # type: ignore
 
 
 def expand_dims(x: Expr, axis: Union[int, List[int]]) -> Expr:
