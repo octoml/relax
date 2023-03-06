@@ -29,6 +29,7 @@ import pytest
 import tvm
 import tvm.testing
 from tvm import relax
+from tvm.relax.frontend import from_onnx
 
 import onnx
 from onnx import helper, TensorProto, ModelProto, ValueInfoProto, mapping
@@ -96,7 +97,7 @@ def check_correctness(
     ort_output = ort_session.run([], inputs)
 
     # Convert the onnx model into relax through the onnx importer.
-    tvm_model = relax.from_onnx(model, opset=opset)
+    tvm_model = from_onnx(model, opset=opset)
     # Legalize any relax ops into tensorir.
     tvm_model = relax.transform.LegalizeOps()(tvm_model)
     # Compile the relax graph into a VM then run.
@@ -153,7 +154,7 @@ def test_sanitize(input_names, expected_names):
     )
     model = helper.make_model(graph, producer_name="test_sanitizer")
 
-    tvm_model = relax.from_onnx(model)
+    tvm_model = from_onnx(model)
 
     for i, param in enumerate(tvm_model["main"].params):
         assert param.name_hint == expected_names[i]

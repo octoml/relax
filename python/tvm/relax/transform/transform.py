@@ -519,7 +519,7 @@ def MetaScheduleTuneIRMod(
        model params
     work_dir: str
        work directory
-    max_trials_gloabl: int
+    max_trials_global: int
        maximum number of total trials allowed for tuning
     Returns
     -------

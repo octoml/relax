@@ -75,9 +75,6 @@ from .struct_info import (
     FuncStructInfo,
 )
 
-# Frontends
-from .frontend.onnx_frontend import from_onnx
-
 # pipeline
 from .pipeline import get_pipeline
 

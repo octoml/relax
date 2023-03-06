@@ -19,3 +19,4 @@ Frontends for constructing Relax programs, with the model importers
 """
 from . import torch
 from .common import ImporterOutput
+from .onnx_frontend import from_onnx
