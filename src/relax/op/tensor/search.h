@@ -24,6 +24,8 @@
 #ifndef TVM_RELAX_OP_TENSOR_SEARCH_H_
 #define TVM_RELAX_OP_TENSOR_SEARCH_H_
 
+#include <tvm/relax/attrs/search.h>
+
 #include "../op_common.h"
 
 namespace tvm {
@@ -34,6 +36,12 @@ namespace relax {
  * condition.
  */
 Expr where(Expr condition, Expr x1, Expr x2);
+
+/*! \brief Computes the argmax of tensor elements over given axis. */
+Expr argmax(Expr x, Optional<Integer> axis, bool keepdims);
+
+/*! \brief Computes the argmin of tensor elements over given axis. */
+Expr argmin(Expr x, Optional<Integer> axis, bool keepdims);
 
 }  // namespace relax
 }  // namespace tvm

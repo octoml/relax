@@ -15,7 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from typing import List
 import tempfile
 
 import tvm
@@ -80,9 +79,7 @@ def test_ms_tuning_irmodule():
     with tempfile.TemporaryDirectory() as work_dir:
         with target, transform.PassContext(trace=Trace(mod), opt_level=0):
             tuning_pass = relax.transform.MetaScheduleTuneIRMod(
-                params={},
-                work_dir=work_dir,
-                max_trials_global=4,
+                params={}, work_dir=work_dir, max_trials_global=4
             )
             out_mod = tuning_pass(mod)
             assert PassContext.current().get_trace_stack_size() == 1
@@ -110,35 +107,6 @@ def test_ms_tuning_primfunc():
             tvm.ir.assert_structural_equal(mod, out_mod)
 
             application_pass = relax.transform.MetaScheduleApplyDatabase(work_dir)
-            out_mod = application_pass(mod)
-            assert not tvm.ir.structural_equal(mod, out_mod)
-
-
-def test_ms_tuning_minimal():
-    @ms.derived_object
-    class FakeRunner(ms.runner.PyRunner):
-        def run(self, runner_inputs: List[ms.runner.RunnerInput]) -> List[ms.runner.RunnerFuture]:
-            return [ms.runner.LocalRunnerFuture([0.0], None)]
-
-    mod = InputModule
-    assert isinstance(mod, IRModule)
-    num_tasks = len(ms.relax_integration.extract_tasks(mod, target))
-    with tempfile.TemporaryDirectory() as work_dir:
-        with target, transform.PassContext(trace=Trace(mod), opt_level=0):
-            tuning_pass = relax.transform.MetaScheduleTuneIRMod(
-                params={},
-                work_dir=work_dir,
-                max_trials_global=4 * num_tasks,
-                max_trials_per_task=1,
-                runner=FakeRunner(),
-            )
-            out_mod = tuning_pass(mod)
-            assert PassContext.current().get_trace_stack_size() == 1
-            assert PassContext.current().get_current_trace().size == 1
-            tvm.ir.assert_structural_equal(mod, out_mod)
-
-            application_pass = relax.transform.MetaScheduleApplyDatabase(work_dir)
-
             out_mod = application_pass(mod)
             assert not tvm.ir.structural_equal(mod, out_mod)
 

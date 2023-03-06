@@ -160,7 +160,9 @@ def test_export_model_library_format_c(
 ):
     target = tvm.target.target.micro("host")
     with utils.TempDirectory.set_keep_for_debug(True):
-        with tvm.transform.PassContext(opt_level=3, config={"tir.disable_vectorize": True}):
+        with tvm.transform.PassContext(
+            opt_level=3, config={"tir.disable_vectorize": True, "tir.usmp.enable": False}
+        ):
             relay_mod = tvm.relay.fromtext(
                 """
             #[version = "0.0.5"]
@@ -339,7 +341,9 @@ def test_export_model_library_format_llvm():
 )
 def test_export_model_library_format_workspace(executor, runtime):
     target = tvm.target.target.micro("host")
-    with tvm.transform.PassContext(opt_level=3, config={"tir.disable_vectorize": True}):
+    with tvm.transform.PassContext(
+        opt_level=3, config={"tir.disable_vectorize": True, "tir.usmp.enable": False}
+    ):
         relay_mod = tvm.relay.fromtext(
             """
             #[version = "0.0.5"]

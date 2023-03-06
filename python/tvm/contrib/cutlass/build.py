@@ -16,10 +16,13 @@
 # under the License.
 # pylint: disable=invalid-name, dangerous-default-value, arguments-differ
 """Driver for partitioning and building a Relay module for CUTLASS offload."""
+import itertools
 import logging
 import multiprocessing
+import operator
 import os
-from typing import Optional
+from functools import reduce
+from typing import Optional, Tuple
 
 import tvm
 from tvm import relax, relay, runtime
@@ -54,6 +57,7 @@ def _get_cutlass_compile_options(sm, threads, use_fast_math=False):
     cutlass_root = _get_cutlass_path()
     cutlass_include = os.path.join(cutlass_root, "include")
     cutlass_util_include = os.path.join(cutlass_root, "tools/util/include")
+    cutlass_attention_include = os.path.join(cutlass_root, "examples/41_fused_multi_head_attention")
 
     kwargs = {}
     kwargs["cc"] = "nvcc"
@@ -68,6 +72,7 @@ def _get_cutlass_compile_options(sm, threads, use_fast_math=False):
         "-std=c++17",
         "-I" + cutlass_include,
         "-I" + cutlass_util_include,
+        "-I" + cutlass_attention_include,
     ]
     if use_fast_math:
         kwargs["options"].append("-DCUTLASS_USE_TANH_FOR_SIGMOID")
@@ -569,6 +574,31 @@ def _extract_arg_idx(pattern_name, f):
     return arg_idx
 
 
+def is_valid_for_cutlass_matmul(lhs_shape: Tuple[int], rhs_shape: Tuple[int]) -> bool:
+    """
+    Check whether the shape of inputs can be handled by CUTLASS GEMM.
+
+    The stride-based batch matmul in CUTLASS cannot handle cases that some of
+    the batch dimensions need to be stretched while others don't. This means
+    it can only handle ND x ND whose batch dimensions match exactly on both side,
+    as well as ND x 2D and 2D x ND. For example, it cannot handle matmul with shape
+    (2, 1, 4, 8) x (2, 3, 8, 16), because the batch stride of lhs is not constant.
+    """
+    lhs_batches = reduce(operator.mul, lhs_shape[:-2], 1)
+    rhs_batches = reduce(operator.mul, rhs_shape[:-2], 1)
+    if lhs_batches == 1 or rhs_batches == 1:
+        # This could be regular matmul or batch matmul with shape ND x 2D or 2D x ND
+        return True
+
+    # If one side has less dimensions, use 1 to fill the gap
+    batch_dim_pairs = itertools.zip_longest(
+        lhs_shape[-3::-1],  # Remove the last two dimensions and reverse
+        rhs_shape[-3::-1],
+        fillvalue=1,
+    )
+    return all(p[0] == p[1] for p in batch_dim_pairs)
+
+
 @relax.expr_functor.mutator
 class CutlassRelaxFunctionAnnotator(relax.PyExprMutator):
     """A Relax function mutator that tunes and annotates CUTLASS composite functions
@@ -659,16 +689,34 @@ class CutlassRelaxFunctionAnnotator(relax.PyExprMutator):
         rhs_dtype = signature[f"{rhs_arg}_dtype"]
         out_dtype = signature["ret_dtype"]
 
-        MM = lhs_shape[0]
-        KK = lhs_shape[1]
+        if not is_valid_for_cutlass_matmul(lhs_shape, rhs_shape):
+            raise ValueError(f"Cannot handle the input shapes, lhs: {lhs_shape}, rhs: {rhs_shape}")
+
+        MM = lhs_shape[-2]
+        KK = lhs_shape[-1]
         if "transposed" in op_type:
-            NN = rhs_shape[0]
+            NN = rhs_shape[-2]
             ldb = "K"
             layout_b = LayoutType.ColumnMajor
         else:
-            NN = rhs_shape[1]
+            NN = rhs_shape[-1]
             ldb = "N"
             layout_b = LayoutType.RowMajor
+
+        lhs_batches = reduce(operator.mul, lhs_shape[:-2], 1)
+        rhs_batches = reduce(operator.mul, rhs_shape[:-2], 1)
+        if lhs_batches == 1 and rhs_batches == 1:
+            # Regular matmul
+            is_batched = False
+            batch_attrs = {}
+        else:
+            is_batched = True
+            batch_attrs = {
+                "batch": max(lhs_batches, rhs_batches),
+                "batch_stride_A": 0 if lhs_batches == 1 else MM * KK,
+                "batch_stride_B": 0 if rhs_batches == 1 else KK * NN,
+                "batch_stride_C": MM * NN,
+            }
 
         use_3xtf32 = self.options.get("use_3xtf32", False)
         find_first_valid = self.options.get("find_first_valid", True)
@@ -683,7 +731,7 @@ class CutlassRelaxFunctionAnnotator(relax.PyExprMutator):
             lhs_dtype,
             rhs_dtype,
             use_3xtf32,
-            batched=False,
+            batched=is_batched,
             find_first_valid=find_first_valid,
             use_multiprocessing=use_multiprocessing,
             layout_b=layout_b,
@@ -706,6 +754,50 @@ class CutlassRelaxFunctionAnnotator(relax.PyExprMutator):
                 "ldc": "N",
                 "cutlass_op_name": op_name,
                 "cutlass_op_def": op_def,
+                **batch_attrs,
+            }
+        )
+
+    def handle_attention(self, f, op_type):
+        """Tune and annotate a dense op."""
+        signature = _extract_relax_function_signature(f)
+
+        q_shape = signature["arg0_shape"]
+        k_shape = signature["arg1_shape"]
+        v_shape = signature["arg2_shape"]
+        out_shape = signature["ret_shape"]
+        q_dtype = signature["arg0_dtype"]
+        k_dtype = signature["arg1_dtype"]
+        v_dtype = signature["arg2_dtype"]
+        out_dtype = signature["ret_dtype"]
+        num_batches, num_queries, num_heads, head_dim = q_shape
+        _, num_keys, _, _ = k_shape
+        _, _, _, head_dim_value = v_shape
+        bias = {}
+        if "arg3_dtype" in signature:
+            bias["arg3_dtype"] = signature["arg3_dtype"]
+        if "arg3_shape" in signature:
+            bias["arg3_shape"] = signature["arg3_shape"]
+
+        return f.with_attrs(
+            {
+                "op_type": op_type,
+                "arg0_dtype": q_dtype,
+                "arg1_dtype": k_dtype,
+                "arg2_dtype": v_dtype,
+                "ret_dtype": out_dtype,
+                "arg0_shape": q_shape,
+                "arg1_shape": k_shape,
+                "arg2_shape": v_shape,
+                "ret_shape": out_shape,
+                "num_batches": num_batches,
+                "num_queries": num_queries,
+                "num_keys": num_keys,
+                "num_heads": num_heads,
+                "head_dim": head_dim,
+                "head_dim_value": head_dim_value,
+                "arch": self.options["sm"],
+                **bias,
             }
         )
 
@@ -720,6 +812,8 @@ class CutlassRelaxFunctionAnnotator(relax.PyExprMutator):
             return self.handle_conv2d(f, op_type)
         elif "matmul" in op_type:
             return self.handle_matmul(f, op_type)
+        elif "attention" in op_type:
+            return self.handle_attention(f, op_type)
 
         raise ValueError("Unsupported composite {}".format(op_type))
 

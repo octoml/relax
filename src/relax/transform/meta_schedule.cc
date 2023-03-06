@@ -22,7 +22,6 @@
  * \brief Pass for meta_schedule tuning
  */
 #include <tvm/meta_schedule/database.h>
-#include <tvm/meta_schedule/runner.h>
 #include <tvm/relax/transform.h>
 #include <tvm/relax/tuning_api.h>
 #include <tvm/tir/transform.h>
@@ -34,13 +33,10 @@ namespace transform {
 class MetaScheduleTuner {
  public:
   explicit MetaScheduleTuner(Target target, String work_dir, Integer max_trials_global,
-                             Integer max_trials_per_task, meta_schedule::Runner runner,
                              Map<String, runtime::NDArray> params = {})
       : target_(target),
         work_dir_(work_dir),
         max_trials_global_(max_trials_global),
-        max_trials_per_task_(max_trials_per_task),
-        runner_(runner),
         params_(params) {
     candgen_func_ = runtime::Registry::Get("relax.tuning_api.default_generate_candidate");
     ICHECK(candgen_func_) << "Default candidate generation function is not found.";
@@ -52,11 +48,7 @@ class MetaScheduleTuner {
   IRModule TuneIRMod(IRModule mod, transform::PassContext ctx) {
     Trace trace = Downcast<Trace>(ctx->GetCurrentTrace());
     ctx->PopTrace();
-    String builder = "local";
-    Integer num_trials_per_iter = 64;
-    Choice choice("tvm.meta_schedule.tune_relax",
-                  {params_, target_, work_dir_, max_trials_global_, max_trials_per_task_,
-                   num_trials_per_iter, builder, runner_},
+    Choice choice("tvm.meta_schedule.tune_relax", {params_, target_, work_dir_, max_trials_global_},
                   "relax.tuning_api.Choice.default_constr_func", {});
     Knob knob("meta_schedule.tune_irmod", {{"0", choice}});
     Array<Trace> candidates = (*candgen_func_)(Array<Knob>({knob}), trace);
@@ -72,10 +64,8 @@ class MetaScheduleTuner {
     // TODO(@sunggg): Whenever we tune tir, assume we start a new trace w/o pushing to the trace
     // stack. Revisit later when we collect more usecases.
     Trace trace = Trace((*normalize_mod_func_)(f), {}, {});
-    String builder = "local";
-    Integer num_trials_per_iter = 64;
-    Choice choice("tvm.meta_schedule.tune_tir",
-                  {target_, work_dir_, max_trials_global_, num_trials_per_iter, builder, runner_},
+
+    Choice choice("tvm.meta_schedule.tune_tir", {target_, work_dir_, max_trials_global_},
                   "relax.tuning_api.Choice.default_constr_func", {});
     Knob knob("meta_schedule.tune_primfunc", {{"0", choice}});
     Array<Trace> candidates = (*candgen_func_)(Array<Knob>({knob}), trace);
@@ -88,8 +78,6 @@ class MetaScheduleTuner {
   Target target_;
   String work_dir_;
   Integer max_trials_global_;
-  Integer max_trials_per_task_;
-  meta_schedule::Runner runner_;
   Map<String, runtime::NDArray> params_;
   const runtime::PackedFunc* candgen_func_;
   const runtime::PackedFunc* normalize_mod_func_;
@@ -150,14 +138,11 @@ Pass MetaScheduleApplyDatabase(Optional<String> work_dir) {
 }
 
 Pass MetaScheduleTuneIRMod(Map<String, runtime::NDArray> params, String work_dir,
-                           Integer max_trials_global, Integer max_trials_per_task,
-                           meta_schedule::Runner runner) {
+                           Integer max_trials_global) {
   Target target = Target::Current(false);
   runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func = [=](IRModule m,
                                                                             PassContext ctx) {
-    return MetaScheduleTuner(target, work_dir, max_trials_global, max_trials_per_task, runner,
-                             params)
-        .TuneIRMod(m, ctx);
+    return MetaScheduleTuner(target, work_dir, max_trials_global, params).TuneIRMod(m, ctx);
   };
   return CreateModulePass(/*pass function*/ pass_func, /*opt level*/ 0,
                           /*pass name*/ "MetaScheduleTuneIRModule",
@@ -165,12 +150,11 @@ Pass MetaScheduleTuneIRMod(Map<String, runtime::NDArray> params, String work_dir
                           /*traceable*/ true);
 }
 
-Pass MetaScheduleTuneTIR(String work_dir, Integer max_trials_global, meta_schedule::Runner runner) {
+Pass MetaScheduleTuneTIR(String work_dir, Integer max_trials_global) {
   Target target = Target::Current(false);
   runtime::TypedPackedFunc<tir::PrimFunc(tir::PrimFunc, IRModule, PassContext)> pass_func =
       [=](tir::PrimFunc f, IRModule mod, PassContext ctx) {
-        return MetaScheduleTuner(target, work_dir, max_trials_global, max_trials_global, runner)
-            .TuneTIR(f, ctx);
+        return MetaScheduleTuner(target, work_dir, max_trials_global).TuneTIR(f, ctx);
       };
   return tir::transform::CreatePrimFuncPass(/*pass function*/ pass_func, /*opt level*/ 0,
                                             /*pass name*/ "MetaScheduleTuneTIR",
