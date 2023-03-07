@@ -106,7 +106,6 @@ function run_pytest() {
            -o \"junit_suite_name=$suite_name\" \
            \"--junit-xml=${TVM_PYTEST_RESULT_DIR}/$suite_name.xml\" \
            \"--junit-prefix=$ffi_type\" \
-           -k 'tests/python/relax/frontend/test_onnx_frontend.py::test_conv' \
            \"$extra_args[@]\""
 
     echo "Exited with result $run_result"
