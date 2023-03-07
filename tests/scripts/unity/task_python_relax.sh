@@ -29,7 +29,9 @@ export TVM_NUM_THREADS=2
 make cython3
 
 # Run Relax tests
-TVM_TEST_TARGETS="${TVM_RELAY_TEST_TARGETS:-llvm}" pytest tests/python/relax
+export TVM_TEST_TARGETS="${TVM_RELAY_TEST_TARGETS:-llvm}"
+export PLATFORM=cpu
+run_pytest cython unity-relax tests/python/relax
 
 # Run Relax examples
 # python3 ./apps/relax_examples/mlp.py

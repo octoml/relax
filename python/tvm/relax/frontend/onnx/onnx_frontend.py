@@ -1338,6 +1338,16 @@ class EmbedLayerNormalization(OnnxOpConverter):
         return relax.Tuple([ln, mask_index])
 
 
+class Greater(OnnxOpConverter):
+    """Converts an onnx Greater node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        x = inputs[0]
+        y = inputs[1]
+        return relax.op.greater(x, y)
+
+
 def _get_convert_map():
     return {
         "MatMul": MatMul,
@@ -1409,6 +1419,7 @@ def _get_convert_map():
         "Resize": Resize,
         "Einsum": Einsum,
         "Range": Range,
+        "Greater": Greater,
     }
 
 

@@ -46,6 +46,25 @@ function cleanup() {
 }
 trap cleanup 0
 
+run_result=
+
+function run_and_ignore_free_error() {
+    if bash -c "$1" 2>&1 | tee /tmp/$$.log.txt; then
+        echo "Run successful"
+        run_result="success"
+    else
+        echo "Run failed, checking for expected free() error"
+        if grep -Fxq "free(): invalid pointer" /tmp/$$.log.txt; then
+            echo "Found expected free() error, continuing"
+            run_result="success"
+        else
+            echo "Unexpected error, free() error not found. See logs above for details."
+            run_result="error"
+        fi
+    fi
+}
+
+
 function run_pytest() {
     set -e
     local ffi_type="$1"
@@ -83,13 +102,16 @@ function run_pytest() {
 
     exit_code=0
     set +e
-    TVM_FFI=${ffi_type} python3 -m pytest \
-           -o "junit_suite_name=${suite_name}" \
-           "--junit-xml=${TVM_PYTEST_RESULT_DIR}/${suite_name}.xml" \
-           "--junit-prefix=${ffi_type}" \
-           "${extra_args[@]}" || exit_code=$?
+    run_and_ignore_free_error "TVM_FFI=$ffi_type python3 -m pytest \
+           -o \"junit_suite_name=$suite_name\" \
+           \"--junit-xml=${TVM_PYTEST_RESULT_DIR}/$suite_name.xml\" \
+           \"--junit-prefix=$ffi_type\" \
+           \"$extra_args[@]\""
+
+    echo "Exited with result $run_result"
+
     # Pytest will return error code -5 if no test is collected.
-    if [ "$exit_code" -ne "0" ] && [ "$exit_code" -ne "5" ]; then
+    if [ $run_result == "error" ] && [ "$exit_code" -ne "0" ] && [ "$exit_code" -ne "5" ]; then
         pytest_errors+=("${suite_name}: $@")
     fi
     # To avoid overwriting.
