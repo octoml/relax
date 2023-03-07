@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Union, Optional, Dict, List
 import tvm
 from tvm import relax
-from tvm.relax.frontend import from_onnx
+from tvm.relax.frontend.onnx import from_onnx
 from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
 from .utils import get_cuda_target, get_llvm_target
 from .octo_model import OctoModel
@@ -139,9 +139,12 @@ def compile(
         input_dtype = inp.struct_info.dtype
         input_info[inp.name_hint] = (input_shape, input_dtype)
 
-    # Match subgraphs that can be offloaded to cutlass and offload them.
-    # TODO(jwfromm) Currently doesnt work, get one e2e example.
-    relax_mod = offload_cutlass(relax_mod, target)
+    # If compiled with Cutlass, offload where possible.
+    if tvm.get_global_func("relax.ext.cutlass", True):
+        # Match subgraphs that can be offloaded to cutlass and offload them.
+        relax_mod = offload_cutlass(relax_mod, target)
+    else:
+        print("Cutlass backend not detected. Consider enabling it for better performance.")
 
     # Perform legalization to lower Relax operators.
     relax_mod = relax.transform.LegalizeOps()(relax_mod)
