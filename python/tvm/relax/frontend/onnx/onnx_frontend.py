@@ -1111,13 +1111,13 @@ class MaxPool(OnnxOpConverter):
             "VALID",
         ], f"Value {auto_pad} in attribute auto_pad is invalid."
 
-        if auto_pad == "SAME_UPPER" or auto_pad == "SAME_LOWER":
+        if auto_pad in ("SAME_UPPER", "SAME_LOWER"):
             input_spatial_shape = cls._get_input_spatial_shape(data)
             output_spatial_shape = [0 for _ in input_spatial_shape]
 
             pads = _np.array([(0, 0) for _ in range(len(kernel_shape))])
 
-            for i in range(len(input_spatial_shape)):
+            for i, _ in enumerate(input_spatial_shape):
                 if auto_pad == "SAME_UPPER":
                     output_spatial_shape[i] = int(_np.ceil(input_spatial_shape[i] / strides[i]))
                 else:
