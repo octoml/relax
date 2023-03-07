@@ -527,6 +527,64 @@ def layer_norm(
     return _ffi_api.layer_norm(data, gamma, beta, axes, epsilon, center, scale)  # type: ignore
 
 
+def group_norm(
+    data: Expr,
+    gamma: Expr,
+    beta: Expr,
+    num_groups: int,
+    channel_axis: int,
+    axes: Union[int, List[int]],
+    epsilon: float = 1e-5,
+    center: bool = True,
+    scale: bool = True,
+) -> Expr:
+    r"""
+    Group normalization (Yuxin Wu and et al., 2016).
+    Applies group normalization to the n-dimensional input array.
+    This operator takes an n-dimensional input array. First separate the input array
+    into groups along the channel axis. Then apply layer normalization to each group.
+
+    Parameters
+        ----------
+    data : relax.Expr
+        Input to which group_norm will be applied.
+
+    gamma : relax.Expr
+        The gamma scale factor.
+
+    beta : relax.Expr
+        The beta offset factor.
+
+    num_groups : int
+        Number of groups to separate the channels into.
+
+    channel_axis : int
+        The index of the channel axis in the input data.
+
+    axes : Union[int, List[int]]
+        The axes that along which the normalization is applied (excluding the group axis)
+
+    epsilon : float
+        Small float added to variance to avoid dividing by zero.
+
+    center : bool
+        Indicating if the beta offset will be added to the normalized tensor.
+
+    scale : bool
+        Indicating if the gamma scale will be multiplied.
+
+    Returns
+    -------
+    result : relax.Expr
+        The computed result.
+    """
+    if isinstance(axes, int):
+        axes = [axes]
+    return _ffi_api.group_norm(  # type: ignore
+        data, gamma, beta, num_groups, channel_axis, axes, epsilon, center, scale
+    )
+
+
 def dropout(data: Expr, rate: float = 0.5) -> Expr:
     """Applies the dropout operation to the input tensor.
 
@@ -577,3 +635,42 @@ def cross_entropy_with_logits(predictions: Expr, labels: Expr) -> Expr:
       The computed result.
     """
     return _ffi_api.cross_entropy_with_logits(predictions, labels)  # type: ignore
+
+
+def attention(query: Expr, key: Expr, value: Expr, bias: Optional[Expr] = None) -> Expr:
+    r"""Computes fused multi head attention.
+
+    All input tensors are of 4-D tensors with BSNH layout.
+
+    .. math::
+        FMA(Q, K, V) = \text{Softmax}(Q @ K^T) @ V
+
+    .. note::
+        The input tensor is required to have float16 dtype
+
+    Parameters
+    ----------
+    query: relax.Expr
+        The input query to the operator. The layout of the input query should be
+        (batch_size, seq_len, num_head, head_dim).
+
+    key: relax.Expr
+        The input key to the operator. The layout of the input key should be
+        (batch_size, seq_len_kv, num_head, head_dim).
+
+    value: relax.Expr
+        The input value to the operator. The layout of the input value should be
+        (batch_size, seq_len_kv, num_head, head_dim_v).
+
+    bias: Optional[Expr]
+        The optional attention bias to the operator. The layout of the attention bias should be
+        (batch_size, num_head, seq_len, seq_len_kv),
+        (batch_size, seq_len, seq_len_kv) or (batch_size, seq_len_kv).
+
+    Returns
+    -------
+    result : relax.Expr
+        The computed result. The layout of the output should be
+        (batch_size, seq_len, num_head, head_dim_v).
+    """
+    return _ffi_api.attention(query, key, value, bias)  # type: ignore

@@ -27,7 +27,7 @@ def verify_model(torch_model, input_info, binding, expected, keep_params_as_inpu
     from tvm.relax.frontend.torch import from_fx
 
     graph_model = fx.symbolic_trace(torch_model)
-    mod = from_fx(graph_model, input_info, keep_params_as_input=keep_params_as_input)
+    mod = from_fx(graph_model, input_info, keep_params_as_input=keep_params_as_input).mod
     binding = {k: tvm.nd.array(v) for k, v in binding.items()}
     expected = relax.transform.BindParams("main", binding)(expected)
     tvm.ir.assert_structural_equal(mod, expected)
@@ -142,7 +142,7 @@ def test_linear():
         def main(
             input_1: R.Tensor((1, 3, 10, 10), dtype="float32"),
             w1: R.Tensor((7, 10), dtype="float32"),
-            w2: R.Tensor((1, 7), dtype="float32"),
+            w2: R.Tensor((7,), dtype="float32"),
         ) -> R.Tensor((1, 3, 10, 7), dtype="float32"):
             # block 0
             with R.dataflow():
@@ -219,6 +219,114 @@ def test_linear():
         [([10, 10], "float32"), ([10, 10], "float32")],
         {},
         expected3,
+    )
+
+
+@tvm.testing.requires_gpu
+def test_bmm():
+    import torch
+    from torch.nn import Module
+
+    torch.set_grad_enabled(False)
+    torch.random.manual_seed(0)
+
+    class BMM(Module):
+        def __init__(self):
+            super().__init__()
+
+        def forward(self, x, y):
+            return torch.bmm(x, y)
+
+    @tvm.script.ir_module
+    class Expected:
+        @R.function
+        def main(
+            input_1: R.Tensor((4, 128, 256), dtype="float32"),
+            input_2: R.Tensor((4, 256, 512), dtype="float32"),
+        ) -> R.Tensor((4, 128, 512), dtype="float32"):
+            # block 0
+            with R.dataflow():
+                lv: R.Tensor((4, 128, 512), dtype="float32") = R.matmul(
+                    input_1, input_2, out_dtype="float32"
+                )
+                gv: R.Tensor((4, 128, 512), dtype="float32") = lv
+                R.output(gv)
+            return gv
+
+    verify_model(
+        BMM(),
+        [((4, 128, 256), "float32"), ((4, 256, 512), "float32")],
+        {},
+        Expected,
+    )
+
+
+@tvm.testing.requires_gpu
+def test_baddbmm():
+    import torch
+    from torch.nn import Module
+
+    torch.set_grad_enabled(False)
+    torch.random.manual_seed(0)
+
+    class BAddBMM1(Module):
+        def __init__(self):
+            super().__init__()
+
+        def forward(self, c, x, y):
+            return torch.baddbmm(c, x, y)
+
+    class BAddBMM2(Module):
+        def __init__(self):
+            super().__init__()
+
+        def forward(self, c, x, y):
+            return torch.baddbmm(c, x, y, alpha=2, beta=0)
+
+    @tvm.script.ir_module
+    class Expected1:
+        @R.function
+        def main(
+            inp_0: R.Tensor((4, 128, 512), dtype="float32"),
+            inp_1: R.Tensor((4, 128, 256), dtype="float32"),
+            inp_2: R.Tensor((4, 256, 512), dtype="float32"),
+        ) -> R.Tensor((4, 128, 512), dtype="float32"):
+            with R.dataflow():
+                lv: R.Tensor((4, 128, 512), dtype="float32") = R.matmul(inp_1, inp_2)
+                lv1: R.Tensor((4, 128, 512), dtype="float32") = R.add(lv, inp_0)
+                gv: R.Tensor((4, 128, 512), dtype="float32") = lv1
+                R.output(gv)
+            return gv
+
+    @tvm.script.ir_module
+    class Expected2:
+        @R.function
+        def main(
+            inp_0: R.Tensor((4, 128, 512), dtype="float32"),
+            inp_1: R.Tensor((4, 128, 256), dtype="float32"),
+            inp_2: R.Tensor((4, 256, 512), dtype="float32"),
+        ) -> R.Tensor((4, 128, 512), dtype="float32"):
+            with R.dataflow():
+                lv: R.Tensor((4, 128, 512), dtype="float32") = R.matmul(inp_1, inp_2)
+                lv1: R.Tensor((4, 128, 512), dtype="float32") = R.multiply(
+                    lv, R.const(2, "float32")
+                )
+                gv: R.Tensor((4, 128, 512), dtype="float32") = lv1
+                R.output(gv)
+            return gv
+
+    verify_model(
+        BAddBMM1(),
+        [((4, 128, 512), "float32"), ((4, 128, 256), "float32"), ((4, 256, 512), "float32")],
+        {},
+        Expected1,
+    )
+
+    verify_model(
+        BAddBMM2(),
+        [((4, 128, 512), "float32"), ((4, 128, 256), "float32"), ((4, 256, 512), "float32")],
+        {},
+        Expected2,
     )
 
 
@@ -576,13 +684,17 @@ def test_dropout():
 
     input_info = [([1, 3, 10, 10], "float32")]
 
-    class Dropout(Module):
+    class Dropout1(Module):
         def __init__(self):
             super().__init__()
             self.dropout = torch.nn.Dropout(0.5)
 
         def forward(self, input):
             return self.dropout(input)
+
+    class Dropout2(Module):
+        def forward(self, input):
+            return torch.dropout(input, 0.5, train=True)
 
     @tvm.script.ir_module
     class expected1:
@@ -596,7 +708,8 @@ def test_dropout():
                 R.output(gv)
             return gv
 
-    verify_model(Dropout(), input_info, {}, expected1)
+    verify_model(Dropout1(), input_info, {}, expected1)
+    verify_model(Dropout2(), input_info, {}, expected1)
 
 
 @tvm.testing.requires_gpu
@@ -708,29 +821,19 @@ def test_groupnorm():
             w1: R.Tensor((3,), dtype="float32"),
             w2: R.Tensor((3,), dtype="float32"),
         ) -> R.Tensor((1, 3, 10, 10), dtype="float32"):
-            # block 0
             with R.dataflow():
-                lv: R.Tensor((1, 3, 1, 10, 10), dtype="float32") = R.reshape(
-                    input_1, (1, 3, 1, 10, 10)
+                lv: R.Tensor((1, 3, 10, 10), dtype="float32") = R.nn.group_norm(
+                    input_1,
+                    w1,
+                    w2,
+                    num_groups=3,
+                    channel_axis=1,
+                    axes=[2, 3],
+                    epsilon=1.0000000000000001e-05,
+                    center=True,
+                    scale=True,
                 )
-                lv1: R.Tensor((1, 3, 1, 1, 1), dtype="float32") = R.mean(
-                    lv, axis=[2, 3, 4], keepdims=True
-                )
-                lv2: R.Tensor((1, 3, 1, 10, 10), dtype="float32") = R.subtract(lv, lv1)
-                lv3: R.Tensor((1, 3, 1, 10, 10), dtype="float32") = R.multiply(lv2, lv2)
-                lv4: R.Tensor((1, 3, 1, 1, 1), dtype="float32") = R.sum(
-                    lv3, axis=[2, 3, 4], keepdims=True
-                )
-                lv5: R.Tensor((1, 3, 1, 1, 1), dtype="float32") = R.divide(lv4, R.const(100.0))
-                lv6: R.Tensor((1, 3, 1, 1, 1), dtype="float32") = R.add(lv5, R.const(1e-05))
-                lv7: R.Tensor((1, 3, 1, 1, 1), dtype="float32") = R.sqrt(lv6)
-                lv8: R.Tensor((1, 3, 1, 10, 10), dtype="float32") = R.divide(lv2, lv7)
-                lv9: R.Tensor((1, 3, 1, 1, 1), dtype="float32") = R.reshape(w1, (1, 3, 1, 1, 1))
-                lv10: R.Tensor((1, 3, 1, 1, 1), dtype="float32") = R.reshape(w2, (1, 3, 1, 1, 1))
-                lv11: R.Tensor((1, 3, 1, 10, 10), dtype="float32") = R.multiply(lv8, lv9)
-                lv12: R.Tensor((1, 3, 1, 10, 10), dtype="float32") = R.add(lv11, lv10)
-                lv13: R.Tensor((1, 3, 10, 10), dtype="float32") = R.reshape(lv12, (1, 3, 10, 10))
-                gv: R.Tensor((1, 3, 10, 10), dtype="float32") = lv13
+                gv: R.Tensor((1, 3, 10, 10), dtype="float32") = lv
                 R.output(gv)
             return gv
 
@@ -982,13 +1085,52 @@ def test_binary():
     verify_model(FloorDiv1(), input_info1, {}, expected9)
     verify_model(FloorDiv2(), input_info2, {}, expected10)
 
+    # Power
+    class Power1(Module):
+        def forward(self, lhs, rhs):
+            return lhs**rhs
+
+    @tvm.script.ir_module
+    class expected11:
+        @R.function
+        def main(
+            lhs_1: R.Tensor((1, 3, 10, 10), dtype="float32"),
+            rhs_1: R.Tensor((1, 3, 10, 10), dtype="float32"),
+        ) -> R.Tensor((1, 3, 10, 10), dtype="float32"):
+            # block 0
+            with R.dataflow():
+                lv: R.Tensor((1, 3, 10, 10), dtype="float32") = R.power(lhs_1, rhs_1)
+                gv: R.Tensor((1, 3, 10, 10), dtype="float32") = lv
+                R.output(gv)
+            return gv
+
+    class Power2(Module):
+        def forward(self, lhs):
+            return lhs**1.0
+
+    @tvm.script.ir_module
+    class expected12:
+        @R.function
+        def main(
+            lhs_1: R.Tensor((1, 3, 10, 10), dtype="float32"),
+        ) -> R.Tensor((1, 3, 10, 10), dtype="float32"):
+            # block 0
+            with R.dataflow():
+                lv: R.Tensor((1, 3, 10, 10), dtype="float32") = R.power(lhs_1, R.const(1.0))
+                gv: R.Tensor((1, 3, 10, 10), dtype="float32") = lv
+                R.output(gv)
+            return gv
+
+    verify_model(Power1(), input_info1, {}, expected11)
+    verify_model(Power2(), input_info2, {}, expected12)
+
     # LT
     class LT1(Module):
         def forward(self, lhs, rhs):
             return lhs < rhs
 
     @tvm.script.ir_module
-    class expected11:
+    class expected13:
         @R.function
         def main(
             lhs_1: R.Tensor((1, 3, 10, 10), dtype="float32"),
@@ -1006,7 +1148,7 @@ def test_binary():
             return lhs < 1.0
 
     @tvm.script.ir_module
-    class expected12:
+    class expected14:
         @R.function
         def main(
             lhs_1: R.Tensor((1, 3, 10, 10), dtype="float32"),
@@ -1018,8 +1160,8 @@ def test_binary():
                 R.output(gv)
             return gv
 
-    verify_model(LT1(), input_info1, {}, expected11)
-    verify_model(LT2(), input_info2, {}, expected12)
+    verify_model(LT1(), input_info1, {}, expected13)
+    verify_model(LT2(), input_info2, {}, expected14)
 
 
 @tvm.testing.requires_gpu
@@ -1047,6 +1189,52 @@ def test_size():
             return gv
 
     verify_model(Size(), input_info, {}, expected1)
+
+
+@tvm.testing.requires_gpu
+def test_squeeze():
+    import torch
+    from torch.nn import Module
+
+    torch.set_grad_enabled(False)
+    torch.random.manual_seed(0)
+
+    input_info = [([3, 1, 4, 1], "float32")]
+
+    class Squeeze1(Module):
+        def forward(self, input):
+            return input.squeeze(1)
+
+    @tvm.script.ir_module
+    class Expected1:
+        @R.function
+        def main(
+            inp_0: R.Tensor((3, 1, 4, 1), dtype="float32")
+        ) -> R.Tensor((3, 4, 1), dtype="float32"):
+            with R.dataflow():
+                lv: R.Tensor((3, 4, 1), dtype="float32") = R.squeeze(inp_0, axis=[1])
+                gv: R.Tensor((3, 4, 1), dtype="float32") = lv
+                R.output(gv)
+            return gv
+
+    class Squeeze2(Module):
+        def forward(self, input):
+            return input.squeeze()
+
+    @tvm.script.ir_module
+    class Expected2:
+        @R.function
+        def main(
+            inp_0: R.Tensor((3, 1, 4, 1), dtype="float32")
+        ) -> R.Tensor((3, 4), dtype="float32"):
+            with R.dataflow():
+                lv: R.Tensor((3, 4), dtype="float32") = R.squeeze(inp_0, axis=None)
+                gv: R.Tensor((3, 4), dtype="float32") = lv
+                R.output(gv)
+            return gv
+
+    verify_model(Squeeze1(), input_info, {}, Expected1)
+    verify_model(Squeeze2(), input_info, {}, Expected2)
 
 
 @tvm.testing.requires_gpu
@@ -1231,6 +1419,46 @@ def test_unary():
 
     verify_model(Sqrt(), input_info, {}, expected3)
 
+    # sigmoid
+    class Sigmoid(Module):
+        def forward(self, input):
+            return torch.sigmoid(input)
+
+    @tvm.script.ir_module
+    class expected4:
+        @R.function
+        def main(
+            input_1: R.Tensor((1, 3, 10, 10), dtype="float32")
+        ) -> R.Tensor((1, 3, 10, 10), dtype="float32"):
+            # block 0
+            with R.dataflow():
+                lv: R.Tensor((1, 3, 10, 10), dtype="float32") = R.sigmoid(input_1)
+                gv: R.Tensor((1, 3, 10, 10), dtype="float32") = lv
+                R.output(gv)
+            return gv
+
+    verify_model(Sigmoid(), input_info, {}, expected4)
+
+    # round
+    class Round(Module):
+        def forward(self, input):
+            return torch.round(input)
+
+    @tvm.script.ir_module
+    class expected5:
+        @R.function
+        def main(
+            input_1: R.Tensor((1, 3, 10, 10), dtype="float32")
+        ) -> R.Tensor((1, 3, 10, 10), dtype="float32"):
+            # block 0
+            with R.dataflow():
+                lv: R.Tensor((1, 3, 10, 10), dtype="float32") = R.round(input_1)
+                gv: R.Tensor((1, 3, 10, 10), dtype="float32") = lv
+                R.output(gv)
+            return gv
+
+    verify_model(Round(), input_info, {}, expected5)
+
 
 @tvm.testing.requires_gpu
 def test_gelu():
@@ -1329,7 +1557,7 @@ def test_interpolate():
 
     class Interpolate(Module):
         def forward(self, input):
-            return torch.nn.functional.interpolate(input, size=(5, 5))
+            return torch.nn.functional.interpolate(input, (5, 5))
 
     @tvm.script.ir_module
     class expected1:
@@ -1439,6 +1667,159 @@ def test_split():
 
 
 @tvm.testing.requires_gpu
+def test_chunk():
+    import torch
+    from torch.nn import Module
+
+    torch.set_grad_enabled(False)
+    torch.random.manual_seed(0)
+
+    input_info = [([1, 3, 10, 10], "float32")]
+
+    class Chunk(Module):
+        def forward(self, input):
+            return torch.chunk(input, 3, dim=1)
+
+    @tvm.script.ir_module
+    class Expected:
+        @R.function
+        def main(
+            input_1: R.Tensor((1, 3, 10, 10), dtype="float32")
+        ) -> R.Tuple(
+            R.Tensor((1, 1, 10, 10), dtype="float32"),
+            R.Tensor((1, 1, 10, 10), dtype="float32"),
+            R.Tensor((1, 1, 10, 10), dtype="float32"),
+        ):
+            # block 0
+            with R.dataflow():
+                lv: R.Tuple(
+                    R.Tensor((1, 1, 10, 10), dtype="float32"),
+                    R.Tensor((1, 1, 10, 10), dtype="float32"),
+                    R.Tensor((1, 1, 10, 10), dtype="float32"),
+                ) = R.split(input_1, indices_or_sections=3, axis=1)
+                gv: R.Tuple(
+                    R.Tensor((1, 1, 10, 10), dtype="float32"),
+                    R.Tensor((1, 1, 10, 10), dtype="float32"),
+                    R.Tensor((1, 1, 10, 10), dtype="float32"),
+                ) = lv
+                R.output(gv)
+            return gv
+
+    verify_model(Chunk(), input_info, {}, Expected)
+
+
+@tvm.testing.requires_gpu
+def test_inplace_fill():
+    import torch
+    from torch.nn import Module
+
+    torch.set_grad_enabled(False)
+    torch.random.manual_seed(0)
+
+    class InplaceFill(Module):
+        def forward(self, input):
+            input.fill_(1.5)
+            return input
+
+    @tvm.script.ir_module
+    class Expected:
+        @R.function
+        def main(inp_0: R.Tensor((10, 10), dtype="float32")) -> R.Tensor((10, 10), dtype="float32"):
+            with R.dataflow():
+                lv: R.Tensor((10, 10), dtype="float32") = R.full(
+                    R.shape([10, 10]), R.const(1.5, "float32"), dtype="float32"
+                )
+                gv: R.Tensor((10, 10), dtype="float32") = lv
+                R.output(gv)
+            return gv
+
+    verify_model(InplaceFill(), [([10, 10], "float32")], {}, Expected)
+
+
+@tvm.testing.requires_gpu
+def test_arange():
+    import numpy as np
+    import torch
+    from torch import fx
+    from torch.nn import Module
+    from tvm.relax.frontend.torch import from_fx
+
+    torch.set_grad_enabled(False)
+    torch.random.manual_seed(0)
+
+    class Arange(Module):
+        def forward(self, input):
+            return torch.arange(0, 20, dtype=torch.int32)
+
+    graph_model = fx.symbolic_trace(Arange())
+    mod = from_fx(graph_model, [([10, 10], "float32")]).mod
+    assert len(mod["main"].body.blocks) == 1
+    assert len(mod["main"].body.blocks[0].bindings) == 1
+    assert isinstance(mod["main"].body.blocks[0].bindings[0].value, relax.Constant)
+    tvm.testing.assert_allclose(
+        mod["main"].body.blocks[0].bindings[0].value.data.numpy(), np.arange(0, 20, dtype="int32")
+    )
+
+
+@tvm.testing.requires_gpu
+def test_empty():
+    import torch
+    from torch import fx
+    from torch.nn import Module
+    from tvm.relax.frontend.torch import from_fx
+
+    torch.set_grad_enabled(False)
+    torch.random.manual_seed(0)
+
+    class Empty(Module):
+        def forward(self, input):
+            return torch.empty((10, 10), dtype=torch.float32)
+
+    graph_model = fx.symbolic_trace(Empty())
+    mod = from_fx(graph_model, [([10, 10], "float32")]).mod
+    assert len(mod["main"].body.blocks) == 1
+    assert len(mod["main"].body.blocks[0].bindings) == 1
+    assert isinstance(mod["main"].body.blocks[0].bindings[0].value, relax.Constant)
+    assert mod["main"].body.blocks[0].bindings[0].value.data.shape == (10, 10)
+    assert mod["main"].body.blocks[0].bindings[0].value.data.dtype == "float32"
+
+
+@tvm.testing.requires_gpu
+def test_tensor():
+    import torch
+    from torch import fx
+    from torch.nn import Module
+    from tvm.relax.frontend.torch import from_fx
+
+    torch.set_grad_enabled(False)
+    torch.random.manual_seed(0)
+
+    class Empty1(Module):
+        def forward(self, input):
+            return torch.tensor(3, dtype=torch.float32)
+
+    class Empty2(Module):
+        def forward(self, input):
+            return torch.tensor(3)
+
+    graph_model1 = fx.symbolic_trace(Empty1())
+    mod1 = from_fx(graph_model1, [([10, 10], "float32")]).mod
+    assert len(mod1["main"].body.blocks) == 1
+    assert len(mod1["main"].body.blocks[0].bindings) == 1
+    assert isinstance(mod1["main"].body.blocks[0].bindings[0].value, relax.Constant)
+    assert mod1["main"].body.blocks[0].bindings[0].value.data.shape == ()
+    assert mod1["main"].body.blocks[0].bindings[0].value.data.dtype == "float32"
+
+    graph_model2 = fx.symbolic_trace(Empty2())
+    mod2 = from_fx(graph_model2, [([10, 10], "float32")]).mod
+    assert len(mod2["main"].body.blocks) == 1
+    assert len(mod2["main"].body.blocks[0].bindings) == 1
+    assert isinstance(mod2["main"].body.blocks[0].bindings[0].value, relax.Constant)
+    assert mod2["main"].body.blocks[0].bindings[0].value.data.shape == ()
+    assert mod2["main"].body.blocks[0].bindings[0].value.data.dtype == "int64"
+
+
+@tvm.testing.requires_gpu
 def test_tril():
     import torch
     from torch.nn import Module
@@ -1451,6 +1832,11 @@ def test_tril():
     class Tril(Module):
         def forward(self, input):
             return torch.tril(input, 1)
+
+    class InplaceTril(Module):
+        def forward(self, input):
+            input.tril_(1)
+            return input
 
     @tvm.script.ir_module
     class expected1:
@@ -1466,6 +1852,43 @@ def test_tril():
             return gv
 
     verify_model(Tril(), input_info, {}, expected1)
+    verify_model(InplaceTril(), input_info, {}, expected1)
+
+
+@tvm.testing.requires_gpu
+def test_triu():
+    import torch
+    from torch.nn import Module
+
+    torch.set_grad_enabled(False)
+    torch.random.manual_seed(0)
+
+    input_info = [([10, 10], "float32")]
+
+    class Triu(Module):
+        def forward(self, input):
+            return torch.triu(input, 1)
+
+    class InplaceTriu(Module):
+        def forward(self, input):
+            input.triu_(1)
+            return input
+
+    @tvm.script.ir_module
+    class expected1:
+        @R.function
+        def main(
+            input_1: R.Tensor((10, 10), dtype="float32")
+        ) -> R.Tensor((10, 10), dtype="float32"):
+            # block 0
+            with R.dataflow():
+                lv: R.Tensor((10, 10), dtype="float32") = R.triu(input_1, 1)
+                gv: R.Tensor((10, 10), dtype="float32") = lv
+                R.output(gv)
+            return gv
+
+    verify_model(Triu(), input_info, {}, expected1)
+    verify_model(InplaceTriu(), input_info, {}, expected1)
 
 
 @tvm.testing.requires_gpu
@@ -1560,7 +1983,7 @@ def test_reduce():
 
 
 @tvm.testing.requires_gpu
-def test_to():
+def test_datatype():
     import torch
     from torch.nn import Module
 
@@ -1608,6 +2031,25 @@ def test_to():
             return gv
 
     verify_model(ToHalf(), input_info, {}, expected2)
+
+    # type
+    class Type(Module):
+        def forward(self, x):
+            return x.type(torch.float32)
+
+    # type
+    class TypeFromAttr(Module):
+        def forward(self, x):
+            return x.type(x.getattr("dtype"))
+
+    # astype
+    class AsType(Module):
+        def forward(self, x):
+            return x.astype(torch.float32)
+
+    verify_model(Type(), input_info, {}, expected1)
+    verify_model(TypeFromAttr(), input_info, {}, expected1)
+    verify_model(AsType(), input_info, {}, expected1)
 
 
 @tvm.testing.requires_gpu
@@ -1729,7 +2171,9 @@ def test_view():
 @tvm.testing.requires_gpu
 def test_keep_params():
     import torch
+    from torch import fx
     from torch.nn import Module
+    from tvm.relax.frontend.torch import from_fx
 
     class Conv2D1(Module):
         def __init__(self):
@@ -1768,8 +2212,105 @@ def test_keep_params():
             return gv
 
     model = Conv2D1()
-    input_info = [([1, 3, 10, 10], "float32")]
-    verify_model(model, input_info, {}, expected1, keep_params_as_input=True)
+    graph_model = fx.symbolic_trace(model)
+    trace_output = from_fx(graph_model, [([1, 3, 10, 10], "float32")], keep_params_as_input=True)
+    tvm.ir.assert_structural_equal(trace_output.mod, expected1)
+    func = trace_output.mod["main"]
+    params = trace_output.params["main"]
+
+    assert len(params) == len(func.params) - 1
+    for param_var, param_ndarray in zip(func.params[1:], params):
+        assert tuple(x.value for x in param_var.struct_info.shape.values) == param_ndarray.shape
+        assert param_var.struct_info.dtype == param_ndarray.dtype
+
+    tvm.testing.assert_allclose(params[0].numpy(), model.conv.weight.detach().numpy())
+    tvm.testing.assert_allclose(params[1].numpy(), model.conv.bias.detach().numpy())
+
+
+@tvm.testing.requires_gpu
+def test_argmax():
+    import torch
+    from torch.nn import Module
+
+    class Argmax1(Module):
+        def __init__(self) -> None:
+            super().__init__()
+
+        def forward(self, input):
+            return torch.argmax(input, dim=-1)
+
+    class Argmax2(Module):
+        def __init__(self) -> None:
+            super().__init__()
+
+        def forward(self, input):
+            return torch.argmax(input, dim=-1, keepdim=True)
+
+    @tvm.script.ir_module
+    class Expected1:
+        @R.function
+        def main(inp_0: R.Tensor((256, 256), dtype="float32")) -> R.Tensor((256,), dtype="int64"):
+            with R.dataflow():
+                lv: R.Tensor((256,), dtype="int64") = R.argmax(inp_0, axis=-1, keepdims=False)
+                gv: R.Tensor((256,), dtype="int64") = lv
+                R.output(gv)
+            return gv
+
+    @tvm.script.ir_module
+    class Expected2:
+        @R.function
+        def main(inp_0: R.Tensor((256, 256), dtype="float32")) -> R.Tensor((256, 1), dtype="int64"):
+            with R.dataflow():
+                lv: R.Tensor((256, 1), dtype="int64") = R.argmax(inp_0, axis=-1, keepdims=True)
+                gv: R.Tensor((256, 1), dtype="int64") = lv
+                R.output(gv)
+            return gv
+
+    verify_model(Argmax1(), [([256, 256], "float32")], {}, Expected1)
+    verify_model(Argmax2(), [([256, 256], "float32")], {}, Expected2)
+
+
+@tvm.testing.requires_gpu
+def test_argmin():
+    import torch
+    from torch.nn import Module
+
+    class Argmin1(Module):
+        def __init__(self) -> None:
+            super().__init__()
+
+        def forward(self, input):
+            return torch.argmin(input)
+
+    class Argmin2(Module):
+        def __init__(self) -> None:
+            super().__init__()
+
+        def forward(self, input):
+            return torch.argmin(input, keepdim=True)
+
+    @tvm.script.ir_module
+    class Expected1:
+        @R.function
+        def main(inp_0: R.Tensor((256, 256), dtype="float32")) -> R.Tensor((), dtype="int64"):
+            with R.dataflow():
+                lv: R.Tensor((), dtype="int64") = R.argmin(inp_0, axis=None, keepdims=False)
+                gv: R.Tensor((), dtype="int64") = lv
+                R.output(gv)
+            return gv
+
+    @tvm.script.ir_module
+    class Expected2:
+        @R.function
+        def main(inp_0: R.Tensor((256, 256), dtype="float32")) -> R.Tensor((1, 1), dtype="int64"):
+            with R.dataflow():
+                lv: R.Tensor((1, 1), dtype="int64") = R.argmin(inp_0, axis=None, keepdims=True)
+                gv: R.Tensor((1, 1), dtype="int64") = lv
+                R.output(gv)
+            return gv
+
+    verify_model(Argmin1(), [([256, 256], "float32")], {}, Expected1)
+    verify_model(Argmin2(), [([256, 256], "float32")], {}, Expected2)
 
 
 if __name__ == "__main__":

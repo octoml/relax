@@ -23,7 +23,6 @@ from typing import Callable, Dict, Union, Optional, List, Tuple
 import numpy as np  # type: ignore
 import tvm.ir
 from tvm.runtime import NDArray
-from tvm import meta_schedule as ms
 from . import _ffi_api
 from .legalize_ops.common import LegalizeFunc
 
@@ -284,7 +283,7 @@ def FuseTIR() -> tvm.ir.transform.Pass:
 
 
 def FuseOpsByPattern(
-    patterns: List[Tuple], annotate_codegen: bool = False
+    patterns: List[Tuple], bind_constants: bool = True, annotate_codegen: bool = False
 ) -> tvm.ir.transform.Pass:
     """Apply pattern matching to each function in the given module, and group matched expressions
     into a new function.
@@ -302,6 +301,9 @@ def FuseOpsByPattern(
         they are matched. Higher-priority patterns should come earlier in the list.
         The string is the name of the corresponding pattern. It becomes the value of the kComposite
         attribute of a fused function after a successful matching.
+
+    bind_constants : bool
+        Whether or not to keep bound constants in the grouped function.
 
     annotate_codegen : bool
         If True, wrap each created composite function with another function, whose body consists
@@ -333,7 +335,7 @@ def FuseOpsByPattern(
         else:
             raise ValueError("Invalid pattern: {}".format(tup))
     return _ffi_api.FuseOpsByPattern(
-        pattern_names, df_patterns, checks, annotate_codegen
+        pattern_names, df_patterns, checks, bind_constants, annotate_codegen
     )  # type: ignore
 
 
@@ -490,7 +492,6 @@ def MetaScheduleApplyDatabase(
 def MetaScheduleTuneTIR(
     work_dir: str,
     max_trials_global: int,
-    runner: Optional[ms.runner.Runner] = None,
 ) -> tvm.ir.transform.Pass:
     """Tune TIR with MetaSchedule.
     Parameters
@@ -499,23 +500,17 @@ def MetaScheduleTuneTIR(
        work directory
     max_trials_gloabl: int
        maximum number of total trials allowed for tuning
-    runner: Optional[ms.runner.Runner]
-       runner for tuning
     Returns
     -------
     ret: tvm.ir.transform.Pass
     """
-    if runner is None:
-        runner = ms.runner.LocalRunner()
-    return _ffi_api.MetaScheduleTuneTIR(work_dir, max_trials_global, runner)  # type: ignore
+    return _ffi_api.MetaScheduleTuneTIR(work_dir, max_trials_global)  # type: ignore
 
 
 def MetaScheduleTuneIRMod(
     params: Dict[str, NDArray],
     work_dir: str,
     max_trials_global: int,
-    max_trials_per_task: Optional[int] = None,
-    runner: Optional[ms.runner.Runner] = None,
 ) -> tvm.ir.transform.Pass:
     """Tune Relax IRModule with MetaSchedule.
     Parameters
@@ -524,21 +519,13 @@ def MetaScheduleTuneIRMod(
        model params
     work_dir: str
        work directory
-    max_trials_gloabl: int
+    max_trials_global: int
        maximum number of total trials allowed for tuning
-    max_trials_per_task: Optional[int]
-       maximum number of trials allowed for each task
-    runner: Optional[ms.runner.Runner]
-       runner for the tuning pass
     Returns
     -------
     ret: tvm.ir.transform.Pass
     """
-    if runner is None:
-        runner = ms.runner.LocalRunner()
-    return _ffi_api.MetaScheduleTuneIRMod(  # type: ignore
-        params, work_dir, max_trials_global, max_trials_per_task, runner
-    )
+    return _ffi_api.MetaScheduleTuneIRMod(params, work_dir, max_trials_global)  # type: ignore
 
 
 def _wrap_class_function_pass(pass_cls, pass_info):

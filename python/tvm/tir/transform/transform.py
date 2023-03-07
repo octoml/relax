@@ -611,6 +611,21 @@ def NarrowDataType(target_bits: int):
     return _ffi_api.NarrowDataType(target_bits)  # type: ignore
 
 
+def ForceNarrowIndexToInt32():
+    """Force narrow down indexing expressions and integer buffers to int32 dtype.
+
+    Returns
+    -------
+    fpass : tvm.transform.Pass
+        The result pass
+
+    Note
+    ----
+    This pass should not be used in default cases.
+    """
+    return _ffi_api.ForceNarrowIndexToInt32()  # type: ignore
+
+
 def VerifyMemory():
     """Verify if func contains illegal host side direct memory access.
 
@@ -1040,3 +1055,21 @@ def InstallDebugSpans():
         The result pass
     """
     return _ffi_api.InstallDebugSpans()  # type: ignore
+
+
+def DefaultGPUSchedule():
+    """The pass sets default thread bindings for PrimFuncs, including symbolic shape functions,
+    allowing their build and execution on GPU devices. It examines all the blocks within the
+    PrimFunc and conducts loop fusion, splitting, and reordering operation based on the loop
+    extent and target information, such as the maximum thread block number and maximum thread
+    per block.
+
+    The primary objective of this pass is not to optimize performance, but rather to generate
+    a valid GPU kernel for unscheduled or symbolic shape PrimFuncs. The pass is currently only
+    working for CUDA targets.
+
+    Returns
+    -------
+    ret: tvm.transform.Pass
+    """
+    return _ffi_api.DefaultGPUSchedule()  # type: ignore

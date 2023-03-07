@@ -17,3 +17,4 @@
 """
 Frontends for constructing Relax programs, with the model importers
 """
+from .common import ImporterOutput
