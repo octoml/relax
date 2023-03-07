@@ -29,7 +29,7 @@ import pytest
 import tvm
 import tvm.testing
 from tvm import relax
-from tvm.relax.frontend import from_onnx
+from tvm.relax.frontend.onnx import from_onnx
 
 import onnx
 from onnx import helper, TensorProto, ModelProto, ValueInfoProto, mapping

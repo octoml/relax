@@ -15,6 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Frontends for constructing Relax programs, with the model importers
+Tools for converting ONNX graphs into Relax graphs.
 """
-from .common import ImporterOutput
+from .onnx_frontend import from_onnx
