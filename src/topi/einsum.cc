@@ -270,7 +270,8 @@ class EinsumBuilder {
         }
       } else {
         // Normal label
-        reduction_axes->push_back(IterVar(Range(0, label_to_extent_[label]),
+        const IntImmNode* extent = label_to_extent_[label].as<IntImmNode>();
+        reduction_axes->push_back(IterVar(Range(0, extent->value),
                                           Var(std::string(1, label), DataType::Int(64)),
                                           IterVarType::kCommReduce));
         label_to_index->emplace(label, reduction_axes->back()->var);
