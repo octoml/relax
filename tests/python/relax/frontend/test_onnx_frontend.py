@@ -1472,5 +1472,10 @@ def test_flatten():
     verify_unary("Flatten", [1, 3, 32, 32], attrs={"axis": 2})
 
 
+def test_greater():
+    verify_compare("Greater", [32, 32])
+    verify_compare("Greater", [64, 16])
+
+
 if __name__ == "__main__":
     tvm.testing.main()
