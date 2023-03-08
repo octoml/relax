@@ -50,31 +50,30 @@ def get_llvm_target() -> tvm.target.Target:
     # Next extract attribute string.
     platform = sys.platform
     # Linux
-    if platform in ["linux", "linux2"]:
-        output = subprocess.check_output("lscpu", shell=True).decode()
-        # The output of lscpu produces a bunch of lines with the format
-        # "Title: Value". This pattern matches both the title and value
-        # parts of each line so that we can construct a dictionary.
-        pattern = r"^([^:]+):\s+(.*)$"
-        cpu_info = {}
-
-        for line in output.splitlines():
-            match = re.match(pattern, line)
-            if match:
-                key = match.group(1)
-                value = match.group(2)
-                cpu_info[key] = value.lower().strip()
-
-        features = cpu_info["Flags"].split(" ")
-        march = cpu_info["Architecture"]
-        cores = cpu_info["Core(s) per socket"]
-        sockets = cpu_info["Socket(s)"]
-        total_cores = str(int(cores) * int(sockets))
-        # Special case for x86_64 mismatch between underscore and hyphen
-        if march == "x86_64":
-            march = "x86-64"
-    else:
+    if platform not in ["linux", "linux2"]:
         raise ValueError("Platform %s is not supported." % platform)
+    output = subprocess.check_output("lscpu", shell=True).decode()
+    # The output of lscpu produces a bunch of lines with the format
+    # "Title: Value". This pattern matches both the title and value
+    # parts of each line so that we can construct a dictionary.
+    pattern = r"^([^:]+):\s+(.*)$"
+    cpu_info = {}
+
+    for line in output.splitlines():
+        match = re.match(pattern, line)
+        if match:
+            key = match.group(1)
+            value = match.group(2)
+            cpu_info[key] = value.lower().strip()
+
+    features = cpu_info["Flags"].split(" ")
+    march = cpu_info["Architecture"]
+    cores = cpu_info["Core(s) per socket"]
+    sockets = cpu_info["Socket(s)"]
+    total_cores = str(int(cores) * int(sockets))
+    # Special case for x86_64 mismatch between underscore and hyphen
+    if march == "x86_64":
+        march = "x86-64"
 
     # Now we'll extract the architecture of the target.
     output = subprocess.check_output("llc --version", shell=True).decode()
@@ -86,7 +85,7 @@ def get_llvm_target() -> tvm.target.Target:
     host_target = (
         subprocess.check_output("llvm-config --host-target", shell=True).decode().strip("\n")
     )
-    target = "llvm -mcpu=%s -mtriple=%s -num-cores=%s" % (cpu, host_target, total_cores)
+    target = f"llvm -mcpu={cpu} -mtriple={host_target} -num-cores={total_cores}"
 
     # If possible, add more attribute information.
     if not valid_march:
