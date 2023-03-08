@@ -44,7 +44,8 @@ def get_simple_onnx_model():
 def test_e2e_flow():
     # Try a full end to end flow and confirm functionality of features.
     test_model = get_simple_onnx_model()
-    octo_model = tvm.octo.compile(test_model)
+    # Apply the simplified octoml API.
+    octo_model = tvm.octo.compile(test_model, target=tvm.target.Target("cuda"))
     # Check that the produced model has properly formed shape info.
     assert octo_model.input_info["a"] == ([32, 32], "float32")
 
@@ -52,7 +53,7 @@ def test_e2e_flow():
     temp = utils.tempdir()
     model_path = temp.relpath("model.tar")
     octo_model.save(model_path)
-    loaded_model = tvm.octo.OctoModel(model_path=model_path, target=tvm.target.Target("cuda"))
+    loaded_model = tvm.octo.OctoModel(model_path=model_path)
     # Confirm that the loaded model is equivalent to the saved one.
     tvm.ir.assert_structural_equal(octo_model.exe.as_text(), loaded_model.exe.as_text())
     # Confirm targets were saved and loaded correctly.
@@ -62,5 +63,5 @@ def test_e2e_flow():
     outputs = octo_model.run()
     assert list(outputs[0].shape) == [32, 32]
     report = octo_model.profile()
-    # Confirm report has expected matmul.
-    assert "matmul" in str(report)
+    # Confirm report has expected cutlass offload of matmul.
+    assert "matmul_cutlass" in str(report)

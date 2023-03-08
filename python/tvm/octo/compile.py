@@ -147,12 +147,13 @@ def compile(
         input_dtype = inp.struct_info.dtype
         input_info[inp.name_hint] = (input_shape, input_dtype)
 
-    # If compiled with Cutlass, offload where possible.
-    if tvm.get_global_func("relax.ext.cutlass", True):
-        # Match subgraphs that can be offloaded to cutlass and offload them.
-        relax_mod = offload_cutlass(relax_mod, target)
-    else:
-        print("Cutlass backend not detected. Consider enabling it for better performance.")
+    # If target is gpu and compiled with Cutlass, offload where possible.
+    if target.kind.name == "cuda":
+        if tvm.get_global_func("relax.ext.cutlass", True):
+            # Match subgraphs that can be offloaded to cutlass and offload them.
+            relax_mod = offload_cutlass(relax_mod, target)
+        else:
+            print("Cutlass backend not detected. Consider enabling it for better performance.")
 
     # Perform legalization to lower Relax operators.
     relax_mod = relax.transform.LegalizeOps()(relax_mod)
