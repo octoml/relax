@@ -27,7 +27,7 @@ from tvm.contrib import utils
 
 
 class OctoModel(object):
-    """A compiled model wrapper that provides helpful utilities.
+    """A compiled model wrapper that provides helpful utilities for execution and serialization.
 
     Parameters
     ----------
@@ -35,7 +35,6 @@ class OctoModel(object):
         A compiled executable that can be loaded and run by a relax VM.
     input_info : Optional[Dict[str, Tuple[List, str]]]
         Information about the input names, shapes, and types for the VM.
-        Will be loaded from memory if possible.
     model_path : Optional[Union[str, Path]]
         The path to a saved OctoModel, one of exe and model_path must
         be specified.
@@ -67,9 +66,7 @@ class OctoModel(object):
         # Create a vm from exe.
         self.vm = relax.VirtualMachine(self.exe, self.dev, profile=True)
 
-    def save(
-        self, model_path: Union[str, Path]
-    ) -> Tuple[relax.Executable, Dict[str, relax.StructInfo]]:
+    def save(self, model_path: Union[str, Path]):
         """Save the OctoModel to disk.
 
         The current format used is a simple tar of the exported model library (exe.so),
@@ -139,7 +136,7 @@ class OctoModel(object):
         return exe, input_info
 
     def generate_inputs(self) -> Dict[str, np.array]:
-        """Generate random inputs for inference or benchmarking
+        """Generate random inputs based on 'self.input_info' for inference or benchmarking
 
         Returns
         -------
