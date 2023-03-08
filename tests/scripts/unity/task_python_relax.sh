@@ -33,6 +33,9 @@ export TVM_TEST_TARGETS="${TVM_RELAY_TEST_TARGETS:-llvm}"
 export PLATFORM=cpu
 run_pytest cython unity-relax tests/python/relax
 
+# Run Octo tests
+run_pytest cython unity-octo tests/python/octo
+
 # Run Relax examples
 # python3 ./apps/relax_examples/mlp.py
 # python3 ./apps/relax_examples/nn_module.py
