@@ -98,8 +98,11 @@ def check_correctness(
 
     # Convert the onnx model into relax through the onnx importer.
     tvm_model = from_onnx(model, opset=opset)
+    assert relax.analysis.well_formed(tvm_model)
+
     # Legalize any relax ops into tensorir.
     tvm_model = relax.transform.LegalizeOps()(tvm_model)
+
     # Compile the relax graph into a VM then run.
     with tvm.transform.PassContext(opt_level=3):
         # TODO add target configuration.
@@ -347,29 +350,48 @@ def test_gemm(alpha, beta, useC):
     check_correctness(model)
 
 
+@pytest.mark.parametrize("dynamic", [False, True])
 @pytest.mark.parametrize(
     "in_shape, shape, out_shape",
     [
         ([7, 32, 32, 8], [224, 256], [224, 256]),
         ([7, 32, 32, 8], [-1, 8192], [7, 8192]),
-        ([7, 32, 32, 8], [0, 32, 32, 8], [7, 32, 32, 8]),
+        ([7, 32, 32, 8], [7, 32, 32, 8], [7, 32, 32, 8]),
     ],
 )
-def test_reshape(in_shape, shape, out_shape):
+def test_reshape(dynamic, in_shape, shape, out_shape):
     reshape_node = helper.make_node("Reshape", ["data", "shape"], ["reshaped"])
+    if dynamic:
+        if -1 in shape:
+            pytest.skip()
 
-    graph = helper.make_graph(
-        [reshape_node],
-        "reshape_test",
-        inputs=[
-            helper.make_tensor_value_info("data", TensorProto.FLOAT, in_shape),
-        ],
-        initializer=[helper.make_tensor("shape", TensorProto.INT64, [len(shape)], shape)],
-        outputs=[helper.make_tensor_value_info("reshaped", TensorProto.FLOAT, out_shape)],
-    )
-    input_values = {
-        "data": np.random.randn(*in_shape).astype("float32"),
-    }
+        graph = helper.make_graph(
+            [reshape_node],
+            "reshape_test",
+            inputs=[
+                helper.make_tensor_value_info("data", TensorProto.FLOAT, in_shape),
+                helper.make_tensor_value_info("shape", TensorProto.INT64, [len(shape)]),
+            ],
+            outputs=[helper.make_tensor_value_info("reshaped", TensorProto.FLOAT, out_shape)],
+        )
+        input_values = {
+            "data": np.random.randn(*in_shape).astype("float32"),
+            "shape": np.array(shape).astype("int64"),
+        }
+    else:
+        graph = helper.make_graph(
+            [reshape_node],
+            "reshape_test",
+            inputs=[
+                helper.make_tensor_value_info("data", TensorProto.FLOAT, in_shape),
+            ],
+            initializer=[helper.make_tensor("shape", TensorProto.INT64, [len(shape)], shape)],
+            outputs=[helper.make_tensor_value_info("reshaped", TensorProto.FLOAT, out_shape)],
+        )
+        input_values = {
+            "data": np.random.randn(*in_shape).astype("float32"),
+        }
+
     model = helper.make_model(graph, producer_name="reshape_test")
     check_correctness(model, inputs=input_values)
 
