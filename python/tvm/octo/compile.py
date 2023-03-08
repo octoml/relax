@@ -48,11 +48,15 @@ def load_onnx_model(
         A Relax module implementing the input onnx graph.
     """
     # Check input format and load if needed.
-    if not isinstance(model_file, onnx.ModelProto):
+    if isinstance(model_file, (Path, str)):
         model_file = onnx.load(model_file)
+    else:
+        assert isinstance(
+            model_file, onnx.ModelProto
+        ), f"model_file must be one of (str, Path, onnx.ModelProto) but got {type(model_file)})"
 
     # Convert the graph into a relax implementation.
-    relax_mod = from_onnx(model_file, shape=shape_dict)
+    relax_mod = from_onnx(model_file, shape_dict=shape_dict)
 
     return relax_mod
 
@@ -70,7 +74,11 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
     Returns
     -------
     cutlass_mod : tvm.IRModule
-        The input graph with all possible subgraphs rewritten.
+        The input module after the partition_for_cutlass and RunCodegen passes
+        are applied. In the first step, subgraphs that cutlass supports are
+        found and annotated. Next, those subgraphs are compiled using nvcc.
+        The result is a graph containing a mixture of relax operators
+        and external calls to the compiled cutlass kernels.
     """
     # Extract the sm version of the current target.
     assert target.arch, "Target architecture must be specified."
@@ -126,7 +134,7 @@ def compile(
             target = get_cuda_target()
         else:
             target = get_llvm_target()
-        print("Compiling with target %s" % str(target))
+        print(f"Auto-selected target {target}")
 
     # Convert model into a relax module.
     relax_mod = load_onnx_model(model, shape_dict)
@@ -150,7 +158,7 @@ def compile(
     relax_mod = relax.transform.LegalizeOps()(relax_mod)
 
     # Schedule all remaining functions to be compatible with gpu if needed.
-    if str(target.kind) == "cuda":
+    if target.kind.name == "cuda":
         with target, tvm.transform.PassContext(opt_level=3):
             relax_mod = tvm.tir.transform.DefaultGPUSchedule()(relax_mod)
 

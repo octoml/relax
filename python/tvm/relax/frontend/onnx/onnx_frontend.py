@@ -1429,9 +1429,9 @@ class ONNXGraphImporter:
 
     Parameters
     ----------
-    shape : dict of str to tuple, optional
+    shape_dict : dict of str to tuple, optional
         The input shape to the graph
-    dtype : str or dict of str to str
+    dtype_dict : str or dict of str to str
         The input types to the graph
     sanitize : bool
         Whether to sanitize the input names to be valid Relax identifiers.
@@ -1441,16 +1441,16 @@ class ONNXGraphImporter:
 
     def __init__(
         self,
-        shape: Dict[str, List],
-        dtype: Union[str, Dict[str, str]],
+        shape_dict: Dict[str, List],
+        dtype_dict: Union[str, Dict[str, str]],
         sanitize: bool = True,
     ):
         self._nodes: Dict[str, relax.Expr] = {}
         self._inputs: Dict[str, relax.Var] = {}
         self._num_input: int = 0
-        self._shape = shape.copy() if shape else {}
+        self._shape = shape_dict.copy() if shape_dict else {}
         self._input_names: List[str] = []
-        self._dtype = dtype
+        self._dtype = dtype_dict
         self.opset: int = None
         self._name_supply = NameSupply()
         self._sanitize: bool = sanitize
@@ -1697,8 +1697,8 @@ class ONNXGraphImporter:
 
 def from_onnx(
     model: onnx.onnx_ml_pb2.GraphProto,
-    shape: Dict[str, List] = None,
-    dtype: str = "float32",
+    shape_dict: Dict[str, List] = None,
+    dtype_dict: str = "float32",
     opset: int = None,
     sanitize_input_names: bool = True,
 ) -> Tuple[IRModule, Dict]:
@@ -1711,9 +1711,9 @@ def from_onnx(
     ----------
     model : protobuf object
         ONNX ModelProto after ONNX v1.1.0
-    shape : dict of str to tuple, optional
+    shape_dict : dict of str to tuple, optional
         The input shape to the graph
-    dtype : str or dict of str to str
+    dtype_dict : str or dict of str to str
         The input types to the graph
     opset : int, optional
         Override to autodetected opset.
@@ -1749,7 +1749,7 @@ def from_onnx(
     except ImportError as error:
         raise ImportError("Unable to import onnx which is required {}".format(error))
 
-    g = ONNXGraphImporter(shape, dtype, sanitize_input_names)
+    g = ONNXGraphImporter(shape_dict, dtype_dict, sanitize_input_names)
     graph = model.graph
 
     try:

@@ -72,6 +72,10 @@ class OctoModel(object):
     ) -> Tuple[relax.Executable, Dict[str, relax.StructInfo]]:
         """Save the OctoModel to disk.
 
+        The current format used is a simple tar of the exported model library (exe.so),
+        the input information of the model (input_info.json), and a metadata
+        file containing strings such as the target.
+
         Parameters
         ----------
         model_path : Union[str, Path]

@@ -35,6 +35,9 @@ def get_llvm_target() -> tvm.target.Target:
     """
     # If we cant find llc, we wont be able to extract more information.
     if shutil.which("llc") is None:
+        print(
+            "Could not find llc, falling back to default llvm. Consider installing llc for better performance"
+        )
         return "llvm"
 
     # Get host information from llc
@@ -48,6 +51,9 @@ def get_llvm_target() -> tvm.target.Target:
     # Linux
     if platform in ["linux", "linux2"]:
         output = subprocess.check_output("lscpu", shell=True).decode()
+        # The output of lscpu produces a bunch of lines with the format
+        # "Title: Value". This pattern matches both the title and value
+        # parts of each line so that we can construct a dictionary.
         pattern = r"^([^:]+):\s+(.*)$"
         cpu_info = {}
 
@@ -73,14 +79,8 @@ def get_llvm_target() -> tvm.target.Target:
     output = subprocess.check_output("llc --version", shell=True).decode()
     # Remove header.
     march_options = re.search("(?<=Registered Targets:).*", output, re.DOTALL).group(0)
-    march_list = []
-    for march_line in march_options.split("\n"):
-        if march_line != "":
-            march_list.append(march_line.strip().split(" ")[0])
-    valid_march = False
-    if march in march_list:
-        valid_march = True
-
+    march_list = [m.strip().split(" ")[0] for m in march_options.split("\n") if m]
+    valid_march = march in march_list
     # Build the base target.
     host_target = (
         subprocess.check_output("llvm-config --host-target", shell=True).decode().strip("\n")
@@ -88,36 +88,27 @@ def get_llvm_target() -> tvm.target.Target:
     target = "llvm -mcpu=%s -mtriple=%s -num-cores=%s" % (cpu, host_target, total_cores)
 
     # If possible, add more attribute information.
-    if valid_march:
-        # Get list of valid attributes for the target architecture.
-        attrs_info = subprocess.check_output(
-            "llc -march=%s -mattr=help" % march, shell=True, stderr=subprocess.STDOUT
-        ).decode()
-        supported_attrs = re.search(
-            r"(?<=Available features for this target:).*(?=Use \+feature to enable a feature)",
-            attrs_info,
-            re.DOTALL,
-        ).group(0)
-        attrs_list = []
-        for attrs_line in supported_attrs.split("\n"):
-            if attrs_line != "":
-                attrs_list.append(attrs_line.strip().split(" ")[0])
+    if not valid_march:
+        return tvm.target.Target(target)
 
-        attrs = []
-        # Find which features are supported attrs.
-        for f in features:
-            if f in attrs_list:
-                attrs.append(f)
+    # Get list of valid attributes for the target architecture.
+    attrs_info = subprocess.check_output(
+        "llc -march=%s -mattr=help" % march, shell=True, stderr=subprocess.STDOUT
+    ).decode()
+    supported_attrs = re.search(
+        r"(?<=Available features for this target:).*(?=Use \+feature to enable a feature)",
+        attrs_info,
+        re.DOTALL,
+    ).group(0)
+    # Find which features are supported attrs.
+    attrs_list = [attr.strip().split(" ")[0] for attr in supported_attrs.split("\n")]
+    attrs = [f for f in features if f in attrs_list]
 
-        # Compuse attributes into valid string.
-        attrs_string = ""
-        for attr in attrs:
-            attrs_string += "+%s," % attr
-        # Remove final comma
-        attrs_string = attrs_string[:-1]
+    # Compuse attributes into valid string.
+    attrs_string = ",".join(f"+{a}" for a in attrs)
 
-        # Now we can add more information to the llvm target.
-        target = "%s -mattr=%s" % (target, attrs_string)
+    # Now we can add more information to the llvm target.
+    target = "%s -mattr=%s" % (target, attrs_string)
 
     return tvm.target.Target(target)
 
