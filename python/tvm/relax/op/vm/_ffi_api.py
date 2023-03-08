@@ -13,8 +13,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
-# under the License.
-"""
-Frontends for constructing Relax programs, with the model importers
-"""
-from .common import detach_params
+"""FFI APIs for tvm.relax.op.vm"""
+import tvm._ffi
+
+tvm._ffi._init_api("relax.op.vm", __name__)
