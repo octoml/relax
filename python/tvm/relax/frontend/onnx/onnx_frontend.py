@@ -315,6 +315,9 @@ class Reshape(OnnxOpConverter):
         new_shape = inputs[1]
         if isinstance(inputs[1], relax.Constant):
             new_shape = inputs[1].data.numpy().tolist()
+        else:
+            new_shape = relax.op.tensor_to_shape(new_shape)
+
         return relax.op.reshape(data, new_shape)
 
 
