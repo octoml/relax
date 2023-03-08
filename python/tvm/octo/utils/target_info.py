@@ -36,7 +36,8 @@ def get_llvm_target() -> tvm.target.Target:
     # If we cant find llc, we wont be able to extract more information.
     if shutil.which("llc") is None:
         print(
-            "Could not find llc, falling back to default llvm. Consider installing llc for better performance"
+            "Could not find llc, falling back to default llvm. "
+            "Consider installing llc for better performance"
         )
         return "llvm"
 
