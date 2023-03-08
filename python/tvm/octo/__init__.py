@@ -14,7 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-# pylint: disable=invalid-name, wrong-import-position
+# pylint: disable=invalid-name, wrong-import-position, redefined-builtin
 """OctoML Simplified API utilities."""
 
 from . import utils

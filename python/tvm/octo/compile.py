@@ -16,9 +16,9 @@
 # under the License.
 # pylint: disable=invalid-name, wrong-import-position, redefined-builtin, not-callable
 """Simplified interface for TVM Unity Flow."""
-import onnx
 from pathlib import Path
 from typing import Union, Optional, Dict, List
+import onnx
 import tvm
 from tvm import relax
 from tvm.relax.frontend.onnx import from_onnx

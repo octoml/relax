@@ -19,9 +19,9 @@
 import os
 import re
 import sys
-import psutil
-import subprocess
 import shutil
+import subprocess
+import psutil
 import tvm
 
 
@@ -38,8 +38,7 @@ def get_llvm_target() -> tvm.target.Target:
         return "llvm"
 
     # Get host information from llc
-    stream = subprocess.run(["llc", "--version"], stdout=subprocess.PIPE)
-    cpu_info = stream.stdout.decode("utf-8")
+    cpu_info = subprocess.check_output("llc --version", shell=True).decode()
 
     # Parse out cpu line
     cpu = re.search("(?<=Host CPU: ).+", cpu_info).group(0)
