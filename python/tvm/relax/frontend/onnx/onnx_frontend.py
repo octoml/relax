@@ -1102,9 +1102,49 @@ class MaxPool(OnnxOpConverter):
         kernel_shape = attr.get("kernel_shape")
         pads = attr.get("pads", 0)
         strides = attr.get("strides", 1)
-        if auto_pad != "NOTSET":
-            raise NotImplementedError("Auto padding not yet supported.")
+
+        assert len(kernel_shape) == 2, "Currently only 2D pooling is supported."
+        assert auto_pad in [
+            "NOTSET",
+            "SAME_UPPER",
+            "SAME_LOWER",
+            "VALID",
+        ], f"Value {auto_pad} in attribute auto_pad is invalid."
+
+        if auto_pad in ("SAME_UPPER", "SAME_LOWER"):
+            input_spatial_shape = cls._get_input_spatial_shape(data)
+            output_spatial_shape = [0 for _ in input_spatial_shape]
+
+            pads = _np.array([(0, 0) for _ in range(len(kernel_shape))])
+
+            for i, _ in enumerate(input_spatial_shape):
+                if auto_pad == "SAME_UPPER":
+                    output_spatial_shape[i] = int(_np.ceil(input_spatial_shape[i] / strides[i]))
+                else:
+                    output_spatial_shape[i] = int(_np.floor(input_spatial_shape[i] / strides[i]))
+                pad_i = (
+                    (output_spatial_shape[i] - 1) * strides[i]
+                    + ((kernel_shape[i] - 1) * dilations[i] + 1)
+                    - input_spatial_shape[i]
+                )
+                if auto_pad == "SAME_UPPER":
+                    pads[i, 0] = pad_i // 2
+                    pads[i, 1] = pad_i - pads[i, 0]
+                else:
+                    pads[i, 1] = pad_i // 2
+                    pads[i, 0] = pad_i - pads[i, 1]
+
+            # TODO(agladyshev): for now we support only 2D kernel
+            # (top, left, bottom, right)
+            flatten_pads = [pads[0][0], pads[1][0], pads[0][1], pads[1][1]]
+            pads = tuple(flatten_pads)
+
         return relax.op.nn.max_pool2d(data, kernel_shape, strides, pads, dilations, ceil_mode)
+
+    @classmethod
+    def _get_input_spatial_shape(cls, tensor):
+        # shape is (N x C x D1 x D2 ... Dn)
+        return _np.array([int(d) for d in tensor.struct_info.shape], dtype="int64")[2:]
 
 
 class GlobalAveragePool(OnnxOpConverter):

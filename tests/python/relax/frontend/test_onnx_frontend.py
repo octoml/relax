@@ -1449,18 +1449,59 @@ def test_batch_norm():
 
 
 def test_max_pool():
-    max_pool_node = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[2, 2])
-    graph = helper.make_graph(
-        [max_pool_node],
-        "max_pool_test",
-        inputs=[
-            helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 32, 32]),
-        ],
-        outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 16, 16])],
+    # Pool2D
+    verify_unary(
+        "MaxPool",
+        [1, 1, 32, 32],
+        dict(
+            auto_pad="NOTSET",
+            kernel_shape=[3, 3],
+            pads=[1, 1, 1, 1],
+            strides=[1, 1],
+        ),
     )
-
-    model = helper.make_model(graph, producer_name="max_pool_test")
-    check_correctness(model)
+    # Pool2D with stride
+    verify_unary(
+        "MaxPool",
+        [1, 1, 32, 32],
+        dict(
+            auto_pad="NOTSET",
+            kernel_shape=[3, 3],
+            pads=[1, 1, 1, 1],
+            strides=[2, 2],
+        ),
+    )
+    # Pool2D with stride and autopadding
+    verify_unary(
+        "MaxPool",
+        [1, 1, 32, 32],
+        dict(
+            auto_pad="SAME_UPPER",
+            kernel_shape=[3, 7],
+            pads=None,
+            strides=[3, 2],
+        ),
+    )
+    verify_unary(
+        "MaxPool",
+        [1, 1, 32, 32],
+        dict(
+            auto_pad="SAME_LOWER",
+            kernel_shape=[3, 3],
+            pads=None,
+            strides=[2, 2],
+        ),
+    )
+    verify_unary(
+        "MaxPool",
+        [1, 1, 32, 32],
+        dict(
+            auto_pad="VALID",
+            kernel_shape=[3, 3],
+            pads=None,
+            strides=[2, 2],
+        ),
+    )
 
 
 def test_global_average_pool():
