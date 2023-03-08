@@ -34,7 +34,6 @@ If this fails, there may still be dynamic operations in the model.
 Not all TVM kernels currently support dynamic shapes, please file an issue on
 github.com/apache/tvm/issues if you hit an error with dynamic kernels.
 """
-# import math
 import warnings
 from typing import Union, List, Dict, Tuple, Any
 import onnx.onnx_ml_pb2
@@ -293,7 +292,11 @@ class Gemm(OnnxOpConverter):
         if alpha is not None:
             A = bb.normalize(relax.op.multiply(A, relax.const(alpha, dtype=dtype)))
 
-        Y = bb.emit_te(topi.matmul, A, B, transA, transB)
+        if transA:
+            A = relax.op.permute_dims(A, [1, 0])
+        if transB:
+            B = relax.op.permute_dims(B, [1, 0])
+        Y = bb.normalize(relax.op.matmul(A, B))
 
         if C is not None:
             if beta is not None:
@@ -844,97 +847,104 @@ class Attention(OnnxOpConverter):
         assert past is None, "past K, V state is not currently supported"
         assert extra_add is None, "extra add to QxK not currently supported"
 
-        split_1 = bb.emit_te(topi.split, weight, 3, 1)
+        split_1 = bb.normalize(relax.op.split(weight, 3, 1))
         # split weight and biases and do the matmuls
-        w_Q, w_K, w_V = bb.emit(split_1[0]), bb.emit(split_1[1]), bb.emit(split_1[2])
+        w_Q, w_K, w_V = split_1[0], split_1[1], split_1[2]
 
         split_2 = bb.emit_te(topi.split, bias, 3, 0)
-        b_Q, b_K, b_V = bb.emit(split_2[0]), bb.emit(split_2[1]), bb.emit(split_2[2])
+        split_2 = bb.normalize(relax.op.split(bias, 3, 0))
+        b_Q, b_K, b_V = split_2[0], split_2[1], split_2[2]
         # need to merge batch dimensions since TVM matmul is 2D
 
         # TODO(@yuchen): check reverse_reshape, a hack here
-        input_emb = bb.emit_te(
-            topi.reshape, input_emb, (input_emb_shape[0] * input_emb_shape[1], input_emb_shape[2])
+        input_emb = bb.normalize(
+            relax.op.reshape(
+                input_emb, (input_emb_shape[0] * input_emb_shape[1], input_emb_shape[2])
+            )
         )
 
-        mul = bb.emit_te(topi.nn.matmul, input_emb, w_Q)
+        mul = bb.normalize(relax.op.matmul(input_emb, w_Q))
 
-        Q = bb.emit_te(topi.add, mul, b_Q)
+        Q = bb.normalize(relax.op.add(mul, b_Q))
 
-        mul2 = bb.emit_te(topi.nn.matmul, input_emb, w_K)
-        K = bb.emit_te(topi.add, mul2, b_K)
+        mul2 = bb.normalize(relax.op.matmul(input_emb, w_K))
+        K = bb.normalize(relax.op.add(mul2, b_K))
 
-        mul3 = bb.emit_te(topi.nn.matmul, input_emb, w_V)
-        V = bb.emit_te(topi.add, mul3, b_V)
+        mul3 = bb.normalize(relax.op.matmul(input_emb, w_V))
+        V = bb.normalize(relax.op.add(mul3, b_V))
 
         # massage tensors in preparation for batched matmul
         def massage(bb, tensor):
-            tensor = bb.emit_te(topi.reshape, tensor, (batch_size, seq_len, num_heads, head_size))
+            tensor = bb.normalize(
+                relax.op.reshape(tensor, (batch_size, seq_len, num_heads, head_size))
+            )
 
             # (batch_size, num_heads, seq_len, head_size)
-            tensor = bb.emit_te(topi.transpose, tensor, [0, 2, 1, 3])
+            tensor = bb.normalize(relax.op.permute_dims(tensor, [0, 2, 1, 3]))
             tensor_shape = [val.value for val in tensor.struct_info.shape.values]
 
             # (batch_size * num_heads, seq_len, head_size)
             # TODO(@yuchen): check reverse_reshape, hack here
-            return bb.emit_te(
-                topi.reshape,
-                tensor,
-                (tensor_shape[0] * tensor_shape[1], tensor_shape[2], tensor_shape[3]),
+            return bb.normalize(
+                relax.op.reshape(
+                    tensor, (tensor_shape[0] * tensor_shape[1], tensor_shape[2], tensor_shape[3])
+                )
             )
 
         Q = massage(bb, Q)
         K = massage(bb, K)
         V = massage(bb, V)
 
-        K_present = bb.emit_te(topi.reshape, K, (batch_size, num_heads, seq_len, head_size))
-        V_present = bb.emit_te(topi.reshape, V, (batch_size, num_heads, seq_len, head_size))
+        K_present = bb.normalize(relax.op.reshape(K, (batch_size, num_heads, seq_len, head_size)))
+        V_present = bb.normalize(relax.op.reshape(V, (batch_size, num_heads, seq_len, head_size)))
         present = bb.emit_te(topi.stack, [K_present, V_present], 0)
 
-        att_scores = bb.emit_te(topi.nn.batch_matmul, Q, K, transpose_a=False, transpose_b=True)
+        att_scores = bb.normalize(relax.op.matmul(Q, relax.op.permute_dims(K, [0, 2, 1])))
         score_dtype = att_scores.checked_type.dtype
-        att_scores = bb.emit_te(
-            topi.multiply,
-            att_scores,
-            relax.const(1 / _np.sqrt(head_size), dtype=att_scores.checked_type.dtype),
+        att_scores = bb.normalize(
+            relax.op.multiply(
+                att_scores,
+                relax.const(1 / _np.sqrt(head_size), dtype=att_scores.checked_type.dtype),
+            )
         )
-        att_scores = bb.emit_te(topi.reshape, att_scores, (batch_size, num_heads, seq_len, seq_len))
+        att_scores = bb.normalize(
+            relax.op.reshape(att_scores, (batch_size, num_heads, seq_len, seq_len))
+        )
 
         # build the attention mask
-        att_mask = bb.emit_te(topi.cast, mask_index, score_dtype)
+        att_mask = bb.normalize(relax.op.astype(mask_index, score_dtype))
         att_mask = bb.emit_te(topi.expand_dims, att_mask, 1, num_newaxis=2)
-        att_mask = bb.emit_te(topi.subtract, relax.const(1, dtype=score_dtype), att_mask)
-        att_mask = bb.emit_te(topi.multiply, att_mask, relax.const(-10000, dtype=score_dtype))
+        att_mask = relax.op.subtract(relax.const(1, dtype=score_dtype), att_mask)
+        att_mask = relax.op.multiply(att_mask, relax.const(-10000, dtype=score_dtype))
 
         # apply the mask
-        att_scores = bb.emit_te(topi.add, att_scores, att_mask)
-        att_scores = bb.emit_te(
-            topi.reshape, att_scores, (batch_size * num_heads, seq_len, seq_len)
+        att_scores = relax.op.add(att_scores, att_mask)
+        att_scores = bb.normalize(
+            relax.op.reshape(att_scores, (batch_size * num_heads, seq_len, seq_len))
         )
 
-        att_probs = bb.emit_te(topi.nn.softmax, att_scores, axis=-1)
+        att_probs = relax.op.nn.softmax(att_scores, axis=-1)
 
-        output = bb.emit_te(
-            topi.nn.batch_matmul, att_probs, V, transpose_a=False, transpose_b=False
-        )
+        output = bb.normalize(relax.op.matmul(att_probs, V))
 
         # TODO(@yuchen): check reverse_reshape, hack here
         output_shape = [val.value for val in output.struct_info.shape.values]
-        output = bb.emit_te(
-            topi.reshape,
-            output,
-            (
-                int(output_shape[0]) // num_heads,
-                num_heads,
-                int(output_shape[1]),
-                int(output_shape[2]),
-            ),
+        output = bb.normalize(
+            relax.op.reshape(
+                output,
+                (
+                    int(output_shape[0]) // num_heads,
+                    num_heads,
+                    int(output_shape[1]),
+                    int(output_shape[2]),
+                ),
+            )
         )
 
-        output = bb.emit_te(topi.transpose, output, axes=[0, 2, 1, 3])
+        output = bb.normalize(relax.op.permute_dims(output, axes=[0, 2, 1, 3]))
         output_shape = [val.value for val in output.struct_info.shape.values]
-        output = bb.emit_te(
-            topi.reshape, output, (int(output_shape[0]), int(output_shape[1]), out_hidden)
+        output = bb.normalize(
+            relax.op.reshape(output, (int(output_shape[0]), int(output_shape[1]), out_hidden))
         )
         return relax.Tuple([output, present])
 
@@ -1492,9 +1502,9 @@ class ONNXGraphImporter:
 
     Parameters
     ----------
-    shape : dict of str to tuple, optional
+    shape_dict : dict of str to tuple, optional
         The input shape to the graph
-    dtype : str or dict of str to str
+    dtype_dict : str or dict of str to str
         The input types to the graph
     sanitize : bool
         Whether to sanitize the input names to be valid Relax identifiers.
@@ -1504,16 +1514,16 @@ class ONNXGraphImporter:
 
     def __init__(
         self,
-        shape: Dict[str, List],
-        dtype: Union[str, Dict[str, str]],
+        shape_dict: Dict[str, List],
+        dtype_dict: Union[str, Dict[str, str]],
         sanitize: bool = True,
     ):
         self._nodes: Dict[str, relax.Expr] = {}
         self._inputs: Dict[str, relax.Var] = {}
         self._num_input: int = 0
-        self._shape = shape.copy() if shape else {}
+        self._shape = shape_dict.copy() if shape_dict else {}
         self._input_names: List[str] = []
-        self._dtype = dtype
+        self._dtype = dtype_dict
         self.opset: int = None
         self._name_supply = NameSupply()
         self._sanitize: bool = sanitize
@@ -1760,8 +1770,8 @@ class ONNXGraphImporter:
 
 def from_onnx(
     model: onnx.onnx_ml_pb2.GraphProto,
-    shape: Dict[str, List] = None,
-    dtype: str = "float32",
+    shape_dict: Dict[str, List] = None,
+    dtype_dict: str = "float32",
     opset: int = None,
     sanitize_input_names: bool = True,
 ) -> Tuple[IRModule, Dict]:
@@ -1774,9 +1784,9 @@ def from_onnx(
     ----------
     model : protobuf object
         ONNX ModelProto after ONNX v1.1.0
-    shape : dict of str to tuple, optional
+    shape_dict : dict of str to tuple, optional
         The input shape to the graph
-    dtype : str or dict of str to str
+    dtype_dict : str or dict of str to str
         The input types to the graph
     opset : int, optional
         Override to autodetected opset.
@@ -1812,7 +1822,7 @@ def from_onnx(
     except ImportError as error:
         raise ImportError("Unable to import onnx which is required {}".format(error))
 
-    g = ONNXGraphImporter(shape, dtype, sanitize_input_names)
+    g = ONNXGraphImporter(shape_dict, dtype_dict, sanitize_input_names)
     graph = model.graph
 
     try:

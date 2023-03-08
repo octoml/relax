@@ -119,5 +119,11 @@ TVM_REGISTER_NODE_TYPE(PostOrderApplyNode);
 TVM_REGISTER_GLOBAL("meta_schedule.SpaceGeneratorPostOrderApply")
     .set_body_typed(SpaceGenerator::PostOrderApply);
 
+TVM_REGISTER_GLOBAL("tvm.meta_schedule.collect_blocks")
+    .set_body_typed([](const tir::Schedule& sch,
+                       const runtime::PackedFunc f_block_filter = nullptr) {
+      return BlockCollector::Collect(sch, f_block_filter);
+    });
+
 }  // namespace meta_schedule
 }  // namespace tvm
