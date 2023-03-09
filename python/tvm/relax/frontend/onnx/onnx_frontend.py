@@ -1032,7 +1032,7 @@ class Einsum(OnnxOpConverter):
     @classmethod
     def _impl_v12(cls, bb, inputs, attr):
         equation = attr["equation"].decode("utf-8")
-        return relax.op.einsum(equation, *inputs)
+        return bb.emit_te(topi.einsum, equation, *inputs)
 
 
 class Range(OnnxOpConverter):
