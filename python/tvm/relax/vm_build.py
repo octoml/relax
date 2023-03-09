@@ -294,7 +294,7 @@ def build(
 
     passes = []
     # TODO(jwfromm) Reeanble once fixed for slice.
-    #passes.append(relax.transform.RewriteDataflowReshape())
+    # passes.append(relax.transform.RewriteDataflowReshape())
     passes.append(relax.transform.ToNonDataflow())
     passes.append(relax.transform.CallTIRRewrite())
     passes.append(relax.transform.StaticPlanBlockMemory())
