@@ -114,7 +114,7 @@ void CodeGenWebGPU::InitFuncState(const PrimFunc& f) {
 
 CodeGenWebGPU::CodeGenWebGPU(Target target) : target_(target) {}
 
-runtime::FunctionInfo CodeGenWebGPU::AddFunction(const PrimFunc& f) {
+runtime::FunctionInfo CodeGenWebGPU::AddFunction(const PrimFunc& f, bool skip_readonly_decl) {
   // clear previous generated state.
   this->InitFuncState(f);
   // skip the first underscore, so SSA variable starts from
@@ -130,7 +130,7 @@ runtime::FunctionInfo CodeGenWebGPU::AddFunction(const PrimFunc& f) {
       << "CodeGenWebGPU: Expect PrimFunc to have the global_symbol attribute";
 
   decl_stream << "//----------------------------------------\n"
-              << "// function: " << global_symbol.value() << "\n"
+              << "// Function: " << global_symbol.value() << "\n"
               << "//----------------------------------------\n";
   runtime::FunctionInfo func_info;
   func_info.name = global_symbol.value();
@@ -167,7 +167,7 @@ runtime::FunctionInfo CodeGenWebGPU::AddFunction(const PrimFunc& f) {
       if (num_buffer != 0) {
         os_param_access << ",";
       }
-      if (info.write_access_set.count(arg)) {
+      if (skip_readonly_decl || info.write_access_set.count(arg)) {
         access_mode = "read_write";
         os_param_access << "1";
       } else {
@@ -208,7 +208,7 @@ runtime::FunctionInfo CodeGenWebGPU::AddFunction(const PrimFunc& f) {
 
   // add to alloc buffer type.
   // Function header.
-  this->stream << "fn main(\n"
+  this->stream << "fn " << func_info.name << "(\n"
                << "  @builtin(workgroup_id) blockIdx : vec3<u32>,\n"
                << "  @builtin(num_workgroups) gridDim : vec3<u32>,\n"
                << "  @builtin(local_invocation_id) threadIdx : vec3<u32>\n"
@@ -335,32 +335,8 @@ void CodeGenWebGPU::VisitExpr_(const CallNode* op, std::ostream& os) {  // NOLIN
     this->PrintExpr(EnforceU32(op->args[1]), os);
     os << ')';
   } else if (op->op.same_as(builtin::if_then_else())) {
+    // WebGPU will insert clamping in buffer access so no need to check OOB.
     this->PrintExpr(Select(op->args[0], op->args[1], op->args[2]), os);
-    return;
-    // conditional that skips eval if cond evals to false
-    std::string result = name_supply_->FreshName("condval");
-    std::string cond = PrintExpr(op->args[0]);
-    this->PrintIndent();
-    this->stream << "var " << result << " : ";
-    PrintType(op->dtype, this->stream);
-    this->stream << ";\n";
-    this->PrintIndent();
-    this->stream << "if (" << cond << ") {\n";
-    {
-      int then_scope = this->BeginScope();
-      std::string true_val = PrintExpr(op->args[1]);
-      this->PrintIndent();
-      this->stream << result << " = " << true_val << ";\n} else {\n";
-      this->EndScope(then_scope);
-    }
-    {
-      int else_scope = this->BeginScope();
-      std::string false_val = PrintExpr(op->args[2]);
-      this->PrintIndent();
-      this->stream << result << " = " << false_val << ";\n}\n";
-      this->EndScope(else_scope);
-    }
-    os << result;
   } else {
     CodeGenC::VisitExpr_(op, os);
   }
@@ -568,11 +544,10 @@ void CodeGenWebGPU::VisitStmt_(const AllocateNode* op) {
 
 void CodeGenWebGPU::VisitStmt_(const ForNode* op) {
   std::string extent = PrintExpr(op->extent);
-  PrintIndent();
   std::string vid = AllocVarID(op->loop_var.get());
   ICHECK(is_zero(op->min));
-  stream << "for (var ";
-  stream << vid << " : ";
+  PrintIndent();
+  stream << "for (var " << vid << " : ";
   PrintType(op->loop_var.dtype(), stream);
   stream << " = 0; " << vid << " < " << extent << "; " << vid << "++) {\n";
   int for_scope = BeginScope();
@@ -617,11 +592,17 @@ class WebGPUSourceModuleNode final : public runtime::ModuleNode {
   }
 
   std::string GetSource(const std::string& format) final {
-    std::ostringstream os;
-    for (auto kv : smap_) {
-      os << kv.second;
+    if (format == "func_info") {
+      std::ostringstream stream;
+      dmlc::JSONWriter(&stream).Write(fmap_);
+      return stream.str();
+    } else {
+      std::ostringstream os;
+      for (auto kv : smap_) {
+        os << kv.second;
+      }
+      return os.str();
     }
-    return os.str();
   }
 
  private:
@@ -637,9 +618,12 @@ class WebGPUSourceModuleNode final : public runtime::ModuleNode {
 runtime::Module BuildWebGPU(IRModule mod, Target target) {
   mod = tir::transform::PointerValueTypeRewrite()(std::move(mod));
   bool output_ssa = false;
-
+  bool skip_readonly_decl = false;
   std::unordered_map<std::string, std::string> smap;
   std::unordered_map<std::string, runtime::FunctionInfo> fmap;
+
+  // narrow all i64 to i32
+  mod = tir::transform::ForceNarrowIndexToInt32()(std::move(mod));
 
   for (auto kv : mod->functions) {
     CodeGenWebGPU cg(target);
@@ -653,7 +637,7 @@ runtime::Module BuildWebGPU(IRModule mod, Target target) {
         << "CodeGenWebGPU: Expect PrimFunc to have the global_symbol attribute";
     std::string f_name = global_symbol.value();
     cg.Init(output_ssa);
-    fmap[f_name] = cg.AddFunction(f);
+    fmap[f_name] = cg.AddFunction(f, skip_readonly_decl);
     std::string code = cg.Finish();
     smap[f_name] = code;
   }

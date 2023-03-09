@@ -519,13 +519,27 @@ def MetaScheduleTuneIRMod(
        model params
     work_dir: str
        work directory
-    max_trials_global: int
+    max_trials_gloabl: int
        maximum number of total trials allowed for tuning
     Returns
     -------
     ret: tvm.ir.transform.Pass
     """
     return _ffi_api.MetaScheduleTuneIRMod(params, work_dir, max_trials_global)  # type: ignore
+
+
+def SimplifyNormInference() -> tvm.ir.transform.Pass:
+    """Simplify normalization operators during inference. For example, the result
+    of a batch norm which is indexed at tuple index 0 will be unpacked into a
+    number of simplified operators.
+
+    Returns
+    -------
+    ret : tvm.transform.Pass
+        The registered pass
+    """
+
+    return _ffi_api.SimplifyNormInference()  # type: ignore
 
 
 def _wrap_class_function_pass(pass_cls, pass_info):

@@ -184,6 +184,25 @@ def test_simple_module():
     _check(TestModule, bb.get())
 
 
+def test_emit_te():
+    @I.ir_module
+    class EmitTE:
+        @R.function
+        def main(x: R.Tensor((10, 20), "float32")) -> R.Tensor((10, 20), dtype="float32"):
+            lv1 = R.emit_te(topi.add, x, x)
+            out = R.emit_te(topi.multiply, lv1, lv1)
+            return out
+
+    bb = relax.BlockBuilder()
+    x = relax.Var("x", relax.TensorStructInfo([10, 20], "float32"))
+    with bb.function("main", [x]):
+        lv1 = bb.emit_te(topi.add, x, x)
+        out = bb.emit_te(topi.multiply, lv1, lv1)
+        bb.emit_func_output(out)
+
+    _check(EmitTE, bb.get())
+
+
 def test_module_with_attr_and_global_info():
     @I.ir_module
     class TestModule:
@@ -1065,19 +1084,34 @@ def test_arith_operators():
     _check(foo, bb.get()["foo"])
 
 
-# TODO(relax-team): enable this when vm ops are ready
-@pytest.mark.xfail
+def test_memory_ops():
+    @R.function
+    def foo(x: R.Tensor(("m", "n"), dtype="float32")):
+        m = T.int64()
+        n = T.int64()
+        storage = R.memory.alloc_storage(
+            R.shape([4 * m * n]), virtual_device_index=0, storage_scope="global", dtype="float32"
+        )
+        alloc = R.memory.alloc_tensor(storage, offset=0, shape=R.shape([m, n]), dtype="float32")
+        tensor = R.builtin.alloc_tensor(R.shape([m, n]), dtype="float32", runtime_device_index=0)
+        gv = tensor
+        return alloc, gv
+
+    _check(foo)
+
+
 def test_vm_ops():
     @R.function
     def foo(x: R.Tensor(("m", "n"), dtype="float32")):
         m = T.int64()
         n = T.int64()
-        storage = R.vm.alloc_storage(R.shape([4 * m * n]), dtype="float32", runtime_device_index=0)
-        alloc = R.vm.alloc_tensor(storage, shape=R.shape([m, n]), offset=0, dtype="float32")
+        storage = R.vm.alloc_storage(R.shape([4 * m * n]), runtime_device_index=0, dtype="float32")
+        alloc = R.vm.alloc_tensor(storage, offset=0, shape=R.shape([m, n]), dtype="float32")
         tensor = R.builtin.alloc_tensor(R.shape([m, n]), dtype="float32", runtime_device_index=0)
-        _ = R.vm.call_tir_dyn("te_func", (x, tensor, (m, n)))
-        gv = tensor
-        return alloc, gv
+        tir_dym = R.vm.call_tir_dyn("te_func", (x, tensor, R.ShapeExpr((m, n))))
+        return alloc, tir_dym
+
+    _check(foo)
 
 
 def test_prim_value():
@@ -1162,6 +1196,34 @@ def test_class_normalize():
             return R.multiply(gv, gv1)
 
     _check(InputModule, OutputModule)
+
+
+def test_context_aware_parsing():
+    @tvm.script.ir_module
+    class Module:
+        @T.prim_func
+        def add(
+            X: T.Buffer(T.int64(8), "float32"),
+            Y: T.Buffer((), "float32"),
+            Z: T.Buffer(T.int64(8), "float32"),
+        ):
+            T.evaluate(0)
+
+        @R.function
+        def main(x: R.Tensor((2, 4), dtype="float32")) -> R.Tensor((10,), dtype="float32"):
+            alloc = R.builtin.alloc_tensor(R.shape([2, 4]), dtype="float32", runtime_device_index=0)
+            _: R.Tuple() = add(x, R.const(1, "float32"), alloc)
+            return alloc
+
+    _check(Module)
+
+    # Break the env settings, but context-aware parsing can still handle it
+    def _break_env(self, *args):
+        raise RuntimeError("Fail to pass context-aware parsing")
+
+    tvm.ir.GlobalVar.__call__ = _break_env
+
+    _check(Module)
 
 
 if __name__ == "__main__":
