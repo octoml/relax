@@ -1554,6 +1554,22 @@ class ReduceL2(OnnxOpConverter):
         )
 
 
+class ArgMax(OnnxOpConverter):
+    """Converts an onnx ArgMax node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        axis = attr.get("axis", 0)
+        keepdims = attr.get("keepdims", True)
+        select_last_index = attr.get("select_last_index", False)
+        if select_last_index:
+            # TODO(vvchernov): support attr
+            raise tvm.error.OpAttributeUnImplemented(
+                "'select_last_index' attribute has not been supported yet"
+            )
+        return bb.emit_te(topi.cast, relax.op.argmax(inputs[0], axis, keepdims), "int64")
+
+
 class SkipLayerNormalization(OnnxOpConverter):
     """Converts a microsoft contrib SkipLayerNormalization node into a Relax expression."""
 
@@ -1720,6 +1736,7 @@ def _get_convert_map():
         "ReduceSumSquare": ReduceSumSquare,
         "ReduceL1": ReduceL1,
         "ReduceL2": ReduceL2,
+        "ArgMax": ArgMax,
         "Expand": Expand,
         "ConstantOfShape": ConstantOfShape,
         "Slice": Slice,
