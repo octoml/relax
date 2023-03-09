@@ -1558,16 +1558,38 @@ class ArgMax(OnnxOpConverter):
     """Converts an onnx ArgMax node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
+    def _check_attrs(cls, data, attr, shift_axis=True):
+        dims_num = len(data.struct_info.shape)
         axis = attr.get("axis", 0)
+        if shift_axis and axis < 0:
+            axis += dims_num
+        assert 0 <= axis < dims_num, "Axis is out of bounds"
         keepdims = attr.get("keepdims", True)
+        return axis, keepdims
+
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        data = inputs[0]
+        axis, keepdims = cls._check_attrs(data, attr, False)
+        return bb.emit_te(topi.cast, relax.op.argmax(data, axis, keepdims), "int64")
+
+    @classmethod
+    def _impl_v11(cls, bb, inputs, attr):
+        data = inputs[0]
+        axis, keepdims = cls._check_attrs(data, attr)
+        return bb.emit_te(topi.cast, relax.op.argmax(data, axis, keepdims), "int64")
+
+    @classmethod
+    def _impl_v12(cls, bb, inputs, attr):
+        data = inputs[0]
+        axis, keepdims = cls._check_attrs(data, attr)
         select_last_index = attr.get("select_last_index", False)
         if select_last_index:
             # TODO(vvchernov): support attr
             raise tvm.error.OpAttributeUnImplemented(
                 "'select_last_index' attribute has not been supported yet"
             )
-        return bb.emit_te(topi.cast, relax.op.argmax(inputs[0], axis, keepdims), "int64")
+        return bb.emit_te(topi.cast, relax.op.argmax(data, axis, keepdims), "int64")
 
 
 class SkipLayerNormalization(OnnxOpConverter):
