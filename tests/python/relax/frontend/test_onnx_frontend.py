@@ -996,6 +996,41 @@ def test_all_reduce_funcs(func, dynamic):
         )
 
 
+def test_argmax():
+    def verify_argmax(input_dim, in_dtype, axis=None, keepdims=None):
+        a_np1 = np.random.uniform(-10, 10, input_dim).astype(in_dtype)
+        out_shape = list(a_np1.shape)
+        def_axis = axis if axis is not None else 0
+        if keepdims == 1 or keepdims is None:
+            out_shape[def_axis] = 1
+        else:
+            out_shape.pop(def_axis)
+
+        node = helper.make_node("ArgMax", inputs=["a_np1"], outputs=["out"])
+
+        if keepdims is not None:
+            keepdims_attr = helper.make_attribute("keepdims", keepdims)
+            node.attribute.append(keepdims_attr)
+        if axis is not None:
+            axis_attr = helper.make_attribute("axis", axis)
+            node.attribute.append(axis_attr)
+
+        graph = helper.make_graph(
+            [node],
+            "argreduce_test",
+            inputs=[helper.make_tensor_value_info("a_np1", TensorProto.INT32, list(a_np1.shape))],
+            outputs=[helper.make_tensor_value_info("out", TensorProto.INT64, list(out_shape))],
+        )
+
+        model = helper.make_model(graph, producer_name="argmax_test")
+        check_correctness(model)
+
+    for in_dtype in [np.float32, np.int32]:
+        for axis in [None, 0, 1, 2]:
+            for keepdims in [None, True, False]:
+                verify_argmax([3, 4, 4], in_dtype, axis, keepdims)
+
+
 @pytest.mark.parametrize("dynamic", [False, True])
 # TODO(jwfromm) Current approach to dynamic expand is technically not well formed. Reenable once fixed.
 @pytest.mark.skip("Produces ill-formed IR")
