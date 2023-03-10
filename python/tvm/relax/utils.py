@@ -30,7 +30,6 @@ from .expr import Expr, ShapeExpr, Function, PrimValue, StringImm, te_tensor
 from ..te import Tensor as te_Tensor, create_relax_prim_func
 from ..ir import Array, Attrs, Type, Map
 from .struct_info import PrimStructInfo, ShapeStructInfo, TensorStructInfo
-from ..ir.base import Span, SourceName
 
 
 def metadata_partitioner(rx_txt: str) -> List[str]:
@@ -444,38 +443,3 @@ def gen_call_tir_inputs(
         tir_vars = _shape_with_old_tir_var(unbound_tir_vars, tir_var_inverse_map)
 
     return (tir_func, call_tir_args, output_sinfo, tir_vars)
-
-
-class SpanContext:
-    """A context manager for setting the current Span.
-
-    Parameters
-    ----------
-    span : Union[Span, str]
-        The span to set as the current span.
-    """
-
-    __current_span = None
-
-    def __init__(self, span: Union[Span, str]):
-        assert isinstance(span, (Span, str)), "span must be a Span or str"
-        if isinstance(span, str):
-            span = Span(SourceName(span), 0, 0, 0, 0)
-        SpanContext.__current_span = span
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, ptype, value, trace):
-        SpanContext.__current_span = None
-
-    @staticmethod
-    def current():
-        """Get the span in the current context.
-
-        Returns
-        -------
-        span : Optional[Span]
-            The current span.
-        """
-        return SpanContext.__current_span

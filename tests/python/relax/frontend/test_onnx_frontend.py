@@ -149,7 +149,7 @@ def test_span_is_added():
     )
 
     model = helper.make_model(graph, producer_name="test_span")
-    tvm_model = relax.from_onnx(model)
+    tvm_model = from_onnx(model)
 
     bindings = tvm_model["main"].body.blocks[0].bindings
     assert bindings[-2].value.span.source_name.name == "Add"
