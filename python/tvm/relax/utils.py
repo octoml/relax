@@ -19,7 +19,7 @@
 import functools
 import inspect
 from typing import Tuple as typing_Tuple
-from typing import Any, Callable, List, Dict, Optional, TypeVar, Union
+from typing import Any, Callable, List, Dict, Optional, TypeVar
 
 from .. import tir
 from ..tir import PrimExpr

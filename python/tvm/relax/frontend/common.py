@@ -80,7 +80,9 @@ def attach_span(op: tvm.relax.Call):
     op : tvm.relax.Expr
         The op with a span attached.
     """
-    assert isinstance(op, tvm.relax.Call), "Expected a Call node but got: {op}".format(op=str(type(op)))
+    assert isinstance(op, tvm.relax.Call), "Expected a Call node but got: {op}".format(
+        op=str(type(op))
+    )
     if op.span is None:
         return tvm.relax.Call(op.op, op.args, op.attrs, op.sinfo_args, SpanContext.current())
     return op

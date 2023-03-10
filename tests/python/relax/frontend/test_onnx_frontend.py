@@ -39,6 +39,30 @@ bg = np.random.MT19937(0)
 rg = np.random.Generator(bg)
 
 
+def from_onnx_wrapper(model: ModelProto, opset: int = None):
+    """
+    Wrapper around the from_onnx method. Asserts that the returned Relax IRModule has
+    span information attached to all call nodes.
+    """
+
+    relax_mod = from_onnx(model, opset=opset)
+
+    @relax.expr_functor.visitor
+    class SpanValidator(tvm.relax.PyExprVisitor):
+        def visit_call_(self, call: relax.Call):  # pylint: disable=arguments-differ
+            assert call.span is not None, "Span information not available for call node {}".format(
+                call.op.name
+            )
+            super().visit_call_(call)
+
+    span_validator = SpanValidator()
+    for _, func in relax_mod.functions.items():
+        if isinstance(func, relax.Function):
+            span_validator.visit_expr(func)
+
+    return relax_mod
+
+
 def generate_random_inputs(
     model: ModelProto, inputs: Optional[Dict[str, np.ndarray]] = None
 ) -> Dict[str, np.ndarray]:
@@ -97,7 +121,7 @@ def check_correctness(
     ort_output = ort_session.run([], inputs)
 
     # Convert the onnx model into relax through the onnx importer.
-    tvm_model = from_onnx(model, opset=opset)
+    tvm_model = from_onnx_wrapper(model, opset=opset)
     # Legalize any relax ops into tensorir.
     tvm_model = relax.transform.LegalizeOps()(tvm_model)
     # Compile the relax graph into a VM then run.
@@ -149,7 +173,7 @@ def test_span_is_added():
     )
 
     model = helper.make_model(graph, producer_name="test_span")
-    tvm_model = from_onnx(model)
+    tvm_model = from_onnx_wrapper(model)
 
     bindings = tvm_model["main"].body.blocks[0].bindings
     assert bindings[-2].value.span.source_name.name == "Add"
@@ -179,7 +203,7 @@ def test_sanitize(input_names, expected_names):
     )
     model = helper.make_model(graph, producer_name="test_sanitizer")
 
-    tvm_model = from_onnx(model)
+    tvm_model = from_onnx_wrapper(model)
 
     for i, param in enumerate(tvm_model["main"].params):
         assert param.name_hint == expected_names[i]

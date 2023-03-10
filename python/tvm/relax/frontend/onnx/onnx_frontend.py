@@ -44,7 +44,7 @@ import tvm
 from tvm import relax, topi
 from tvm.ir import IRModule
 from tvm.ir.supply import NameSupply
-from tvm.relax import testing, PyExprVisitor
+from tvm.relax import testing
 from tvm.relax.frontend.common import attach_span, emit_te_with_span
 
 
@@ -432,7 +432,8 @@ class Conv(OnnxOpConverter):
     def _impl_v11(cls, bb, inputs, attr):
         ndim = len(inputs[0].struct_info.shape)
         if ndim == 3:
-            conv_out = emit_te_with_span(bb,
+            conv_out = emit_te_with_span(
+                bb,
                 topi.nn.conv1d,
                 inputs[0],
                 inputs[1],
@@ -444,29 +445,33 @@ class Conv(OnnxOpConverter):
             )
         elif ndim == 4:
             conv_out = bb.normalize(
-                attach_span(relax.op.nn.conv2d(
-                    data=inputs[0],
-                    weight=inputs[1],
-                    strides=attr.get("strides", 1),
-                    padding=attr.get("pads", 0),
-                    dilation=attr.get("dilation", 1),
-                    groups=attr.get("group", 1),
-                    data_layout="NCHW",
-                    kernel_layout="OIHW",
-                ))
+                attach_span(
+                    relax.op.nn.conv2d(
+                        data=inputs[0],
+                        weight=inputs[1],
+                        strides=attr.get("strides", 1),
+                        padding=attr.get("pads", 0),
+                        dilation=attr.get("dilation", 1),
+                        groups=attr.get("group", 1),
+                        data_layout="NCHW",
+                        kernel_layout="OIHW",
+                    )
+                )
             )
         else:
             raise NotImplementedError("Only 1d and 2d conv currently supported.")
 
         if inputs[2] is not None:
-            bias = attach_span(relax.op.reshape(
-                inputs[2],
-                [1, -1]
-                + [
-                    1,
-                ]
-                * (ndim - 2),
-            ))
+            bias = attach_span(
+                relax.op.reshape(
+                    inputs[2],
+                    [1, -1]
+                    + [
+                        1,
+                    ]
+                    * (ndim - 2),
+                )
+            )
             conv_out = attach_span(relax.op.add(conv_out, bias))
 
         return conv_out
@@ -492,7 +497,8 @@ class CumSum(OnnxOpConverter):
             axis = None
         if attr.get("reverse", 0) != 0:
             data = emit_te_with_span(bb, topi.flip, data, axis=axis if axis else 0)
-        data = emit_te_with_span(bb,
+        data = emit_te_with_span(
+            bb,
             topi.cumsum,
             data=data,
             axis=axis,
@@ -718,7 +724,9 @@ class Slice(OnnxOpConverter):
             steps = steps.data.numpy().tolist()
         else:
             steps = [1] * len(axes)
-        return emit_te_with_span(bb, topi.strided_slice, data, starts, ends, strides=steps, axes=axes)
+        return emit_te_with_span(
+            bb, topi.strided_slice, data, starts, ends, strides=steps, axes=axes
+        )
 
 
 class Pad(OnnxOpConverter):
@@ -746,9 +754,13 @@ class Pad(OnnxOpConverter):
             )
 
         if pad_mode == "constant":
-            return emit_te_with_span(bb, topi.nn.pad, inputs[0], pad_before, pad_after, constant_value)
+            return emit_te_with_span(
+                bb, topi.nn.pad, inputs[0], pad_before, pad_after, constant_value
+            )
         elif pad_mode == "reflect":
-            return emit_te_with_span(bb, topi.nn.mirror_pad, inputs[0], pad_before, pad_after, "REFLECT")
+            return emit_te_with_span(
+                bb, topi.nn.mirror_pad, inputs[0], pad_before, pad_after, "REFLECT"
+            )
         else:
             # TODO(gigiblender) Support edge mode.
             raise NotImplementedError("Pad mode {} not implemented".format(pad_mode))
@@ -859,9 +871,11 @@ class Attention(OnnxOpConverter):
 
         # TODO(@yuchen): check reverse_reshape, a hack here
         input_emb = bb.normalize(
-            attach_span(relax.op.reshape(
-                input_emb, (input_emb_shape[0] * input_emb_shape[1], input_emb_shape[2])
-            ))
+            attach_span(
+                relax.op.reshape(
+                    input_emb, (input_emb_shape[0] * input_emb_shape[1], input_emb_shape[2])
+                )
+            )
         )
 
         mul = bb.normalize(attach_span(relax.op.matmul(input_emb, w_Q)))
@@ -887,26 +901,37 @@ class Attention(OnnxOpConverter):
             # (batch_size * num_heads, seq_len, head_size)
             # TODO(@yuchen): check reverse_reshape, hack here
             return bb.normalize(
-                attach_span(relax.op.reshape(
-                    tensor, (tensor_shape[0] * tensor_shape[1], tensor_shape[2], tensor_shape[3])
-                ))
+                attach_span(
+                    relax.op.reshape(
+                        tensor,
+                        (tensor_shape[0] * tensor_shape[1], tensor_shape[2], tensor_shape[3]),
+                    )
+                )
             )
 
         Q = massage(bb, Q)
         K = massage(bb, K)
         V = massage(bb, V)
 
-        K_present = bb.normalize(attach_span(relax.op.reshape(K, (batch_size, num_heads, seq_len, head_size))))
-        V_present = bb.normalize(attach_span(relax.op.reshape(V, (batch_size, num_heads, seq_len, head_size))))
+        K_present = bb.normalize(
+            attach_span(relax.op.reshape(K, (batch_size, num_heads, seq_len, head_size)))
+        )
+        V_present = bb.normalize(
+            attach_span(relax.op.reshape(V, (batch_size, num_heads, seq_len, head_size)))
+        )
         present = emit_te_with_span(bb, topi.stack, [K_present, V_present], 0)
 
-        att_scores = bb.normalize(attach_span(relax.op.matmul(Q, attach_span(relax.op.permute_dims(K, [0, 2, 1])))))
+        att_scores = bb.normalize(
+            attach_span(relax.op.matmul(Q, attach_span(relax.op.permute_dims(K, [0, 2, 1]))))
+        )
         score_dtype = att_scores.checked_type.dtype
         att_scores = bb.normalize(
-            attach_span(relax.op.multiply(
-                att_scores,
-                relax.const(1 / _np.sqrt(head_size), dtype=att_scores.checked_type.dtype),
-            ))
+            attach_span(
+                relax.op.multiply(
+                    att_scores,
+                    relax.const(1 / _np.sqrt(head_size), dtype=att_scores.checked_type.dtype),
+                )
+            )
         )
         att_scores = bb.normalize(
             attach_span(relax.op.reshape(att_scores, (batch_size, num_heads, seq_len, seq_len)))
@@ -931,21 +956,25 @@ class Attention(OnnxOpConverter):
         # TODO(@yuchen): check reverse_reshape, hack here
         output_shape = [val.value for val in output.struct_info.shape.values]
         output = bb.normalize(
-            attach_span(relax.op.reshape(
-                output,
-                (
-                    int(output_shape[0]) // num_heads,
-                    num_heads,
-                    int(output_shape[1]),
-                    int(output_shape[2]),
-                ),
-            ))
+            attach_span(
+                relax.op.reshape(
+                    output,
+                    (
+                        int(output_shape[0]) // num_heads,
+                        num_heads,
+                        int(output_shape[1]),
+                        int(output_shape[2]),
+                    ),
+                )
+            )
         )
 
         output = bb.normalize(attach_span(relax.op.permute_dims(output, axes=[0, 2, 1, 3])))
         output_shape = [val.value for val in output.struct_info.shape.values]
         output = bb.normalize(
-            attach_span(relax.op.reshape(output, (int(output_shape[0]), int(output_shape[1]), out_hidden)))
+            attach_span(
+                relax.op.reshape(output, (int(output_shape[0]), int(output_shape[1]), out_hidden))
+            )
         )
         return relax.Tuple([output, present])
 
@@ -989,13 +1018,19 @@ class Resize(OnnxOpConverter):
 
         # Define relax implementation.
         if roi is not None:
-            roi = attach_span(relax.op.concat(
-                [
-                    attach_span(relax.op.strided_slice(roi, axes=[0], begin=[2], end=[ndims])),
-                    attach_span(relax.op.strided_slice(roi, axes=[0], begin=[ndims + 2], end=[2 * ndims])),
-                ],
-                axis=0,
-            ))
+            roi = attach_span(
+                relax.op.concat(
+                    [
+                        attach_span(relax.op.strided_slice(roi, axes=[0], begin=[2], end=[ndims])),
+                        attach_span(
+                            relax.op.strided_slice(
+                                roi, axes=[0], begin=[ndims + 2], end=[2 * ndims]
+                            )
+                        ),
+                    ],
+                    axis=0,
+                )
+            )
         else:
             roi = [0.0] * 4
 
@@ -1012,7 +1047,8 @@ class Resize(OnnxOpConverter):
             sizes = sizes.data.numpy().astype("int64").tolist()[2:]
 
         # TODO(jwfromm) relax.image.resize2d runs into some issues with dynamism.
-        return emit_te_with_span(bb,
+        return emit_te_with_span(
+            bb,
             topi.image.resize2d,
             x,
             roi,
@@ -1097,7 +1133,9 @@ class BatchNormalization(OnnxOpConverter):
         mean = inputs[3]
         var = inputs[4]
         epsilon = attr.get("epsilon", 1e-05)
-        return attach_span(relax.op.nn.batch_norm(data, scale, bias, mean, var, axis=1, epsilon=epsilon))
+        return attach_span(
+            relax.op.nn.batch_norm(data, scale, bias, mean, var, axis=1, epsilon=epsilon)
+        )
 
 
 class MaxPool(OnnxOpConverter):
@@ -1150,7 +1188,9 @@ class MaxPool(OnnxOpConverter):
             flatten_pads = [pads[0][0], pads[1][0], pads[0][1], pads[1][1]]
             pads = tuple(flatten_pads)
 
-        return attach_span(relax.op.nn.max_pool2d(data, kernel_shape, strides, pads, dilations, ceil_mode))
+        return attach_span(
+            relax.op.nn.max_pool2d(data, kernel_shape, strides, pads, dilations, ceil_mode)
+        )
 
     @classmethod
     def _get_input_spatial_shape(cls, tensor):
@@ -1308,7 +1348,13 @@ class ReduceL2(OnnxOpConverter):
         data = inputs[0]
         axes = attr.get("axes", None)
         keepdims = attr.get("keepdims", 1)
-        return attach_span(relax.op.sqrt(attach_span(relax.op.sum(attach_span(relax.op.multiply(data, data)), axes, keepdims))))
+        return attach_span(
+            relax.op.sqrt(
+                attach_span(
+                    relax.op.sum(attach_span(relax.op.multiply(data, data)), axes, keepdims)
+                )
+            )
+        )
 
 
 class SkipLayerNormalization(OnnxOpConverter):
@@ -1561,24 +1607,7 @@ class ONNXGraphImporter:
                 output_var = self.bb.emit_output(outputs)
             self.bb.emit_func_output(output_var, params=param_list)
         relax_mod = self.bb.get()
-        self._check_span_info_is_attached(relax_mod)
         return relax_mod
-
-    def _check_span_info_is_attached(self, relax_mod: IRModule):
-        """Checks that span information is attached to all Relax call nodes."""
-
-        @relax.expr_functor.visitor
-        class SpanValidator(PyExprVisitor):
-            def visit_call_(self, call: relax.Call):  # pylint: disable=arguments-differ
-                assert (
-                    call.span is not None
-                ), "Span information not available for call node {}".format(call.op.name)
-                super().visit_call_(call)
-
-        span_validator = SpanValidator()
-        for _, func in relax_mod.functions.items():
-            if isinstance(func, relax.Function):
-                span_validator.visit_expr(func)
 
     def _parse_graph_initializers(self, graph: onnx.onnx_ml_pb2.GraphProto):
         """Parse network inputs to relax, aka parameters."""
