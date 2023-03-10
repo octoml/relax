@@ -131,6 +131,31 @@ def check_correctness(
             tvm.testing.assert_allclose(tvm_out.numpy(), ort_out, atol=1e-5)
 
 
+def test_span_is_added():
+    add_node = helper.make_node("Add", inputs=["input_1", "input_2"], outputs=["add_output"])
+    div_node = helper.make_node("Div", inputs=["add_output", "input_3"], outputs=["output"])
+
+    graph = helper.make_graph(
+        [add_node, div_node],
+        "test",
+        inputs=[
+            helper.make_tensor_value_info("input_1", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("input_2", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("input_3", TensorProto.FLOAT, [32, 32]),
+        ],
+        outputs=[
+            helper.make_tensor_value_info("output", TensorProto.FLOAT, [32, 32]),
+        ],
+    )
+
+    model = helper.make_model(graph, producer_name="test_span")
+    tvm_model = relax.from_onnx(model)
+
+    bindings = tvm_model["main"].body.blocks[0].bindings
+    assert bindings[-2].value.span.source_name.name == "Add"
+    assert bindings[-1].value.span.source_name.name == "Div"
+
+
 @pytest.mark.parametrize(
     "input_names, expected_names",
     [

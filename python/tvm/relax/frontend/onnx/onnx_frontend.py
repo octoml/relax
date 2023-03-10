@@ -1575,7 +1575,7 @@ class ONNXGraphImporter:
                 super().visit_call_(call)
 
         span_validator = SpanValidator()
-        for func in relax_mod.functions:
+        for gv, func in relax_mod.functions:
             if isinstance(func, relax.Function):
                 span_validator.visit_expr(func)
 
