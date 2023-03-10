@@ -42,9 +42,9 @@ import numpy as _np
 
 import tvm
 from tvm import relax, topi
-from tvm.ir import IRModule
+from tvm.ir import IRModule, Span, SourceName
 from tvm.ir.supply import NameSupply
-from tvm.relax import testing
+from tvm.relax import testing, PyExprVisitor
 
 
 def get_type(elem_type: Union[str, int]) -> str:
@@ -1529,14 +1529,9 @@ class ONNXGraphImporter:
         self._sanitize: bool = sanitize
         self.bb: relax.BlockBuilder = relax.BlockBuilder()  # pylint: disable=invalid-name
 
-    def from_onnx(
-        self, graph: onnx.onnx_ml_pb2.ModelProto, opset: int
-    ) -> Tuple[IRModule, Dict[str, tvm.nd.array]]:
+    def from_onnx(self, graph: onnx.onnx_ml_pb2.ModelProto, opset: int) -> IRModule:
         """Construct Relax expressions from the ONNX graph.
         Onnx graph is a python protobuf object.
-
-        #TODO (gigiblender): Handle model input name sanitization. This has been a problem
-        in the Relay importer in the past and we should be careful to avoid it here.
 
         Parameters
         ----------
@@ -1547,8 +1542,6 @@ class ONNXGraphImporter:
         -------
         mod : tvm.IRModule
             The returned relax module
-        params : dict
-            A dict of name: tvm.nd.array pairs, used as pretrained weights
         """
         with self.bb.function("main"):
             with self.bb.dataflow() as df:  # pylint: disable=invalid-name, unused-variable
@@ -1566,7 +1559,25 @@ class ONNXGraphImporter:
                 param_list = [v for k, v in self._inputs.items() if isinstance(v, relax.Var)]
                 output_var = self.bb.emit_output(outputs)
             self.bb.emit_func_output(output_var, params=param_list)
-        return self.bb.get()
+        relax_mod = self.bb.get()
+        self._check_span_info_is_attached(relax_mod)
+        return relax_mod
+
+    def _check_span_info_is_attached(self, relax_mod: IRModule):
+        """Checks that span information is attached to all Relax call nodes."""
+
+        @relax.expr_functor.visitor
+        class SpanValidator(PyExprVisitor):
+            def visit_call_(self, call: relax.Call):  # pylint: disable=arguments-differ
+                assert (
+                    call.span is not None
+                ), "Span information not available for call node {}".format(call.op.name)
+                super().visit_call_(call)
+
+        span_validator = SpanValidator()
+        for func in relax_mod.functions:
+            if isinstance(func, relax.Function):
+                span_validator.visit_expr(func)
 
     def _parse_graph_initializers(self, graph: onnx.onnx_ml_pb2.GraphProto):
         """Parse network inputs to relax, aka parameters."""
