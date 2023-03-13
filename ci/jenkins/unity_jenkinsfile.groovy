@@ -319,11 +319,8 @@ def add_hexagon_permissions() {
 // NOTE: limit tests to relax folder for now to allow us to skip some of the tests
 // that are mostly related to changes in main.
 // This helps to speedup CI time and reduce CI cost.
-def build_and_test(node_type) {
-stage('Build and Test') {
-  if (is_docs_only_build != 1) {
-    parallel 'BUILD: GPU': {
-      node('GPU') {
+def build_test_gpu(node_type) {
+      node(node_type) {
         ws(per_exec_ws('tvm/build-gpu')) {
           init_git()
           sh "${docker_run} ${ci_gpu} nvidia-smi"
@@ -332,8 +329,9 @@ stage('Build and Test') {
           sh "${docker_run} ${ci_gpu} ./tests/scripts/unity/task_python_relax_gpuonly.sh"
         }
       }
-    },
-    'BUILD: CPU': {
+}
+
+def build_test_cpu(node_type) {
       node(node_type) {
         ws(per_exec_ws('tvm/build-cpu')) {
           init_git()
@@ -342,15 +340,25 @@ stage('Build and Test') {
           sh "${docker_run} ${ci_cpu} ./tests/scripts/unity/task_python_relax.sh"
         }
       }
+}
+
+stage('Build and Test') {
+  if (is_docs_only_build != 1) {
+    parallel 'BUILD: GPU': {
+      try {
+        build_test_gpu('GPU-SPOT')
+      } catch(Exception ex) {
+        build_test_gpu('GPU')
+      }
+    },
+    'BUILD: CPU': {
+      try {
+        build_test_cpu('CPU-SPOT')
+    } catch(Exception ex) {
+      build_test_cpu('CPU')
+    }
     }
   } else {
     Utils.markStageSkippedForConditional('BUILD: CPU')
   }
-}
-}
-
-try {
-    build_and_test('CPU-SPOT')
-} catch(Exception ex) {
-    build_and_test('CPU')
 }
