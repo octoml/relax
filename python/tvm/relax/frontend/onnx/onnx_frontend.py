@@ -190,8 +190,8 @@ class Transpose(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        perm = attr.get("perm", None)
-        return bb.emit_te(topi.transpose, inputs[0], axes=perm)
+        axes = attr.get("perm", None)
+        return relax.op.permute_dims(inputs[0], axes)
 
 
 class Unsqueeze(OnnxOpConverter):
@@ -248,7 +248,7 @@ class Cast(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         to_type = get_type(attr["to"])
-        return bb.emit_te(topi.cast, inputs[0], to_type)
+        return relax.op.astype(inputs[0], to_type)
 
 
 class Gather(OnnxOpConverter):
@@ -421,7 +421,7 @@ class Pow(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.power, inputs[0], inputs[1])
+        return relax.op.power(inputs[0], inputs[1])
 
 
 class Conv(OnnxOpConverter):
@@ -430,18 +430,7 @@ class Conv(OnnxOpConverter):
     @classmethod
     def _impl_v11(cls, bb, inputs, attr):
         ndim = len(inputs[0].struct_info.shape)
-        if ndim == 3:
-            conv_out = bb.emit_te(
-                topi.nn.conv1d,
-                inputs[0],
-                inputs[1],
-                attr.get("strides", 1),
-                attr.get("pads", 0),
-                attr.get("dilation", 1),
-                "NCHW",
-                "OIHW",
-            )
-        elif ndim == 4:
+        if ndim == 4:
             conv_out = bb.normalize(
                 relax.op.nn.conv2d(
                     data=inputs[0],
@@ -455,7 +444,7 @@ class Conv(OnnxOpConverter):
                 )
             )
         else:
-            raise NotImplementedError("Only 1d and 2d conv currently supported.")
+            raise NotImplementedError("Only 2d conv currently supported.")
 
         if inputs[2] is not None:
             bias = relax.op.reshape(
@@ -476,7 +465,17 @@ class Erf(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return bb.emit_te(topi.fast_erf, inputs[0])
+        x = inputs[0]
+        sqrt2 = relax.op.sqrt(relax.const(2, x.struct_info.dtype))
+        # TODO: replace with erf operator once it is implemented
+        return bb.normalize(
+            relax.op.add(
+                relax.op.divide(
+                    relax.op.multiply(relax.op.nn.gelu(relax.op.multiply(x, sqrt2)), sqrt2), x
+                ),
+                relax.const(-1, x.struct_info.dtype),
+            )
+        )
 
 
 class CumSum(OnnxOpConverter):
@@ -1039,9 +1038,7 @@ class Range(OnnxOpConverter):
     """Converts an onnx Range node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v12(cls, bb, inputs, attr):
-        # TODO(jwfromm) Something is wrong with topi.arange, doesnt work with any relax expressions.
-        # Unpack inputs. Need to add relax.op.resize
+    def _impl_v11(cls, bb, inputs, attr):
         start = inputs[0]
         assert isinstance(start, relax.Constant), "Constant start required for range."
         start = start.data.numpy().tolist()
@@ -1051,7 +1048,7 @@ class Range(OnnxOpConverter):
         delta = inputs[2]
         assert isinstance(delta, relax.Constant), "Constant delta required for Range."
         step = delta.data.numpy().tolist()
-        return bb.emit_te(topi.arange, start, limit, step)
+        return relax.const(_np.arange(start, limit, step, dtype=inputs[0].struct_info.dtype))
 
 
 class InstanceNormalization(OnnxOpConverter):
