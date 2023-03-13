@@ -1571,13 +1571,13 @@ class ArgMax(OnnxOpConverter):
     def _impl_v1(cls, bb, inputs, attr):
         data = inputs[0]
         axis, keepdims = cls._check_attrs(data, attr, False)
-        return bb.emit_te(topi.cast, relax.op.argmax(data, axis, keepdims), "int64")
+        return relax.op.argmax(data, axis, keepdims)
 
     @classmethod
     def _impl_v11(cls, bb, inputs, attr):
         data = inputs[0]
         axis, keepdims = cls._check_attrs(data, attr)
-        return bb.emit_te(topi.cast, relax.op.argmax(data, axis, keepdims), "int64")
+        return relax.op.argmax(data, axis, keepdims)
 
     @classmethod
     def _impl_v12(cls, bb, inputs, attr):
@@ -1589,7 +1589,7 @@ class ArgMax(OnnxOpConverter):
             raise tvm.error.OpAttributeUnImplemented(
                 "'select_last_index' attribute has not been supported yet"
             )
-        return bb.emit_te(topi.cast, relax.op.argmax(data, axis, keepdims), "int64")
+        return relax.op.argmax(data, axis, keepdims)
 
 
 class SkipLayerNormalization(OnnxOpConverter):
