@@ -513,13 +513,13 @@ TVM_REGISTER_OP("relax.permute_dims")
     .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoPermuteDims);
 
 /* relax.reshape */
-Expr ConvertNewShapeToExpr(const Expr& data, const ObjectRef& shape) {
-  if (const auto* e = shape.as<ExprNode>()) {
-    return GetRef<Expr>(e);
+Array<PrimExpr> ConvertNewShape(const Expr& data, const Array<PrimExpr>& shape) {
+  // If the values of shape are not yet defined, do not mutate them.
+  if (!shape.defined()) {
+    return shape;
   }
-
   const auto* array = shape.as<ArrayNode>();
-  CHECK(array != nullptr) << "Reshape only expects the input new shape to be either an Expr or an "
+  CHECK(array != nullptr) << "Reshape expects the input new shape to be an "
                              "Array of PrimExprs. However, the given new shape is "
                           << shape;
   // Identify which, if any dimensions are special values that must be computed.
@@ -552,9 +552,9 @@ Expr ConvertNewShapeToExpr(const Expr& data, const ObjectRef& shape) {
   }
 
   Array<PrimExpr> array_ref = GetRef<Array<PrimExpr>>(array);
-  // When there is no dimension to infer, just return the input array as ShapeExpr.
+  // When there is no dimension to infer, just return the input array.
   if (dim_to_infer == -1 && zero_dims.empty()) {
-    return ShapeExpr(array_ref);
+    return array_ref;
   }
 
   // Otherwise, we require the input tensor to have known shape value for inference.
@@ -597,11 +597,21 @@ Expr ConvertNewShapeToExpr(const Expr& data, const ObjectRef& shape) {
     PrimExpr old_shape_prod = ComputeShapeProduct(shape_sinfo->values.value());
     array_ref.Set(dim_to_infer, analyzer.Simplify(floordiv(old_shape_prod, new_shape_prod)));
   }
-  return ShapeExpr(array_ref);
+  return array_ref;
 }
 
 Expr reshape(Expr x, ObjectRef shape) {
-  Expr shape_in_expr = ConvertNewShapeToExpr(x, shape);
+  // Expr shape_in_expr = ConvertNewShapeToExpr(x, shape);
+  // Convert shape into either an expression or array of PrimExpr.
+  Expr shape_in_expr;
+  if (const auto* e = shape.as<ExprNode>()) {
+    shape_in_expr = GetRef<Expr>(e);
+  } else {
+    const auto* array = shape.as<ArrayNode>();
+    CHECK(array != nullptr) << "Reshape must be an Expr or Array of PrimExpr, but got " << shape;
+    Array<PrimExpr> array_ref = GetRef<Array<PrimExpr>>(array);
+    shape_in_expr = ShapeExpr(array_ref);
+  } 
   static const Op& op = Op::Get("relax.reshape");
   return Call(op, {std::move(x), std::move(shape_in_expr)}, Attrs(), {});
 }
@@ -633,8 +643,9 @@ StructInfo InferStructInfoReshape(const Call& call, const BlockBuilder& ctx) {
     old_shape_values = old_shape_sinfo->values;
   }
 
+  Array<PrimExpr> new_shape_values = ConvertNewShape(call->args[0], new_shape_sinfo->values.value());
   if (new_shape_sinfo->values.defined() && old_shape_values.defined()) {
-    PrimExpr new_shape_prod = ComputeShapeProduct(new_shape_sinfo->values.value());
+    PrimExpr new_shape_prod = ComputeShapeProduct(new_shape_values);
     PrimExpr old_shape_prod = ComputeShapeProduct(old_shape_values.value());
     if (ctx->GetAnalyzer()->CanProve(old_shape_prod != new_shape_prod)) {
       ctx->ReportFatal(Diagnostic::Error(call)
@@ -646,16 +657,7 @@ StructInfo InferStructInfoReshape(const Call& call, const BlockBuilder& ctx) {
     }
   }
 
-  if(call->args[1]->IsInstance<VarNode>()){
-    auto ssinfo = GetStructInfoAs<ShapeStructInfoNode>(call->args[1]);
-    ICHECK(ssinfo);
-    if(ssinfo->values.defined()){
-      return TensorStructInfo(ShapeExpr(ssinfo->values.value()), data_sinfo->dtype);
-    }else{
-      return TensorStructInfo(data_sinfo->dtype, ssinfo->ndim);
-    }
-  }
-  return TensorStructInfo(call->args[1], data_sinfo->dtype);
+  return TensorStructInfo(ShapeExpr(new_shape_values), data_sinfo->dtype);
 }
 
 TVM_REGISTER_OP("relax.reshape")

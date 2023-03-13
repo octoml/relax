@@ -1541,7 +1541,7 @@ inline Tensor tensordot(const Tensor& A, const tvm::te::Tensor& B, Array<PrimExp
 inline Tensor arange(const PrimExpr& start, const PrimExpr& stop, const PrimExpr& step,
                      DataType dtype, std::string name = "T_arange", std::string tag = kInjective) {
   PrimExpr num_elem = tvm::cast(
-      tvm::DataType::Int(32), tvm::ceil(tvm::cast(tvm::DataType::Float(32), stop - start) / step));
+      tvm::DataType::Int(64), tvm::ceil(tvm::cast(tvm::DataType::Float(32), stop - start) / step));
   Array<PrimExpr> shape;
   return compute(
       {num_elem},
