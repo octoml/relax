@@ -716,8 +716,7 @@ class Slice(OnnxOpConverter):
             steps = steps.data.numpy().tolist()
         else:
             steps = [1] * len(axes)
-        print(axes, starts, ends, steps)
-        return relax.op.strided_slice(data, axes, starts, ends, strides=steps)
+        return bb.emit_te(topi.strided_slice, data, starts, ends, strides=steps, axes=axes)
 
 
 class Pad(OnnxOpConverter):
