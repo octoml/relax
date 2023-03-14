@@ -39,6 +39,30 @@ bg = np.random.MT19937(0)
 rg = np.random.Generator(bg)
 
 
+def from_onnx_wrapper(model: ModelProto, opset: int = None):
+    """
+    Wrapper around the from_onnx method. Asserts that the returned Relax IRModule has
+    span information attached to all call nodes.
+    """
+
+    relax_mod = from_onnx(model, opset=opset)
+
+    @relax.expr_functor.visitor
+    class SpanValidator(tvm.relax.PyExprVisitor):
+        def visit_call_(self, call: relax.Call):  # pylint: disable=arguments-differ
+            assert call.span is not None, "Span information not available for call node {}".format(
+                call.op.name
+            )
+            super().visit_call_(call)
+
+    span_validator = SpanValidator()
+    for _, func in relax_mod.functions.items():
+        if isinstance(func, relax.Function):
+            span_validator.visit_expr(func)
+
+    return relax_mod
+
+
 def generate_random_inputs(
     model: ModelProto, inputs: Optional[Dict[str, np.ndarray]] = None
 ) -> Dict[str, np.ndarray]:
@@ -97,7 +121,7 @@ def check_correctness(
     ort_output = ort_session.run([], inputs)
 
     # Convert the onnx model into relax through the onnx importer.
-    tvm_model = from_onnx(model, opset=opset)
+    tvm_model = from_onnx_wrapper(model, opset=opset)
     # Legalize any relax ops into tensorir.
     tvm_model = relax.transform.LegalizeOps()(tvm_model)
     # Compile the relax graph into a VM then run.
@@ -131,6 +155,31 @@ def check_correctness(
             tvm.testing.assert_allclose(tvm_out.numpy(), ort_out, atol=1e-5)
 
 
+def test_span_is_added():
+    add_node = helper.make_node("Add", inputs=["input_1", "input_2"], outputs=["add_output"])
+    div_node = helper.make_node("Div", inputs=["add_output", "input_3"], outputs=["output"])
+
+    graph = helper.make_graph(
+        [add_node, div_node],
+        "test",
+        inputs=[
+            helper.make_tensor_value_info("input_1", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("input_2", TensorProto.FLOAT, [32, 32]),
+            helper.make_tensor_value_info("input_3", TensorProto.FLOAT, [32, 32]),
+        ],
+        outputs=[
+            helper.make_tensor_value_info("output", TensorProto.FLOAT, [32, 32]),
+        ],
+    )
+
+    model = helper.make_model(graph, producer_name="test_span")
+    tvm_model = from_onnx_wrapper(model)
+
+    bindings = tvm_model["main"].body.blocks[0].bindings
+    assert bindings[-2].value.span.source_name.name == "Add"
+    assert bindings[-1].value.span.source_name.name == "Div"
+
+
 @pytest.mark.parametrize(
     "input_names, expected_names",
     [
@@ -154,7 +203,7 @@ def test_sanitize(input_names, expected_names):
     )
     model = helper.make_model(graph, producer_name="test_sanitizer")
 
-    tvm_model = from_onnx(model)
+    tvm_model = from_onnx_wrapper(model)
 
     for i, param in enumerate(tvm_model["main"].params):
         assert param.name_hint == expected_names[i]
