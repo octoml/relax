@@ -467,6 +467,81 @@ class FunctionCreator : public ExprMutator {
                          /*attrs=*/DictAttrs(group_attrs));
   }
 
+
+  /*!
+   * \brief Create a Span to be used at the call site of the fused function.
+   * The created span will combine the spans of all the bindings in the group.
+   *
+   * The input spans are expected to have the following format from the front-end:
+   * - SourceName is the converter name (or the layer name)
+   * - line is the layer index in the converter
+   * - end_line is ignored
+   * - column is the op index in the layer
+   * - end_column is ignored
+   *
+   * The format of the combined span is:
+   * - SourceName:
+   *          0xABCD
+   *          Converter1(converter_index1)[Op1(op_index1),...,OpN(op_indexN)];
+   *          Converter2(converter_index2)[Op1(op_index1),...,OpM(op_indexM)];
+   *          ...;
+   * - line: min(line of all bindings->value)
+   * - end_line: max(end_line of all bindings->value)
+   * - column: 0
+   * - end_column: 0
+   * \return The created span.
+   */
+   Span CreateSpanForCallSite() {
+     String source_name = "0xABCD";
+     int line = std::numeric_limits<int>::max();
+     int end_line = std::numeric_limits<int>::min();
+
+     // Key is Converter1(converter_index1) and value is a list of Op1(op_index1),...,OpN(op_indexN)
+     Map<String, Array<String>> converter_to_ops;
+     for (const Binding& binding : bindings_) {
+       const auto* var_binding = binding.as<VarBindingNode>();
+       if (!var_binding->value->IsInstance<CallNode>()) {
+         continue;
+       }
+       auto call = Downcast<Call>(var_binding->value);
+       Span span = call->span;
+       String converter = span->source_name->name + "(" + std::to_string(span->line) + ")";
+       String op;
+       if (call->op == Op::Get("relax.call_tir")) {
+         op = Downcast<GlobalVar>(call->args[0])->name_hint;
+       } else if (call->op->IsInstance<OpNode>()) {
+         op = Downcast<Op>(call->op)->name;
+       } else {
+         ICHECK(call->op->IsInstance<GlobalVarNode>());
+         op = Downcast<GlobalVar>(call->op)->name_hint;
+       }
+       // The op index in the converter is encoded as the column number in the span.
+       op = op + "(" + std::to_string(span->column) + ")";
+       // Update the converter_to_ops map.
+       if (converter_to_ops.find(converter) == converter_to_ops.end()) {
+         converter_to_ops.Set(converter, Array<String>{op});
+       } else {
+         Array<String> ops = converter_to_ops.Get(converter).value();
+         ops.push_back(op);
+         converter_to_ops.Set(converter, ops);
+       }
+       line = std::min(line, span->line);
+       end_line = std::max(end_line, span->line);
+     }
+     // Construct the source name.
+    for (const auto& kv : converter_to_ops) {
+      source_name = source_name + kv.first + "[";
+
+      for (size_t i = 0; i < kv.second.size() - 1; ++i) {
+        source_name = source_name + kv.second[i] + ",";
+      }
+      source_name = source_name + kv.second.back();
+
+      source_name = source_name + "];";
+    }
+    return Span(SourceName::Get(source_name), line, end_line, 0, 0);
+   }
+
   /*! \brief The original bindings of the function */
   Array<Binding> bindings_;
   /*! \brief The parameters of the function */
@@ -666,6 +741,9 @@ class OperatorFusor : public ExprMutator {
       ICHECK(it_creator != group2func_.end());
       const FunctionCreator& func_info = it_creator->second;
 
+      // Create a new span for the call site.
+      Span new_span = it_creator->second.CreateSpanForCallSite();
+
       // If this binding belongs to a group whose output is a tuple, the original bound variable
       // needs to be remapped to the output of TupleGetItem after the corresponding tuple is
       // emitted.
@@ -690,7 +768,7 @@ class OperatorFusor : public ExprMutator {
       //  - If this binding is an output binding, emit an output variable.
       //  - Otherwise, emit a dataflow variable.
       Var new_var;
-      Call call_to_emit = Call(gv, UpdateArgs(func_info.arguments_));
+      Call call_to_emit = Call(gv, UpdateArgs(func_info.arguments_), {}, {}, new_span);
 
       if (var_binding->var->IsInstance<DataflowVarNode>()) {
         new_var = builder_->Emit(call_to_emit);
@@ -1055,7 +1133,7 @@ class CompositeFunctionAnnotator : public ExprMutator {
         builder_->GetContextIRModule()->Remove(GetRef<GlobalVar>(gvar));
         auto new_gvar = builder_->AddFunction(new_func, gsymbol);
         gvar_map_[gvar] = new_gvar;
-        return Call(new_gvar, call_node->args);
+        return Call(new_gvar, call_node->args, {}, {}, call_node->span);
       }
     }
     return ExprMutator::VisitExpr_(call_node);

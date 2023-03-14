@@ -81,7 +81,7 @@ def attach_span(op: relax.Call):
     """
     assert isinstance(op, relax.Call), "Expected a Call node but got: {op}".format(op=str(type(op)))
     if op.span is None:
-        return relax.Call(op.op, op.args, op.attrs, op.sinfo_args, SpanContext.current())
+        return relax.Call(op.op, op.args, op.attrs, op.sinfo_args, SpanContext.current_and_increment())
     return op
 
 
@@ -94,18 +94,36 @@ class SpanContext:
     """
 
     __current_span = None
+    __current_column = 0
 
     def __init__(self, span: Union[Span, str]):
         assert isinstance(span, (Span, str)), "span must be a Span or str"
         if isinstance(span, str):
             span = Span(SourceName(span), 0, 0, 0, 0)
         SpanContext.__current_span = span
+        SpanContext.__current_column = 0
 
     def __enter__(self):
         return self
 
     def __exit__(self, ptype, value, trace):
+        SpanContext.__current_column = 0
         SpanContext.__current_span = None
+
+    @staticmethod
+    def current_and_increment():
+        """Get the span in the current context with the column number incremented by 1.
+
+        Returns
+        -------
+        span : Optional[Span]
+            The current span with the column number incremented by 1.
+        """
+        span = SpanContext.current()
+        if span is not None:
+            span = Span(span.source_name, span.line, span.end_line, SpanContext.__current_column, span.end_column)
+            SpanContext.__current_column += 1
+        return span
 
     @staticmethod
     def current():

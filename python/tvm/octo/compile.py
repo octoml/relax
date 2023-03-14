@@ -17,7 +17,7 @@
 # pylint: disable=invalid-name, wrong-import-position, redefined-builtin, not-callable
 """Simplified interface for TVM Unity Flow."""
 from pathlib import Path
-from typing import Union, Optional, Dict, List
+from typing import Union, Optional, Dict, List, Tuple
 import onnx
 import onnx_graphsurgeon as gs
 import tvm
@@ -68,7 +68,7 @@ def load_onnx_model(
     return relax_mod
 
 
-def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModule:
+def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> Tuple[tvm.IRModule, Dict]:
     """Converts appropriate subgraphs to CUTLASS
 
     Parameters
@@ -86,6 +86,9 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
         found and annotated. Next, those subgraphs are compiled using nvcc.
         The result is a graph containing a mixture of relax operators
         and external calls to the compiled cutlass kernels.
+    schedule_map : Dict[str, List[Tuple[int, str]]]
+        A dictionary mapping framework op names to a list of tuples. Each tuple
+        contains a relax op id and the schedule that was applied to it.
     """
     # Extract the sm version of the current target.
     assert target.arch, "Target architecture must be specified."
@@ -98,6 +101,9 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
     # Apply partitioning to offload patterns to cutlass.
     mod = partition_for_cutlass(mod)
 
+    # Construct a mapping framework op -> (relax op id, schedule_method)
+    schedule_map = construct_schedule_map(mod)
+
     # Construct CUTLASS codegen pass.
     cutlass_codegen_pass = relax.transform.RunCodegen(
         {"cutlass": {"sm": sm, "find_first_valid": True}}
@@ -105,7 +111,99 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
 
     # Generate code for matched cutlass kernels.
     mod = cutlass_codegen_pass(mod)
-    return mod
+
+    return mod, schedule_map
+
+
+def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[int, str]]]:
+    """Constructs a mapping from framework op names to a corresponding list of
+    relax ops and how they were scheduled.
+
+    Parameters
+    ----------
+    mod : tvm.IRModule
+        The input IRModule
+
+    Returns
+    -------
+    schedule_map : Dict[str, List[Tuple[int, str]]]
+        A dictionary mapping framework op names to a list of tuples. Each tuple
+        contains a relax op id and the schedule that was applied to it.
+    """
+
+    def maybe_decode_multiple_spans(span: tvm.ir.Span) -> List[tvm.ir.Span]:
+        if span is None:
+            return []
+        source = str(span.source_name.name)
+        # If the source does not start with 0xABCD then this is a single span
+        if not source.startswith("0xABCD"):
+            return [span]
+        # Skip the 0xABCD prefix
+        source = source[6:]
+        spans = []
+        # Split source by ;
+        for encoded_span in source.split(";"):
+            if encoded_span == "":
+                continue
+            # Extract converter name and index. The substring before the first [
+            converter_name_index = encoded_span[: encoded_span.index("[")]
+            # The substring until the first ( is the converter name
+            converter_name = converter_name_index[: converter_name_index.index("(")]
+            converter_index = int(converter_name_index[converter_name_index.index("(") + 1: -1])
+
+            ops = encoded_span[encoded_span.index("[") + 1: encoded_span.index("]")]
+            # Split ops by ,
+            for op in ops.split(","):
+                # Extract op name and index.
+                op_name = op[: op.index("(")]
+                op_index = int(op[op.index("(") + 1: op.index(")")])
+
+                # Create a new span and add it to the list.
+                spans.append(tvm.ir.Span(tvm.ir.SourceName(converter_name), converter_index, 0, op_index, 0))
+
+        return spans
+
+    def get_offload_type(mod: tvm.IRModule, op: relax.Call) -> str:
+        """Checks if the given relax op is offloaded to a framework.
+        Returns "native" if not.
+        """
+        if op.op in mod.functions.keys():
+            func = mod.functions[op.op]
+            if isinstance(func, relax.Function):
+                if "Codegen" in func.attrs.keys():
+                    return func.attrs["Codegen"]
+
+        return "native"
+
+    framework_op_to_relax_op = {}
+
+    @relax.expr_functor.visitor
+    class Visitor(tvm.relax.PyExprVisitor):
+        def visit_call_(self, call: relax.Call):
+            if call.span is None:
+                print("Warning: expecting a span to be attached to call node {}.".format(call))
+
+            offload_type = get_offload_type(mod, call)
+            spans = maybe_decode_multiple_spans(call.span)
+
+            for span in spans:
+                converter_name_and_index = str(span.source_name.name) + "(" + str(span.line) + ")"
+                if converter_name_and_index not in framework_op_to_relax_op.keys():
+                    framework_op_to_relax_op[converter_name_and_index] = []
+
+                # Column is the index of the relax op in the converter.
+                framework_op_to_relax_op[converter_name_and_index].append(
+                    (span.column, offload_type)
+                )
+
+            super().visit_call_(call)
+
+    visitor = Visitor()
+    main_func = mod["main"]
+    if isinstance(main_func, relax.Function):
+        visitor.visit_expr(main_func)
+
+    return framework_op_to_relax_op
 
 
 def compile(
@@ -156,6 +254,7 @@ def compile(
         input_dtype = inp.struct_info.dtype
         input_info[inp.name_hint] = (input_shape, input_dtype)
 
+    schedule_map = {}
     # If target is gpu and compiled with Cutlass, offload where possible.
     if target.kind.name == "cuda":
         # Schedule any cumsum operators if needed. We need to do this explicitly
@@ -164,7 +263,7 @@ def compile(
             relax_mod = ScheduleCumsum()(relax_mod)
         if tvm.get_global_func("relax.ext.cutlass", True):
             # Match subgraphs that can be offloaded to cutlass and offload them.
-            relax_mod = offload_cutlass(relax_mod, target)
+            relax_mod, schedule_map = offload_cutlass(relax_mod, target)
         else:
             print("Cutlass backend not detected. Consider enabling it for better performance.")
 
@@ -180,4 +279,4 @@ def compile(
     exe = relax.build(relax_mod, target)
 
     # Create an OctoModel from the compiled artifact.
-    return OctoModel(exe, input_info, target=target)
+    return OctoModel(exe, input_info, target=target, schedule_map=schedule_map)
