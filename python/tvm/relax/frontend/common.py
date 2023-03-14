@@ -81,7 +81,9 @@ def attach_span(op: relax.Call):
     """
     assert isinstance(op, relax.Call), "Expected a Call node but got: {op}".format(op=str(type(op)))
     if op.span is None:
-        return relax.Call(op.op, op.args, op.attrs, op.sinfo_args, SpanContext.current_and_increment())
+        return relax.Call(
+            op.op, op.args, op.attrs, op.sinfo_args, SpanContext.current_and_increment()
+        )
     return op
 
 
@@ -121,7 +123,13 @@ class SpanContext:
         """
         span = SpanContext.current()
         if span is not None:
-            span = Span(span.source_name, span.line, span.end_line, SpanContext.__current_column, span.end_column)
+            span = Span(
+                span.source_name,
+                span.line,
+                span.end_line,
+                SpanContext.__current_column,
+                span.end_column,
+            )
             SpanContext.__current_column += 1
         return span
 

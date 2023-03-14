@@ -2016,7 +2016,7 @@ class ONNXGraphImporter:
         if op_name in convert_map:
             convert_class = convert_map[op_name]
             op_function = convert_class.get_converter(opset)
-            span = tvm.ir.Span(tvm.ir.SourceName(op_name), node_index, node_index, 0, 0)
+            span = tvm.ir.Span(tvm.ir.SourceName(op_name), node_index, 0, 0, 0)
             with relax.frontend.SpanContext(span):
                 sym = op_function(self.bb, inputs, attrs)
         else:

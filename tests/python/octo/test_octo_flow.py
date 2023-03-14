@@ -86,7 +86,7 @@ def test_construct_schedule_map():
         ],
         outputs=[
             helper.make_tensor_value_info("g", TensorProto.FLOAT, [32, 32]),
-            helper.make_tensor_value_info("h", TensorProto.FLOAT, [32, 32])
+            helper.make_tensor_value_info("h", TensorProto.FLOAT, [32, 32]),
         ],
     )
 
@@ -122,4 +122,3 @@ def test_construct_schedule_map():
     pair = schedule_map["Div(2)"][0]
     assert pair[0] == 0
     assert pair[1] == "native"
-

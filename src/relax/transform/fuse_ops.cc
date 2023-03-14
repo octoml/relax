@@ -491,44 +491,44 @@ class FunctionCreator : public ExprMutator {
    * - end_column: 0
    * \return The created span.
    */
-   Span CreateSpanForCallSite() {
-     String source_name = "0xABCD";
-     int line = std::numeric_limits<int>::max();
-     int end_line = std::numeric_limits<int>::min();
+  Span CreateSpanForCallSite() {
+    String source_name = "0xABCD";
+    int line = std::numeric_limits<int>::max();
+    int end_line = std::numeric_limits<int>::min();
 
-     // Key is Converter1(converter_index1) and value is a list of Op1(op_index1),...,OpN(op_indexN)
-     Map<String, Array<String>> converter_to_ops;
-     for (const Binding& binding : bindings_) {
-       const auto* var_binding = binding.as<VarBindingNode>();
-       if (!var_binding->value->IsInstance<CallNode>()) {
-         continue;
-       }
-       auto call = Downcast<Call>(var_binding->value);
-       Span span = call->span;
-       String converter = span->source_name->name + "(" + std::to_string(span->line) + ")";
-       String op;
-       if (call->op == Op::Get("relax.call_tir")) {
-         op = Downcast<GlobalVar>(call->args[0])->name_hint;
-       } else if (call->op->IsInstance<OpNode>()) {
-         op = Downcast<Op>(call->op)->name;
-       } else {
-         ICHECK(call->op->IsInstance<GlobalVarNode>());
-         op = Downcast<GlobalVar>(call->op)->name_hint;
-       }
-       // The op index in the converter is encoded as the column number in the span.
-       op = op + "(" + std::to_string(span->column) + ")";
-       // Update the converter_to_ops map.
-       if (converter_to_ops.find(converter) == converter_to_ops.end()) {
-         converter_to_ops.Set(converter, Array<String>{op});
-       } else {
-         Array<String> ops = converter_to_ops.Get(converter).value();
-         ops.push_back(op);
-         converter_to_ops.Set(converter, ops);
-       }
-       line = std::min(line, span->line);
-       end_line = std::max(end_line, span->line);
-     }
-     // Construct the source name.
+    // Key is Converter1(converter_index1) and value is a list of Op1(op_index1),...,OpN(op_indexN)
+    Map<String, Array<String>> converter_to_ops;
+    for (const Binding& binding : bindings_) {
+      const auto* var_binding = binding.as<VarBindingNode>();
+      if (!var_binding->value->IsInstance<CallNode>()) {
+        continue;
+      }
+      auto call = Downcast<Call>(var_binding->value);
+      Span span = call->span;
+      String converter = span->source_name->name + "(" + std::to_string(span->line) + ")";
+      String op;
+      if (call->op == Op::Get("relax.call_tir")) {
+        op = Downcast<GlobalVar>(call->args[0])->name_hint;
+      } else if (call->op->IsInstance<OpNode>()) {
+        op = Downcast<Op>(call->op)->name;
+      } else {
+        ICHECK(call->op->IsInstance<GlobalVarNode>());
+        op = Downcast<GlobalVar>(call->op)->name_hint;
+      }
+      // The op index in the converter is encoded as the column number in the span.
+      op = op + "(" + std::to_string(span->column) + ")";
+      // Update the converter_to_ops map.
+      if (converter_to_ops.find(converter) == converter_to_ops.end()) {
+        converter_to_ops.Set(converter, Array<String>{op});
+      } else {
+        Array<String> ops = converter_to_ops.Get(converter).value();
+        ops.push_back(op);
+        converter_to_ops.Set(converter, ops);
+      }
+      line = std::min(line, span->line);
+      end_line = std::max(end_line, span->line);
+    }
+    // Construct the source name.
     for (const auto& kv : converter_to_ops) {
       source_name = source_name + kv.first + "[";
 
@@ -540,7 +540,7 @@ class FunctionCreator : public ExprMutator {
       source_name = source_name + "];";
     }
     return Span(SourceName::Get(source_name), line, end_line, 0, 0);
-   }
+  }
 
   /*! \brief The original bindings of the function */
   Array<Binding> bindings_;

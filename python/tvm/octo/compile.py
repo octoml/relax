@@ -132,6 +132,11 @@ def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[int, str]]
     """
 
     def maybe_decode_multiple_spans(span: tvm.ir.Span) -> List[tvm.ir.Span]:
+        """Checks if multiple spans are encoded into one and (maybe) decodes them.
+        Multiple spans can be merged and encoded during op fusion.
+        Must be in sync with fuse_ops::CreateSpanForCallSite which does the encoding.
+        """
+
         if span is None:
             return []
         source = str(span.source_name.name)
@@ -149,17 +154,18 @@ def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[int, str]]
             converter_name_index = encoded_span[: encoded_span.index("[")]
             # The substring until the first ( is the converter name
             converter_name = converter_name_index[: converter_name_index.index("(")]
-            converter_index = int(converter_name_index[converter_name_index.index("(") + 1: -1])
+            converter_index = int(converter_name_index[converter_name_index.index("(") + 1 : -1])
 
-            ops = encoded_span[encoded_span.index("[") + 1: encoded_span.index("]")]
+            ops = encoded_span[encoded_span.index("[") + 1 : encoded_span.index("]")]
             # Split ops by ,
             for op in ops.split(","):
-                # Extract op name and index.
-                op_name = op[: op.index("(")]
-                op_index = int(op[op.index("(") + 1: op.index(")")])
+                # Extract the op index.
+                op_index = int(op[op.index("(") + 1 : op.index(")")])
 
                 # Create a new span and add it to the list.
-                spans.append(tvm.ir.Span(tvm.ir.SourceName(converter_name), converter_index, 0, op_index, 0))
+                spans.append(
+                    tvm.ir.Span(tvm.ir.SourceName(converter_name), converter_index, 0, op_index, 0)
+                )
 
         return spans
 
@@ -179,7 +185,9 @@ def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[int, str]]
 
     @relax.expr_functor.visitor
     class Visitor(tvm.relax.PyExprVisitor):
-        def visit_call_(self, call: relax.Call):
+        """Visitor that populates the framework_op_to_relax_op dict."""
+
+        def visit_call_(self, call: relax.Call):  # pylint: disable=arguments-differ
             if call.span is None:
                 print("Warning: expecting a span to be attached to call node {}.".format(call))
 
