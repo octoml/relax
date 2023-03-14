@@ -643,9 +643,10 @@ StructInfo InferStructInfoReshape(const Call& call, const BlockBuilder& ctx) {
     old_shape_values = old_shape_sinfo->values;
   }
 
-  Array<PrimExpr> new_shape_values = ConvertNewShape(call->args[0], new_shape_sinfo->values.value());
+  Optional<Array<PrimExpr>> new_shape_values;
   if (new_shape_sinfo->values.defined() && old_shape_values.defined()) {
-    PrimExpr new_shape_prod = ComputeShapeProduct(new_shape_values);
+    new_shape_values = ConvertNewShape(call->args[0], new_shape_sinfo->values.value());
+    PrimExpr new_shape_prod = ComputeShapeProduct(new_shape_values.value());
     PrimExpr old_shape_prod = ComputeShapeProduct(old_shape_values.value());
     if (ctx->GetAnalyzer()->CanProve(old_shape_prod != new_shape_prod)) {
       ctx->ReportFatal(Diagnostic::Error(call)
@@ -655,9 +656,33 @@ StructInfo InferStructInfoReshape(const Call& call, const BlockBuilder& ctx) {
                        << ", while the new shape is " << call->args[1] << ", with product "
                        << new_shape_prod);
     }
+    // Return a shape with special values replaced.
+    return TensorStructInfo(ShapeExpr(new_shape_values.value()), data_sinfo->dtype);
+  // Otherwise if only the new shape is defined, we may be able to use it if it doesn't
+  // contain special values.
+  } else if (new_shape_sinfo->values.defined()) {
+    // Check if any special values are in the new shape.
+    bool special_values = false;
+    new_shape_values = new_shape_sinfo->values.value();
+    const ArrayNode *new_shape_array = new_shape_values.as<ArrayNode>();
+    for (int i = 0; i < static_cast<int>(new_shape_array->size()); ++i) {
+      const PrimExprNode *shape_val_node = new_shape_array->at(i).as<PrimExprNode>();
+      PrimExpr shape_val_expr = GetRef<PrimExpr>(shape_val_node);
+      int shape_val = shape_val_expr.as<IntImmNode>()->value;
+      // Check if the shape value is special.
+      if (shape_val <= 0) {
+        special_values = true;
+      }
+    }
+    // If the new shape contains no special values, we can use it as output shape.
+    if (special_values) {
+      ctx->ReportFatal(Diagnostic::Error(call)
+                       << "Reshape only supports special values when the input shape is defined.");
+    }
+    return TensorStructInfo(ShapeExpr(new_shape_values.value()), data_sinfo->dtype);
   }
-
-  return TensorStructInfo(ShapeExpr(new_shape_values), data_sinfo->dtype);
+  // Otherwise just use the original new shape argument.
+  return TensorStructInfo(call->args[1], data_sinfo->dtype);
 }
 
 TVM_REGISTER_OP("relax.reshape")
