@@ -467,7 +467,6 @@ class FunctionCreator : public ExprMutator {
                          /*attrs=*/DictAttrs(group_attrs));
   }
 
-
   /*!
    * \brief Create a Span to be used at the call site of the fused function.
    * The created span will combine the spans of all the bindings in the group.
