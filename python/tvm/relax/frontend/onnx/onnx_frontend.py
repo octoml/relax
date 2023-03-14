@@ -1319,6 +1319,36 @@ class BatchNormalization(OnnxOpConverter):
         )
 
 
+class LRN(OnnxOpConverter):
+    """Operator converter for Local Response Normalization."""
+
+    @classmethod
+    def _defaut_impl(cls, bb, inputs, attr):
+        """LRN support only NCHW format
+        https://github.com/onnx/onnx/blob/main/docs/Operators.md#LRN
+        """
+        axis = 1
+        alpha = attr.get("alpha", 0.0001)
+        beta = attr.get("beta", 0.75)
+        bias = attr.get("bias", 1.0)
+        nsize = attr.get("size")
+        return relax.op.lrn(inputs[0], nsize, axis, bias, alpha, beta)
+
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        assert (
+            inputs[0].struct_info.dtype in ["float16", "float", "float32", "float64", "double"]
+        ), "input type is unsupported"
+        return cls._default_impl(bb, inputs, attr)
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        assert inputs[0].struct_info.dtype in [
+            "float16", "bfloat16", "float", "float32", "float64", "double"
+        ], "input type is unsupported"
+        return cls._default_impl(bb, inputs, attr)
+
+
 class MaxPool(OnnxOpConverter):
     """Converts an onnx MaxPool node into an equivalent Relax expression."""
 
@@ -1800,6 +1830,7 @@ def _get_convert_map():
         "Split": Split,
         "Tile": Tile,
         "BatchNormalization": BatchNormalization,
+        "LRN": LRN,
         "GlobalAveragePool": GlobalAveragePool,
         "Flatten": Flatten,
         "MaxPool": MaxPool,
