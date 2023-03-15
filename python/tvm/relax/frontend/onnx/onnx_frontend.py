@@ -46,7 +46,6 @@ from tvm.ir import IRModule
 from tvm.ir.supply import NameSupply
 from tvm.relax import testing
 from tvm.relax.frontend.common import attach_span, emit_te_with_span
-from tvm.script import relax as R
 
 
 def get_type(elem_type: Union[str, int]) -> str:
@@ -207,8 +206,7 @@ class Unsqueeze(OnnxOpConverter):
 
     @classmethod
     def _impl_v11(cls, bb, inputs, attr):
-        axes = attr.get("axes")
-        axes = [axis for axis in axes]
+        axes = list(attr.get("axes"))
         inputs = inputs + [relax.const(axes, "int64")]
         return cls._impl_v13(bb, inputs, attr)
 
