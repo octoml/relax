@@ -208,7 +208,9 @@ class Unsqueeze(OnnxOpConverter):
     @classmethod
     def _impl_v11(cls, bb, inputs, attr):
         axes = attr.get("axes")
-        return attach_span(relax.op.expand_dims(inputs[0], axes))
+        axes = [axis for axis in axes]
+        inputs = inputs + [relax.const(axes, "int64")]
+        return cls._impl_v13(bb, inputs, attr)
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
@@ -625,6 +627,10 @@ class Squeeze(OnnxOpConverter):
         axis = inputs[1]
         if axis is not None:
             axis = [int(x) for x in inputs[1].data.numpy()]
+        # If data is constant, perform computation directly.
+        if isinstance(inputs[0], relax.Constant):
+            out_data = _np.squeeze(inputs[0].data.numpy(), axis)
+            return relax.const(out_data, inputs[0].struct_info.dtype)
         return attach_span(relax.op.squeeze(inputs[0], axis))
 
 
@@ -874,6 +880,13 @@ class Slice(OnnxOpConverter):
             steps = steps.data.numpy().tolist()
         else:
             steps = [1] * len(axes)
+        # If input is a shape tensor, we can directly extract it.
+        if isinstance(data, relax.ShapeExpr):
+            shape_data = [dim.value for dim in data]
+            # Starts, ends, and steps must be 1-d for shape operation.
+            assert all(len(i) == 1 for i in [starts, ends, steps])
+            sliced_values = shape_data[starts[0] : ends[0] : steps[0]]
+            return relax.const(sliced_values, "int64")
         return emit_te_with_span(
             bb, topi.strided_slice, data, starts, ends, strides=steps, axes=axes
         )
@@ -939,8 +952,17 @@ class Expand(OnnxOpConverter):
 
         # If possible, directly expand to constant shape.
         if isinstance(shape, relax.Constant):
-            new_shape = relax.ShapeExpr(shape.data.numpy().tolist())
-            return relax.op.broadcast_to(data, new_shape)
+            new_shape = shape.data.numpy().tolist()
+            # For some reason, onnx allows target shapes to be smaller than input shapes.
+            # We need to go correct it.
+            data_shape = [dim.value for dim in data.struct_info.shape]
+            for i, s in enumerate(new_shape):
+                if s < data_shape[i]:
+                    new_shape[i] = data_shape[i]
+            # If the new shape matches the input shape, no transformation is needed.
+            if new_shape == data_shape:
+                return data
+            return relax.op.broadcast_to(data, relax.ShapeExpr(new_shape))
 
         # Otherwise handle dynamic shapes.
         shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
@@ -1881,7 +1903,7 @@ class ONNXGraphImporter:
             # Perform special handling for shape expressions. If an input is a
             # shape expr, make sure the current op can handle it, otherwise
             # convert it to a tensor.
-            shape_compatible_ops = ["Reshape", "ConstantOfShape", "Gather"]
+            shape_compatible_ops = ["Reshape", "ConstantOfShape", "Gather", "Slice"]
             for i, inp in enumerate(inputs):
                 if inp is not None and isinstance(inp.struct_info, relax.ShapeStructInfo):
                     # Check if the current op supports shape expressions.
