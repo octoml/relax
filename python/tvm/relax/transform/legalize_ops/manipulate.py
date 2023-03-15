@@ -18,11 +18,38 @@
 """Default legalization function for manipulate operators."""
 import logging
 
+import numpy as np
 import tvm
 from tvm import topi, tir, relax, te
 from ...block_builder import BlockBuilder
 from ...expr import Call, Expr, Var, Tuple, TupleGetItem
 from .common import TEFunc, LegalizeFunc, register_legalize
+
+
+def _convert_special_values(old_shape: relax.ShapeExpr, new_shape: relax.ShapeExpr) -> relax.ShapeExpr:
+    new_shape_vals = []
+    # Start by replacing any 0s, which indicate to keep the corresponding old shape dim.
+    for i, dim in enumerate(new_shape):
+        new_dim = dim
+        if dim == 0:
+            new_dim = old_shape[i].value
+        new_shape_vals.append(new_dim)
+    # Next deduce the proper value for any -1s in new shape.
+    if -1 in new_shape:
+        old_prod = np.prod(old_shape)
+        new_prod = 1
+        for dim in new_shape:
+            if dim != -1:
+                new_prod *= dim
+        pos_dim = old_prod // new_prod
+        # Replace the appropriate dimension.
+        found_special = False
+        for i, dim in enumerate(new_shape):
+            if dim == -1:
+                assert not found_special, "Only one dim in new_shape can be -1."
+                found_special = True
+                new_shape_vals[i] = pos_dim
+    return relax.ShapeExpr(new_shape_vals)
 
 
 def _reshape(
@@ -32,6 +59,9 @@ def _reshape(
         tgt_shape = call.args[1].struct_info.shape if is_collapse_sum_like else call.args[1]
         if isinstance(tgt_shape, Var):
             tgt_shape = bb.lookup_binding(tgt_shape)
+        # Convert special values to positive integers.
+        if isinstance(tgt_shape, relax.ShapeExpr):
+            tgt_shape = _convert_special_values(call.args[0].struct_info.shape, tgt_shape)
         return bb.call_te(te_func, call.args[0], tgt_shape, primfunc_name_hint=primfunc_name)
 
     return reshape_call_te
@@ -90,7 +120,7 @@ def _expand_dims(bb: BlockBuilder, call: Call) -> Expr:
 
 @register_legalize("relax.flatten")
 def _flatten(bb: BlockBuilder, call: Call) -> Expr:
-    return bb.call_te(topi.reshape, call.args[0], call.struct_info.shape.values)
+    return bb.call_te(topi.reshape, call.args[0], bb.normalize(call).struct_info.shape.values)
 
 
 @register_legalize("relax.permute_dims")

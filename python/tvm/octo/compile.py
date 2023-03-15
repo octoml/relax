@@ -138,10 +138,9 @@ def compile(
 
     # Convert model into a relax module.
     relax_mod = load_onnx_model(model, shape_dict)
-
     # Perform constant folding where possible.
-    c_mod = relax.transform.FoldConstant()(relax_mod)
     breakpoint()
+    relax_mod = relax.transform.FoldConstant()(relax_mod)
 
     # Extract information about input shapes and types so we can
     # randomly generate them later if needed.

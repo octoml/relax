@@ -362,8 +362,8 @@ def test_gemm(alpha, beta, useC):
 def test_reshape(dynamic, in_shape, shape, out_shape):
     reshape_node = helper.make_node("Reshape", ["data", "shape"], ["reshaped"])
     if dynamic:
-        if -1 in shape:
-            pytest.skip()
+        #if -1 in shape:
+        #    pytest.skip()
 
         graph = helper.make_graph(
             [reshape_node],
