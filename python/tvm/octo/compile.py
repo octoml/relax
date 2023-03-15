@@ -86,9 +86,9 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> Tuple[tvm.I
         found and annotated. Next, those subgraphs are compiled using nvcc.
         The result is a graph containing a mixture of relax operators
         and external calls to the compiled cutlass kernels.
-    schedule_map : Dict[str, List[Tuple[int, str]]]
+    schedule_map : Dict[str, List[Tuple[str, str]]]
         A dictionary mapping framework op names to a list of tuples. Each tuple
-        contains a relax op id and the schedule that was applied to it.
+        contains a relax op name and id, and the schedule that was applied to it.
     """
     # Extract the sm version of the current target.
     assert target.arch, "Target architecture must be specified."
@@ -115,7 +115,7 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> Tuple[tvm.I
     return mod, schedule_map
 
 
-def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[int, str]]]:
+def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[str, str]]]:
     """Constructs a mapping from framework op names to a corresponding list of
     relax ops and how they were scheduled.
 
@@ -126,9 +126,9 @@ def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[int, str]]
 
     Returns
     -------
-    schedule_map : Dict[str, List[Tuple[int, str]]]
+    schedule_map : Dict[str, List[Tuple[str, str]]]
         A dictionary mapping framework op names to a list of tuples. Each tuple
-        contains a relax op id and the schedule that was applied to it.
+        contains a relax op name and id, and the schedule that was applied to it.
     """
 
     def maybe_decode_multiple_spans(span: tvm.ir.Span) -> List[tvm.ir.Span]:
