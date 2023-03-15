@@ -324,10 +324,10 @@ class Gather(OnnxOpConverter):
         scalar_indices = False
         if indices.struct_info.ndim == 0:
             scalar_indices = True
-            indices = bb.normalize(relax.op.expand_dims(indices, axis=0))
+            indices = bb.normalize(attach_span(relax.op.expand_dims(indices, axis=0)))
 
         if indices.struct_info.ndim == 1:
-            out = relax.op.take(data, indices, axis)
+            out = attach_span(relax.op.take(data, indices, axis))
             # If indices were scalar, output dimension needs to be reduced.
             if scalar_indices:
                 out = relax.op.squeeze(out, axis)
@@ -339,10 +339,14 @@ class Gather(OnnxOpConverter):
         ), "Only up to 2D indices are currently supported for Gather."
         outputs = []
         for i in range(indices.struct_info.shape[0].value):
-            index = relax.op.flatten(relax.op.take(indices, relax.const([i], "int64"), axis=0))
+            index = attach_span(
+                relax.op.flatten(
+                    attach_span(relax.op.take(indices, relax.const([i], "int64"), axis=0))
+                )
+            )
             # Use the slice of index to compute a partial gather.
-            partial_output = relax.op.take(data, index, axis)
-            outputs.append(relax.op.expand_dims(partial_output, axis=0))
+            partial_output = attach_span(relax.op.take(data, index, axis))
+            outputs.append(attach_span(relax.op.expand_dims(partial_output, axis=0)))
         # Concatenate sub expressions and return.
         return attach_span(relax.op.concat(outputs, axis=0))
 
