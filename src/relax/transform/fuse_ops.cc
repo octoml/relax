@@ -480,7 +480,7 @@ class FunctionCreator : public ExprMutator {
    *
    * The format of the combined span is:
    * - SourceName:
-   *          0xABCD
+   *          0xMULSPAN!
    *          Converter1(converter_index1)[Op1(op_index1),...,OpN(op_indexN)];
    *          Converter2(converter_index2)[Op1(op_index1),...,OpM(op_indexM)];
    *          ...;
@@ -491,7 +491,7 @@ class FunctionCreator : public ExprMutator {
    * \return The created span.
    */
   Span CreateSpanForCallSite() {
-    String source_name = "0xABCD";
+    String source_name = "0xMULSPAN!";
     int line = std::numeric_limits<int>::max();
     int end_line = std::numeric_limits<int>::min();
 

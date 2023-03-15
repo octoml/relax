@@ -102,23 +102,23 @@ def test_construct_schedule_map():
 
     assert len(schedule_map["Add(0)"]) == 1
     pair = schedule_map["Add(0)"][0]
-    assert pair[0] == 0
+    assert pair[0] == "relax.add(0)"
     assert pair[1] == "native"
 
     assert len(schedule_map["MatMul(1)"]) == 1
     pair = schedule_map["MatMul(1)"][0]
-    assert pair[0] == 0
+    assert pair[0] == "relax.matmul(0)"
     assert pair[1] == "cutlass"
 
     assert len(schedule_map["Gemm(3)"]) == 2
     pair = schedule_map["Gemm(3)"][0]
-    assert pair[0] == 0
+    assert pair[0] == "relax.matmul(0)"
     assert pair[1] == "cutlass"
     pair = schedule_map["Gemm(3)"][1]
-    assert pair[0] == 1
+    assert pair[0] == "relax.add(1)"
     assert pair[1] == "cutlass"
 
     assert len(schedule_map["Div(2)"]) == 1
     pair = schedule_map["Div(2)"][0]
-    assert pair[0] == 0
+    assert pair[0] == "relax.divide(0)"
     assert pair[1] == "native"

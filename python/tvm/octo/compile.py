@@ -140,11 +140,11 @@ def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[int, str]]
         if span is None:
             return []
         source = str(span.source_name.name)
-        # If the source does not start with 0xABCD then this is a single span
-        if not source.startswith("0xABCD"):
-            return [span]
-        # Skip the 0xABCD prefix
-        source = source[6:]
+        # If the source does not start with 0xMULSPAN! then this is a single span
+        if not source.startswith("0xMULSPAN!"):
+            return [(span, False)]
+        # Skip the 0xMULSPAN! prefix
+        source = source[10:]
         spans = []
         # Split source by ;
         for encoded_span in source.split(";"):
@@ -159,12 +159,20 @@ def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[int, str]]
             ops = encoded_span[encoded_span.index("[") + 1 : encoded_span.index("]")]
             # Split ops by ,
             for op in ops.split(","):
+                # Extract the op name.
+                op_name = op[: op.index("(")]
                 # Extract the op index.
                 op_index = int(op[op.index("(") + 1 : op.index(")")])
 
                 # Create a new span and add it to the list.
+                source_string = converter_name + ";" + op_name
                 spans.append(
-                    tvm.ir.Span(tvm.ir.SourceName(converter_name), converter_index, 0, op_index, 0)
+                    (
+                        tvm.ir.Span(
+                            tvm.ir.SourceName(source_string), converter_index, 0, op_index, 0
+                        ),
+                        True,
+                    )
                 )
 
         return spans
@@ -173,13 +181,30 @@ def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[int, str]]
         """Checks if the given relax op is offloaded to a framework.
         Returns "native" if not.
         """
-        if op.op in mod.functions.keys():
-            func = mod.functions[op.op]
-            if isinstance(func, relax.Function):
-                if "Codegen" in func.attrs.keys():
-                    return func.attrs["Codegen"]
+        call_tir_op = tvm.relay.op.get("relax.call_tir")
+        assert op.op != call_tir_op, "call_tir should not be in the IRModule at this point."
+        assert isinstance(
+            op.op, (tvm.ir.GlobalVar, tvm.ir.Op)
+        ), "Expecting op to be an Op or GlobalVar."
+
+        target_name = get_op_name(op)
+        function_names = [var.name_hint for var in mod.get_global_vars()]
+
+        if target_name in function_names:
+            func = mod[target_name]
+            if isinstance(func, relax.Function) and "Codegen" in func.attrs.keys():
+                return func.attrs["Codegen"]
 
         return "native"
+
+    def get_op_name(call: relax.Call) -> str:
+        """Returns the name of target of this call."""
+        if isinstance(call.op, tvm.ir.Op):
+            return call.op.name
+        elif isinstance(call.op, tvm.ir.GlobalVar):
+            return call.op.name_hint
+        else:
+            raise ValueError("Expecting call.op to be an Op or GlobalVar.")
 
     framework_op_to_relax_op = {}
 
@@ -194,14 +219,22 @@ def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[int, str]]
             offload_type = get_offload_type(mod, call)
             spans = maybe_decode_multiple_spans(call.span)
 
-            for span in spans:
-                converter_name_and_index = str(span.source_name.name) + "(" + str(span.line) + ")"
+            for span, from_multi_span in spans:
+                if not from_multi_span:
+                    # This is not a fused span. Get the op name from the call node.
+                    op_name = get_op_name(call)
+                    converter_name = str(span.source_name.name)
+                else:
+                    converter_name, op_name = str(span.source_name.name).split(";")
+
+                converter_name_and_index = converter_name + "(" + str(span.line) + ")"
                 if converter_name_and_index not in framework_op_to_relax_op.keys():
                     framework_op_to_relax_op[converter_name_and_index] = []
 
+                op_and_index = op_name + "(" + str(span.column) + ")"
                 # Column is the index of the relax op in the converter.
                 framework_op_to_relax_op[converter_name_and_index].append(
-                    (span.column, offload_type)
+                    (op_and_index, offload_type)
                 )
 
             super().visit_call_(call)
