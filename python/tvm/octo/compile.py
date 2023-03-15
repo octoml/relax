@@ -141,6 +141,8 @@ def compile(
         else:
             target = get_llvm_target()
         print(f"Auto-selected target {target}")
+    if isinstance(target, str):
+        target = tvm.target.Target(target)
 
     # Convert model into a relax module.
     relax_mod = load_onnx_model(model, shape_dict)
@@ -154,12 +156,12 @@ def compile(
         input_info[inp.name_hint] = (input_shape, input_dtype)
 
     # If target is gpu and compiled with Cutlass, offload where possible.
-    # if target.kind.name == "cuda":
-    #    if tvm.get_global_func("relax.ext.cutlass", True):
-    #        # Match subgraphs that can be offloaded to cutlass and offload them.
-    #        relax_mod = offload_cutlass(relax_mod, target)
-    #    else:
-    #        print("Cutlass backend not detected. Consider enabling it for better performance.")
+    if target.kind.name == "cuda":
+        if tvm.get_global_func("relax.ext.cutlass", True):
+            # Match subgraphs that can be offloaded to cutlass and offload them.
+            relax_mod = offload_cutlass(relax_mod, target)
+        else:
+            print("Cutlass backend not detected. Consider enabling it for better performance.")
 
     # Perform legalization to lower Relax operators.
     relax_mod = relax.transform.LegalizeOps()(relax_mod)
