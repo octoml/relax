@@ -19,6 +19,7 @@
 from pathlib import Path
 from typing import Union, Optional, Dict, List
 import onnx
+import onnx_graphsurgeon as gs
 import tvm
 from tvm import relax
 from tvm.relax.frontend.onnx import from_onnx
@@ -54,6 +55,11 @@ def load_onnx_model(
         assert isinstance(
             model_file, onnx.ModelProto
         ), f"model_file must be one of (str, Path, onnx.ModelProto) but got {type(model_file)})"
+
+    # Make sure nodes are topologically sorted.
+    sorted_graph = gs.import_onnx(model_file)
+    sorted_graph.toposort()
+    model_file = gs.export_onnx(sorted_graph)
 
     # Convert the graph into a relax implementation.
     relax_mod = from_onnx(model_file, shape_dict=shape_dict)
@@ -135,6 +141,8 @@ def compile(
         else:
             target = get_llvm_target()
         print(f"Auto-selected target {target}")
+    if isinstance(target, str):
+        target = tvm.target.Target(target)
 
     # Convert model into a relax module.
     relax_mod = load_onnx_model(model, shape_dict)

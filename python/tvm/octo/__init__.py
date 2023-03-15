@@ -18,5 +18,5 @@
 """OctoML Simplified API utilities."""
 
 from . import utils
-from .compile import compile
+from .compile import compile, load_onnx_model
 from .octo_model import OctoModel
