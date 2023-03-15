@@ -578,7 +578,7 @@ class Erf(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         x = inputs[0]
-        sqrt2 = attach_span(relax.op.sqrt(relax.const(2, x.struct_info.dtype)))
+        sqrt2 = relax.const(_np.sqrt(2), x.struct_info.dtype)
         # TODO: replace with erf operator once it is implemented
         mul = attach_span(relax.op.multiply(x, sqrt2))
         gelu = attach_span(relax.op.nn.gelu(mul))

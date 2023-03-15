@@ -51,9 +51,17 @@ def _te_variance(x: te.Tensor, axis: List[tir.IntImm], keepdims: bool) -> te.Ten
 
 @register_legalize("relax.mean")
 def _mean(bb: BlockBuilder, call: Call) -> Expr:
-    return bb.call_te(
-        _te_mean, call.args[0], call.attrs.axis, call.attrs.keepdims, primfunc_name_hint="mean"
+    # Reductions often overflow fp16 values. If we encounter one, just cast to fp32.
+    data = call.args[0]
+    original_dtype = call.args[0].struct_info.dtype
+    if original_dtype == "float16":
+        data = bb.normalize(bb.emit_te(topi.cast, data, "float32"))
+    output = bb.normalize(
+        bb.call_te(_te_mean, data, call.attrs.axis, call.attrs.keepdims, primfunc_name_hint="mean")
     )
+    if output.struct_info.dtype != original_dtype:
+        output = bb.emit_te(topi.cast, output, original_dtype)
+    return output
 
 
 @register_legalize("relax.std")
@@ -68,13 +76,23 @@ def _std(bb: BlockBuilder, call: Call) -> Expr:
 
 @register_legalize("relax.variance")
 def _variance(bb: BlockBuilder, call: Call) -> Expr:
-    return bb.call_te(
-        _te_variance,
-        call.args[0],
-        call.attrs.axis,
-        call.attrs.keepdims,
-        primfunc_name_hint="variance",
+    # Reductions often overflow fp16 values. If we encounter one, just cast to fp32.
+    data = call.args[0]
+    original_dtype = call.args[0].struct_info.dtype
+    if original_dtype == "float16":
+        data = bb.normalize(bb.emit_te(topi.cast, data, "float32"))
+    output = bb.normalize(
+        bb.call_te(
+            _te_variance,
+            data,
+            call.attrs.axis,
+            call.attrs.keepdims,
+            primfunc_name_hint="variance",
+        )
     )
+    if output.struct_info.dtype != original_dtype:
+        output = bb.emit_te(topi.cast, output, original_dtype)
+    return output
 
 
 register_legalize("relax.max", _statistical(topi.max))
