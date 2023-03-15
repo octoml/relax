@@ -398,8 +398,6 @@ class Reshape(OnnxOpConverter):
             return relax.const(out, out.dtype)
         if isinstance(inputs[1], relax.Constant):
             new_shape = inputs[1].data.numpy().tolist()
-        elif not isinstance(new_shape.struct_info, relax.ShapeStructInfo):
-            new_shape = relax.op.tensor_to_shape(new_shape)
         out = relax.op.reshape(data, new_shape)
         return attach_span(out)
 
@@ -730,6 +728,9 @@ class Neg(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        if isinstance(inputs[0], relax.Constant):
+            data_np = inputs[0].data.numpy()
+            return relax.const(_np.negative(data_np), inputs[0].struct_info.dtype)
         return attach_span(relax.op.negative(inputs[0]))
 
 
@@ -1905,15 +1906,12 @@ class ONNXGraphImporter:
             # convert it to a tensor.
             shape_compatible_ops = ["Reshape", "ConstantOfShape", "Gather", "Slice"]
             for i, inp in enumerate(inputs):
-                if inp is not None and isinstance(inp.struct_info, relax.ShapeStructInfo):
-                    # Check if the current op supports shape expressions.
-                    # and cast to a tensor if not.
-                    if op_name not in shape_compatible_ops:
-                        inputs[i] = R.call_packed(
-                            "shape_to_tensor",
-                            inp,
-                            sinfo_args=R.Tensor([inp.struct_info.ndim], "int64"),
-                        )
+                if (
+                    inp is not None
+                    and isinstance(inp.struct_info, relax.ShapeStructInfo)
+                    and op_name not in shape_compatible_ops
+                ):
+                    raise ValueError(f"Node {node.name} cannot handle ShapeExpr inputs.")
 
             op = self._convert_operator(op_name, node_index, inputs, attr, self.opset)
             # Create struct information for the new operator.
