@@ -46,6 +46,7 @@ from tvm.ir import IRModule
 from tvm.ir.supply import NameSupply
 from tvm.relax import testing
 from tvm.relax.frontend.common import attach_span, emit_te_with_span
+from tvm.script import relax as R
 
 
 def get_type(elem_type: Union[str, int]) -> str:
@@ -166,6 +167,9 @@ class Div(OnnxOpConverter):
 
     @classmethod
     def _impl_v14(cls, bb, inputs, attr):
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            output = inputs[0].data.numpy() / inputs[1].data.numpy()
+            return relax.const(output, inputs[0].struct_info.dtype)
         return attach_span(relax.op.divide(inputs[0], inputs[1]))
 
 
@@ -192,6 +196,9 @@ class Transpose(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         axes = attr.get("perm", None)
+        if isinstance(inputs[0], relax.Constant):
+            output = _np.transpose(inputs[0].data.numpy(), axes)
+            return relax.const(output, output.dtype)
         return attach_span(relax.op.permute_dims(inputs[0], axes))
 
 
@@ -207,6 +214,20 @@ class Unsqueeze(OnnxOpConverter):
     def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
         axes = inputs[1]
+
+        # If input is a constant, compute directly
+        if isinstance(data, relax.Constant) and isinstance(axes, relax.Constant):
+            axes = axes.data.numpy().tolist()
+            expanded = data.data.numpy()
+            if len(expanded.shape) == 0:
+                # Special case implying input is a scalar, wrap it as a list.
+                if 0 in axes:
+                    axes.remove(0)
+                expanded = [expanded]
+            for axis in axes:
+                expanded = _np.expand_dims(expanded, axis=axis)
+            return relax.const(expanded, data.struct_info.dtype)
+
         if isinstance(axes, relax.Constant):
             constant_axes = list(axes.data.numpy())
             constant_axes = list(map(int, constant_axes))
@@ -224,6 +245,14 @@ class Concat(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         axis = attr.get("axis", 0)
+        # If all inputs are constant, perform computation directly.
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            const_inputs = []
+            for inp in inputs:
+                const_inputs.append(inp.data.numpy())
+            out = _np.concatenate(const_inputs, axis=axis)
+            dtype = inputs[0].struct_info.dtype
+            return relax.const(out, dtype)
         return attach_span(relax.op.concat(inputs, axis=axis))
 
 
@@ -232,6 +261,9 @@ class Add(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            output = inputs[0].data.numpy() + inputs[1].data.numpy()
+            return relax.const(output, output.dtype)
         return attach_span(relax.op.add(inputs[0], inputs[1]))
 
 
@@ -240,6 +272,9 @@ class Mul(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            output = inputs[0].data.numpy() * inputs[1].data.numpy()
+            return relax.const(output, output.dtype)
         return attach_span(relax.op.multiply(inputs[0], inputs[1]))
 
 
@@ -249,6 +284,9 @@ class Cast(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         to_type = get_type(attr["to"])
+        if isinstance(inputs[0], relax.Constant):
+            output = inputs[0].data.numpy().astype(to_type)
+            return relax.const(output, to_type)
         return attach_span(relax.op.astype(inputs[0], to_type))
 
 
@@ -260,18 +298,53 @@ class Gather(OnnxOpConverter):
         # Unpack inputs
         data = inputs[0]
         indices = inputs[1]
-        # Indices must be rank 1, if we're given a scalar, expand it.
-        scalar_indices = False
-        if len(indices.struct_info.shape) == 0:
-            scalar_indices = True
-            indices = bb.normalize(attach_span(relax.op.expand_dims(indices, axis=0)))
-
         axis = attr.get("axis", 0)
-        out = attach_span(relax.op.take(data, indices, axis))
-        # If indices were scalar, output dimension needs to be reduced.
-        if scalar_indices:
-            out = attach_span(relax.op.squeeze(out, axis))
-        return out
+
+        # If all inputs are constant, we can compute directly.
+        if all([isinstance(inp, relax.Constant) for inp in [data, indices]]):
+            output = _np.take(data.data.numpy(), indices.data.numpy(), axis=axis)
+            return relax.const(output, output.dtype)
+
+        # If input is a shape expression, take a value from that shape and return it as a constant.
+        if isinstance(data, relax.ShapeExpr):
+            assert isinstance(
+                indices, relax.Constant
+            ), "Only constant indices supported for shape gather."
+            np_index = indices.data.numpy()
+            if len(np_index.shape) == 1:
+                np_index = np_index[0]
+            np_index = int(np_index)
+            shape_val = data[np_index]
+            if hasattr(shape_val, "value"):
+                return relax.const(shape_val.value, dtype="int64")
+            else:
+                raise ValueError("Need to fix this case.")
+
+        # Indices must be at least rank 1, if we're given a scalar, expand it.
+        scalar_indices = False
+        if indices.struct_info.ndim == 0:
+            scalar_indices = True
+            indices = bb.normalize(relax.op.expand_dims(indices, axis=0))
+
+        if indices.struct_info.ndim == 1:
+            out = relax.op.take(data, indices, axis)
+            # If indices were scalar, output dimension needs to be reduced.
+            if scalar_indices:
+                out = relax.op.squeeze(out, axis)
+            return attach_span(out)
+
+        # If indices is larger than rank 1, we must perform multiple gathers and concatenate them.
+        assert (
+            len(indices.struct_info.shape) == 2
+        ), "Only up to 2D indices are currently supported for Gather."
+        outputs = []
+        for i in range(indices.struct_info.shape[0].value):
+            index = relax.op.flatten(relax.op.take(indices, relax.const([i], "int64"), axis=0))
+            # Use the slice of index to compute a partial gather.
+            partial_output = relax.op.take(data, index, axis)
+            outputs.append(relax.op.expand_dims(partial_output, axis=0))
+        # Concatenate sub expressions and return.
+        return attach_span(relax.op.concat(outputs, axis=0))
 
 
 class Gemm(OnnxOpConverter):
@@ -314,9 +387,15 @@ class Reshape(OnnxOpConverter):
     def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
         new_shape = inputs[1]
+        if isinstance(data, relax.Constant) and isinstance(new_shape, relax.Constant):
+            out = _np.reshape(data.data.numpy(), new_shape.data.numpy().tolist())
+            return relax.const(out, out.dtype)
         if isinstance(inputs[1], relax.Constant):
             new_shape = inputs[1].data.numpy().tolist()
-        return attach_span(relax.op.reshape(data, new_shape))
+        elif not isinstance(new_shape.struct_info, relax.ShapeStructInfo):
+            new_shape = relax.op.tensor_to_shape(new_shape)
+        out = relax.op.reshape(data, new_shape)
+        return attach_span(out)
 
 
 class Gelu(OnnxOpConverter):
@@ -347,6 +426,10 @@ class Where(OnnxOpConverter):
 
     @classmethod
     def _impl_v16(cls, bb, inputs, attr):
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            np_inputs = [inp.data.numpy() for inp in inputs]
+            output = _np.where(*np_inputs)
+            return relax.const(output, output.dtype)
         return attach_span(relax.op.where(inputs[0], inputs[1], inputs[2]))
 
 
@@ -368,6 +451,9 @@ class Equal(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            output = inputs[0].data.numpy() == inputs[1].data.numpy()
+            return relax.const(output, output.dtype)
         return attach_span(relax.op.equal(inputs[0], inputs[1]))
 
 
@@ -376,13 +462,14 @@ class Shape(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        # See if we can extract a constant shape.
-        if all(["int" in i.dtype for i in inputs[0].struct_info.shape]):
-            # If so, return the shape as a constant.
-            data_shape = [i.value for i in inputs[0].struct_info.shape]
-            return relax.const(data_shape, "int64")
-        # Otherwise compute it dynamically.
-        return attach_span(relax.op.shape_of(inputs[0]))
+        data_info = inputs[0].struct_info
+
+        # If no shape is defined in the struct info, it must be computed at runtime.
+        if not data_info.shape:
+            data_shape = bb.normalize(relax.op.shape_of(inputs[0]))
+            return data_shape
+
+        return data_info.shape
 
 
 class Not(OnnxOpConverter):
@@ -430,7 +517,11 @@ class Conv(OnnxOpConverter):
 
     @classmethod
     def _impl_v11(cls, bb, inputs, attr):
-        ndim = len(inputs[0].struct_info.shape)
+        if hasattr(inputs[0].struct_info, "ndim"):
+            ndim = inputs[0].struct_info.ndim
+        else:
+            ndim = len(inputs[0].struct_info.shape)
+
         if ndim == 3:
             conv_out = emit_te_with_span(
                 bb,
@@ -559,28 +650,42 @@ class ConstantOfShape(OnnxOpConverter):
     @classmethod
     def _impl_v9(cls, bb, inputs, attr):
         shape = inputs[0]
-        shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
         value = get_numpy(attr.get("value", 0))
         if isinstance(value, _np.ndarray):
             dtype = str(value.dtype)
         else:
             dtype = "float32"
+
+        # If shape is a constant, we can directly create a relax constant.
+        if isinstance(shape, relax.Constant):
+            np_array = _np.zeros(shape=shape.data.numpy()) + value
+            return relax.const(np_array, dtype=dtype)
+        elif isinstance(shape, relax.ShapeExpr):
+            np_array = _np.zeros(shape=[dim.value for dim in shape]) + value
+            return relax.const(np_array, dtype)
+
+        # Otherwise we have to use the value of shape at runtime.
         # Create a constant for the new value.
         const_value = relax.const(value, dtype)
 
-        # Broadcast the constant to the input shape.
-        shape_dataflow_var = bb.emit(
-            relax.Call(
-                relax.ExternFunc("vm.builtin.tensor_to_shape"),
-                [shape],
-                sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)],
+        # Convert to shape expression if needed.
+        if not isinstance(shape.struct_info, relax.ShapeStructInfo):
+            shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
+            # Broadcast the constant to the input shape.
+            shape_dataflow_var = bb.emit(
+                relax.Call(
+                    relax.ExternFunc("vm.builtin.tensor_to_shape"),
+                    [shape],
+                    sinfo_args=[relax.ShapeStructInfo(ndim=shape_ndim)],
+                )
             )
-        )
-        shape_vars = []
-        for i in range(shape_ndim):
-            shape_vars.append(tvm.tir.Var("x_%d" % i, "int64"))
-        bb.match_cast(shape_dataflow_var, relax.ShapeStructInfo(shape_vars))
-        return attach_span(relax.op.broadcast_to(const_value, relax.ShapeExpr(shape_vars)))
+            shape_vars = []
+            for i in range(shape_ndim):
+                shape_vars.append(tvm.tir.Var("x_%d" % i, "int64"))
+            bb.match_cast(shape_dataflow_var, relax.ShapeStructInfo(shape_vars))
+            shape = relax.ShapeExpr(shape_vars)
+
+        return attach_span(relax.op.broadcast_to(const_value, shape))
 
 
 class Sub(OnnxOpConverter):
@@ -588,6 +693,9 @@ class Sub(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            output = inputs[0].data.numpy() - inputs[1].data.numpy()
+            return relax.const(output, output.dtype)
         return attach_span(relax.op.subtract(inputs[0], inputs[1]))
 
 
@@ -620,6 +728,9 @@ class Abs(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        if isinstance(inputs[0], relax.Constant):
+            output = _np.abs(inputs[0].data.numpy())
+            return relax.const(output, output.dtype)
         return attach_span(relax.op.abs(inputs[0]))
 
 
@@ -628,6 +739,11 @@ class Min(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            np_inputs = [inp.data.numpy() for inp in inputs]
+            output = _np.minimum(*np_inputs)
+            return relax.const(output, output.dtype)
+
         # Expand inputs, stack them, then perform minimum over the new axis.
         inputs = [bb.normalize(attach_span(relax.op.expand_dims(i, axis=0))) for i in inputs]
         stacked_tensor = attach_span(relax.op.concat(inputs, axis=0))
@@ -639,6 +755,11 @@ class Max(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            np_inputs = [inp.data.numpy() for inp in inputs]
+            output = _np.maximum(*np_inputs)
+            return relax.const(output, output.dtype)
+
         # Expand inputs, stack them, then perform maximum over the new axis.
         inputs = [bb.normalize(attach_span(relax.op.expand_dims(i, axis=0))) for i in inputs]
         stacked_tensor = attach_span(relax.op.concat(inputs, axis=0))
@@ -650,6 +771,8 @@ class Log(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        if isinstance(inputs[0], relax.Constant):
+            return relax.const(_np.log(inputs[0].data.numpy()), inputs[0].struct_info.dtype)
         return attach_span(relax.op.log(inputs[0]))
 
 
@@ -658,6 +781,9 @@ class Less(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            output = _np.less(inputs[0].data.numpy(), inputs[1].data.numpy())
+            return relax.const(output, output.dtype)
         return attach_span(relax.op.less(inputs[0], inputs[1]))
 
 
@@ -666,6 +792,9 @@ class LessOrEqual(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            output = _np.less_equal(inputs[0].data.numpy(), inputs[1].data.numpy())
+            return relax.const(output, output.dtype)
         return attach_span(relax.op.less_equal(inputs[0], inputs[1]))
 
 
@@ -733,6 +862,10 @@ class Slice(OnnxOpConverter):
             axes = axes.data.numpy().tolist()
         else:
             axes = list(range(len(starts)))
+        # Convert negative axis to positive if needed.
+        for i, axis in enumerate(axes):
+            if axis < 0:
+                axes[i] = axis + len(data.struct_info.shape)
         if steps is not None:
             steps = steps.data.numpy().tolist()
         else:
@@ -799,6 +932,13 @@ class Expand(OnnxOpConverter):
     def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
         shape = inputs[1]
+
+        # If possible, directly expand to constant shape.
+        if isinstance(shape, relax.Constant):
+            new_shape = relax.ShapeExpr(shape.data.numpy().tolist())
+            return relax.op.broadcast_to(data, new_shape)
+
+        # Otherwise handle dynamic shapes.
         shape_ndim = [dim.value for dim in shape.struct_info.shape.values][0]
         shape_dataflow_var = bb.emit(
             relax.Call(
@@ -1089,17 +1229,28 @@ class Range(OnnxOpConverter):
     """Converts an onnx Range node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v11(cls, bb, inputs, attr):
+    def _impl_v12(cls, bb, inputs, attr):
         start = inputs[0]
-        assert isinstance(start, relax.Constant), "Constant start required for range."
-        start = start.data.numpy().tolist()
         limit = inputs[1]
-        assert isinstance(limit, relax.Constant), "Constant limit required for range."
-        limit = limit.data.numpy().tolist()
         delta = inputs[2]
+        out_dtype = start.struct_info.dtype
+
+        if isinstance(start, relax.Constant):
+            start = start.data.numpy().tolist()
+
+        if isinstance(limit, relax.Constant):
+            limit = limit.data.numpy().tolist()
+
         assert isinstance(delta, relax.Constant), "Constant delta required for Range."
         step = delta.data.numpy().tolist()
-        return relax.const(_np.arange(start, limit, step, dtype=inputs[0].struct_info.dtype))
+
+        # If all inputs are constant, compute directly.
+        if isinstance(start, int) and isinstance(limit, int):
+            out_range = _np.arange(start=start, stop=limit, step=step)
+            return relax.const(out_range, out_dtype)
+
+        # Otherwise compute in graph.
+        return emit_te_with_span(bb, topi.arange, start, limit, step, out_dtype)
 
 
 class InstanceNormalization(OnnxOpConverter):
@@ -1445,9 +1596,10 @@ class Greater(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        x = inputs[0]
-        y = inputs[1]
-        return attach_span(relax.op.greater(x, y))
+        if all([isinstance(inp, relax.Constant) for inp in inputs]):
+            output = _np.greater(inputs[0].data.numpy(), inputs[1].data.numpy())
+            return relax.const(output, output.dtype)
+        return attach_span(relax.op.greater(inputs[0], inputs[1]))
 
 
 class Reciprocal(OnnxOpConverter):
@@ -1721,6 +1873,21 @@ class ONNXGraphImporter:
             attr["tvm_custom"] = {}
             attr["tvm_custom"]["name"] = i_name
             attr["tvm_custom"]["num_outputs"] = len(outputs)
+
+            # Perform special handling for shape expressions. If an input is a
+            # shape expr, make sure the current op can handle it, otherwise
+            # convert it to a tensor.
+            shape_compatible_ops = ["Reshape", "ConstantOfShape", "Gather"]
+            for i, inp in enumerate(inputs):
+                if inp is not None and isinstance(inp.struct_info, relax.ShapeStructInfo):
+                    # Check if the current op supports shape expressions.
+                    # and cast to a tensor if not.
+                    if op_name not in shape_compatible_ops:
+                        inputs[i] = R.call_packed(
+                            "shape_to_tensor",
+                            inp,
+                            sinfo_args=R.Tensor([inp.struct_info.ndim], "int64"),
+                        )
 
             op = self._convert_operator(op_name, node_index, inputs, attr, self.opset)
             # Create struct information for the new operator.
