@@ -181,8 +181,6 @@ def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[str, str]]
         """Checks if the given relax op is offloaded to a framework.
         Returns "native" if not.
         """
-        call_tir_op = tvm.relay.op.get("relax.call_tir")
-        assert op.op != call_tir_op, "call_tir should not be in the IRModule at this point."
         assert isinstance(
             op.op, (tvm.ir.GlobalVar, tvm.ir.Op)
         ), "Expecting op to be an Op or GlobalVar."
@@ -199,7 +197,10 @@ def construct_schedule_map(mod: tvm.IRModule) -> Dict[str, List[Tuple[str, str]]
 
     def get_op_name(call: relax.Call) -> str:
         """Returns the name of target of this call."""
-        if isinstance(call.op, tvm.ir.Op):
+        call_tir_op = tvm.relay.op.get("relax.call_tir")
+        if call.op == call_tir_op:
+            return call.args[0].name_hint
+        elif isinstance(call.op, tvm.ir.Op):
             return call.op.name
         elif isinstance(call.op, tvm.ir.GlobalVar):
             return call.op.name_hint
