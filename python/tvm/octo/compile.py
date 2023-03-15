@@ -19,6 +19,7 @@
 from pathlib import Path
 from typing import Union, Optional, Dict, List
 import onnx
+import onnx_graphsurgeon as gs
 import tvm
 from tvm import relax
 from tvm.relax.frontend.onnx import from_onnx
@@ -54,6 +55,11 @@ def load_onnx_model(
         assert isinstance(
             model_file, onnx.ModelProto
         ), f"model_file must be one of (str, Path, onnx.ModelProto) but got {type(model_file)})"
+
+    # Make sure nodes are topologically sorted.
+    sorted_graph = gs.import_onnx(model_file)
+    sorted_graph.toposort()
+    model_file = gs.export_onnx(sorted_graph)
 
     # Convert the graph into a relax implementation.
     relax_mod = from_onnx(model_file, shape_dict=shape_dict)
@@ -148,12 +154,12 @@ def compile(
         input_info[inp.name_hint] = (input_shape, input_dtype)
 
     # If target is gpu and compiled with Cutlass, offload where possible.
-    if target.kind.name == "cuda":
-        if tvm.get_global_func("relax.ext.cutlass", True):
-            # Match subgraphs that can be offloaded to cutlass and offload them.
-            relax_mod = offload_cutlass(relax_mod, target)
-        else:
-            print("Cutlass backend not detected. Consider enabling it for better performance.")
+    # if target.kind.name == "cuda":
+    #    if tvm.get_global_func("relax.ext.cutlass", True):
+    #        # Match subgraphs that can be offloaded to cutlass and offload them.
+    #        relax_mod = offload_cutlass(relax_mod, target)
+    #    else:
+    #        print("Cutlass backend not detected. Consider enabling it for better performance.")
 
     # Perform legalization to lower Relax operators.
     relax_mod = relax.transform.LegalizeOps()(relax_mod)
