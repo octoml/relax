@@ -62,7 +62,7 @@ StructInfo InferStructInfoBroadcastTo(const Call& call, const BlockBuilder& ctx)
   if (!data_sinfo->IsUnknownNdim() && !tgt_shape_sinfo->IsUnknownNdim() &&
       tgt_shape_sinfo->ndim < data_sinfo->ndim) {
     ctx->ReportFatal(Diagnostic::Error(call)
-                     << "broadcast_to expects the input shape to have the number of ndim at least"
+                     << "broadcast_to expects the input shape to have the number of ndim at least "
                         "as the input tensor's. However, the given tensor has ndim "
                      << data_sinfo->ndim << " while the target shape has ndim "
                      << tgt_shape_sinfo->ndim);
@@ -106,8 +106,7 @@ TVM_REGISTER_OP("relax.broadcast_to")
     .set_num_inputs(2)
     .add_argument("x", "Tensor", "The input tensor.")
     .add_argument("shape", "Shape", "The target shape.")
-    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoBroadcastTo)
-    .set_attr<FCallPacked>("FCallPacked", "relax.run.broadcast_to");
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoBroadcastTo);
 
 /* relax.concat */
 TVM_REGISTER_NODE_TYPE(ConcatAttrs);
@@ -522,8 +521,8 @@ Expr ConvertNewShapeToExpr(const Expr& data, const ObjectRef& shape) {
   CHECK(array != nullptr) << "Reshape only expects the input new shape to be either an Expr or an "
                              "Array of PrimExprs. However, the given new shape is "
                           << shape;
-  // Identify which, if any dimensions are special values that must be computed.
   int dim_to_infer = -1;
+  // Keep track of which dimensions should be copied from input.
   std::vector<int> zero_dims;
   for (int i = 0; i < static_cast<int>(array->size()); ++i) {
     const auto* _len = array->at(i).as<PrimExprNode>();
@@ -993,6 +992,179 @@ TVM_REGISTER_OP("relax.collapse_sum_to")
     .add_argument("data", "Tensor", "The input tensor.")
     .add_argument("shape", "Shape", "The shape to collapse to.")
     .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoCollapseSumTo);
+
+/* relax.repeat */
+TVM_REGISTER_NODE_TYPE(RepeatAttrs);
+
+Expr repeat(Expr data, int repeats, Optional<Integer> axis) {
+  auto attrs = make_object<RepeatAttrs>();
+  attrs->repeats = std::move(repeats);
+  attrs->axis = std::move(axis);
+
+  static const Op& op = Op::Get("relax.repeat");
+  return Call(op, {std::move(data)}, Attrs{attrs}, {});
+}
+
+TVM_REGISTER_GLOBAL("relax.op.repeat").set_body_typed(repeat);
+
+StructInfo InferStructInfoRepeat(const Call& call, const BlockBuilder& ctx) {
+  arith::Analyzer* analyzer = ctx->GetAnalyzer();
+  TensorStructInfo data_sinfo = GetUnaryInputTensorStructInfo(call, ctx);
+  const auto* attrs = call->attrs.as<RepeatAttrs>();
+  const auto* data_shape = data_sinfo->shape.as<ShapeExprNode>();
+
+  if (attrs->axis.defined() && !data_sinfo->IsUnknownNdim()) {
+    int axis = attrs->axis.value()->value;
+    int ndim = data_sinfo->ndim;
+    if (axis < -ndim || axis >= ndim) {
+      ctx->ReportFatal(
+          Diagnostic::Error(call)
+          << "Repeat requires the input axis belongs range "
+             "[-data.struct_info.ndim, data.struct_info.ndim - 1]. However, the input axis is "
+          << axis << ", while ndim is " << ndim);
+    }
+  }
+
+  if (data_shape == nullptr) {
+    if (attrs->axis.defined()) {
+      if (analyzer->CanProveEqual(attrs->repeats, 1)) {
+        // the shape does not changes
+        return data_sinfo;
+      } else {
+        return TensorStructInfo(data_sinfo->dtype, data_sinfo->ndim);
+      }
+    } else {
+      return TensorStructInfo(data_sinfo->dtype, 1);
+    }
+  }
+
+  if (!attrs->axis.defined()) {
+    PrimExpr new_shape =
+        analyzer->Simplify(ComputeShapeProduct(data_shape->values) * attrs->repeats);
+    return TensorStructInfo(ShapeExpr(Array<PrimExpr>({new_shape})), data_sinfo->dtype);
+  }
+
+  int axis = NormalizeAxis(call, ctx, data_sinfo->ndim, attrs->axis.value()->value);
+  auto shape_array = data_shape->values;
+  shape_array.Set(axis, analyzer->Simplify(shape_array[axis] * attrs->repeats));
+  return TensorStructInfo(ShapeExpr(shape_array), data_sinfo->dtype);
+}
+
+// TODO(relax-team): implement FRelaxInferLayout for repeat
+TVM_REGISTER_OP("relax.repeat")
+    .set_attrs_type<RepeatAttrs>()
+    .set_num_inputs(1)
+    .add_argument("data", "Tensor", "The input tensor.")
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoRepeat);
+
+/* relax.tile */
+TVM_REGISTER_NODE_TYPE(TileAttrs);
+
+Expr tile(Expr data, Array<Integer> repeats) {
+  auto attrs = make_object<TileAttrs>();
+  attrs->repeats = std::move(repeats);
+
+  static const Op& op = Op::Get("relax.tile");
+  return Call(op, {std::move(data)}, Attrs{attrs}, {});
+}
+
+TVM_REGISTER_GLOBAL("relax.op.tile").set_body_typed(tile);
+
+StructInfo InferStructInfoTile(const Call& call, const BlockBuilder& ctx) {
+  arith::Analyzer* analyzer = ctx->GetAnalyzer();
+  TensorStructInfo data_sinfo = GetUnaryInputTensorStructInfo(call, ctx);
+  const auto* attrs = call->attrs.as<TileAttrs>();
+  const auto* data_shape = data_sinfo->shape.as<ShapeExprNode>();
+  int l = attrs->repeats.size();
+  int ndim = data_sinfo->ndim;
+
+  if (data_shape == nullptr) {
+    if (data_sinfo->IsUnknownNdim()) {
+      return TensorStructInfo(data_sinfo->dtype, kUnknownNDim);
+    }
+    if (l > ndim) {
+      return TensorStructInfo(data_sinfo->dtype, l);
+    } else {
+      for (auto i : attrs->repeats) {
+        if (!analyzer->CanProveEqual(i, 1)) {
+          return TensorStructInfo(data_sinfo->dtype, data_sinfo->ndim);
+        }
+      }
+      // if control reaches here, the shape should not be changed
+      return data_sinfo;
+    }
+  }
+
+  int out_ndim = std::max(l, ndim);
+  int l_delta = out_ndim - l;
+  int ndim_delta = out_ndim - ndim;
+  Array<PrimExpr> out_shape;
+  for (int i = 0; i < out_ndim; ++i) {
+    if (i < l_delta) {
+      out_shape.push_back(data_shape->values[i - ndim_delta]);
+    } else if (i < ndim_delta) {
+      out_shape.push_back(attrs->repeats[i - l_delta]);
+    } else {
+      out_shape.push_back(
+          analyzer->Simplify(data_shape->values[i - ndim_delta] * attrs->repeats[i - l_delta]));
+    }
+  }
+  return TensorStructInfo(ShapeExpr(out_shape), data_sinfo->dtype);
+}
+
+// TODO(relax-team): implement FRelaxInferLayout for tile
+TVM_REGISTER_OP("relax.tile")
+    .set_attrs_type<TileAttrs>()
+    .set_num_inputs(1)
+    .add_argument("data", "Tensor", "The input tensor.")
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoTile);
+
+/* relax.cumsum */
+TVM_REGISTER_NODE_TYPE(CumsumAttrs);
+
+Expr cumsum(Expr data, Optional<Integer> axis, DataType dtype) {
+  auto attrs = make_object<CumsumAttrs>();
+  attrs->axis = std::move(axis);
+  attrs->dtype = std::move(dtype);
+
+  static const Op& op = Op::Get("relax.cumsum");
+  return Call(op, {std::move(data)}, Attrs{attrs}, {});
+}
+
+TVM_REGISTER_GLOBAL("relax.op.cumsum").set_body_typed(cumsum);
+
+StructInfo InferStructInfoCumsum(const Call& call, const BlockBuilder& ctx) {
+  TensorStructInfo data_sinfo = GetUnaryInputTensorStructInfo(call, ctx);
+  const auto* attrs = call->attrs.as<CumsumAttrs>();
+
+  DataType out_type = attrs->dtype.is_void() ? data_sinfo->dtype : attrs->dtype;
+
+  if (!attrs->axis.defined()) {
+    // flattened
+    const auto* data_shape = data_sinfo->shape.as<ShapeExprNode>();
+    if (data_shape == nullptr) {
+      return TensorStructInfo(out_type, data_sinfo->ndim);
+    } else {
+      PrimExpr flattened_d = 1;
+      for (const auto v : data_shape->values) {
+        flattened_d *= v;
+      }
+      return TensorStructInfo(ShapeExpr(Array<PrimExpr>({flattened_d})), out_type);
+    }
+  }
+
+  if (data_sinfo->shape.defined()) {
+    return TensorStructInfo(data_sinfo->shape.value(), out_type);
+  } else {
+    return TensorStructInfo(out_type, data_sinfo->ndim);
+  }
+}
+
+TVM_REGISTER_OP("relax.cumsum")
+    .set_attrs_type<CumsumAttrs>()
+    .set_num_inputs(1)
+    .add_argument("data", "Tensor", "The input tensor.")
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoCumsum);
 
 }  // namespace relax
 }  // namespace tvm

@@ -66,12 +66,46 @@ IRModule::IRModule(tvm::Map<GlobalVar, BaseFunc> functions,
 
 bool IRModuleNode::SEqualReduce(const IRModuleNode* other, SEqualReducer equal) const {
   if (!equal(this->attrs, other->attrs)) return false;
+  if (equal.IsPathTracingEnabled()) {
+    const ObjectPathPair& obj_path_pair = equal.GetCurrentObjectPaths();
+
+    // Update GlobalVar before equality check
+    if (functions.size() != other->functions.size()) return false;
+    for (const auto& gv : this->GetGlobalVars()) {
+      if (!other->ContainGlobalVar(gv->name_hint)) return false;
+      if (!equal.DefEqual(gv, other->GetGlobalVar(gv->name_hint))) return false;
+    }
+
+    for (const auto& kv : this->functions) {
+      ObjectPathPair func_paths = {obj_path_pair->lhs_path->Attr("functions")->MapValue(kv.first),
+                                   obj_path_pair->rhs_path->Attr("functions")
+                                       ->MapValue(other->GetGlobalVar(kv.first->name_hint))};
+      if (!equal(kv.second, other->Lookup(kv.first->name_hint), func_paths)) return false;
+    }
+    if (type_definitions.size() != other->type_definitions.size()) return false;
+    for (const auto& gtv : this->GetGlobalTypeVars()) {
+      if (!other->ContainGlobalTypeVar(gtv->name_hint)) return false;
+      if (!equal.DefEqual(gtv, other->GetGlobalTypeVar(gtv->name_hint))) return false;
+    }
+
+    for (const auto& kv : this->type_definitions) {
+      ObjectPathPair type_def_paths = {
+          obj_path_pair->lhs_path->Attr("type_definitions")->MapValue(kv.first),
+          obj_path_pair->rhs_path->Attr("type_definitions")
+              ->MapValue(other->GetGlobalTypeVar(kv.first->name_hint))};
+      if (!equal(kv.second, other->LookupTypeDef(kv.first->name_hint), type_def_paths))
+        return false;
+    }
+    return true;
+  }
+
   if (this->global_infos.size() != other->global_infos.size()) return false;
   for (const auto& kv : this->global_infos) {
     if (!equal(kv.second, other->global_infos[kv.first])) return false;
   }
+
   if (functions.size() != other->functions.size()) return false;
-  // Update GlobalVar remap
+  // Update GlobalVar before equality check
   for (const auto& gv : this->GetGlobalVars()) {
     if (!other->ContainGlobalVar(gv->name_hint)) return false;
     if (!equal.DefEqual(gv, other->GetGlobalVar(gv->name_hint))) return false;

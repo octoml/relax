@@ -17,7 +17,7 @@
 # pylint: disable=invalid-name, wrong-import-position
 """The Relax IR namespace containing the IR, type, operator, builder, vm, etc."""
 from tvm.runtime import relax_vm as vm
-from tvm.runtime.relax_vm import VirtualMachine
+from tvm.runtime.relax_vm import VirtualMachine, VMInstrumentReturnKind
 
 # Expr
 from .expr import (
@@ -56,7 +56,7 @@ from .ty import Type, ObjectType, ShapeType, DynTensorType, TupleType, FuncType,
 from .exec_builder import ExecBuilder
 
 # Operator
-from .op.base import call_tir
+from .op.base import call_tir, call_dps_packed
 
 # BlockBuilder
 from .block_builder import BlockBuilder
@@ -88,6 +88,7 @@ from . import block_builder
 from . import op
 from . import struct_info
 from . import backend
+from . import frontend
 
 # VM
 from .vm_build import build, Executable

@@ -66,8 +66,10 @@ def test_chained_remove_all_unused():
         def main(x: R.Tensor((32, 32), "float32")) -> R.Tensor:
             with R.dataflow():
                 lv0 = x
-                unused0 = R.call_tir("my_sigmoid", (x,), R.Tensor((32, 32), dtype="float32"))
-                unused1 = R.call_tir("my_sigmoid", (unused0,), R.Tensor((32, 32), dtype="float32"))
+                unused0 = R.call_dps_packed("my_sigmoid", (x,), R.Tensor((32, 32), dtype="float32"))
+                unused1 = R.call_dps_packed(
+                    "my_dps_func", (unused0,), R.Tensor((32, 32), dtype="float32")
+                )
                 R.output(lv0)
             return lv0
 
@@ -92,8 +94,10 @@ def test_binding_block_remove_all_unused():
         def main(x: R.Tensor((32, 32), "float32")) -> R.Tensor:
             with R.dataflow():
                 lv0 = x
-                unused0 = R.call_tir("my_sigmoid", (x,), R.Tensor((32, 32), dtype="float32"))
-                unused1 = R.call_tir("my_sigmoid", (unused0,), R.Tensor((32, 32), dtype="float32"))
+                unused0 = R.call_dps_packed("my_sigmoid", (x,), R.Tensor((32, 32), dtype="float32"))
+                unused1 = R.call_dps_packed(
+                    "my_dps_func", (unused0,), R.Tensor((32, 32), dtype="float32")
+                )
                 R.output(lv0)
             z = R.call_packed("vm.builtin.copy", lv0, sinfo_args=(R.Tensor((32, 32), "float32")))
             return z
@@ -184,12 +188,13 @@ class VarExample:
 
     @R.function
     def main(x: R.Tensor, y: R.Tensor) -> R.Tensor:
+        cls = VarExample
         z = R.add(x, y)
         # no binding here
         _ = R.match_cast(x, R.Tensor((5, 5)))
         with R.dataflow():
             q = R.add(z, z)
-            p = func(q)
+            p = cls.func(q)
             r = R.match_cast(p, R.Tensor((5, 5)))
             s = r
             R.output(s)

@@ -54,8 +54,23 @@ StructInfo ReturnObjectStructInfo(const Call& call, const BlockBuilder& ctx) {
   return ObjectStructInfo();
 }
 
-StructInfo ReturnShapeStructInfo(const Call& call, const BlockBuilder& ctx) {
-  return ShapeStructInfo(kUnknownNDim);
+StructInfo InferStructInfoShapeOf(const Call& call, const BlockBuilder& ctx) {
+  // use the StructInfo of the argument
+  auto arg_sinfo = GetStructInfo(call->args[0]);
+  auto* tensor_sinfo = GetStructInfo(call->args[0]).as<TensorStructInfoNode>();
+  CHECK(tensor_sinfo) << "shape_of expects a tensor input, but received " << arg_sinfo
+                      << "; use MatchCast if necessary";
+  if (tensor_sinfo->ndim == kUnknownNDim) {
+    return ShapeStructInfo(kUnknownNDim);
+  }
+  // if the tensor shape is a Relax var or omitted, do not try to construct a shape expr from it
+  if (!tensor_sinfo->shape.defined() || tensor_sinfo->shape.as<VarNode>()) {
+    return ShapeStructInfo(tensor_sinfo->ndim);
+  }
+  // otherwise, copy over the values from the tensor shape
+  auto* tensor_shape = tensor_sinfo->shape.as<ShapeExprNode>();
+  CHECK(tensor_shape);
+  return ShapeStructInfo(tensor_shape->values);
 }
 
 // call_tir
@@ -65,6 +80,9 @@ StructInfo InferStructInfoCallTIR(const Call& call, const BlockBuilder& ctx) {
     ctx->ReportFatal(Diagnostic::Error(call)
                      << "sinfo_args should have exact 1 output struct info.");
   }
+  CHECK(call->args[0]->IsInstance<GlobalVarNode>())
+      << "call_tir expects the first argument to be a GlobalVar referring to a TIR PrimFunc. "
+      << "However, gets " << call->args[0];
   return call->sinfo_args[0];
 }
 
@@ -105,6 +123,44 @@ Expr MakeCallTIR(Expr func, Tuple args, Array<TensorStructInfo> out_sinfo_list,
 }
 
 TVM_REGISTER_GLOBAL("relax.op.call_tir").set_body_typed(MakeCallTIR);
+
+// call_dps_packed
+
+StructInfo InferStructInfoCallDPSPacked(const Call& call, const BlockBuilder& ctx) {
+  if (call->sinfo_args.size() != 1) {
+    ctx->ReportFatal(Diagnostic::Error(call)
+                     << "sinfo_args should have exact 1 output struct info.");
+  }
+  return call->sinfo_args[0];
+}
+
+RELAY_REGISTER_OP("relax.call_dps_packed")
+    .set_num_inputs(2)
+    .add_argument("func", "Expr", "The destination-passing-style function.")
+    .add_argument("args", "Tuple", "The input arguments.")
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoCallDPSPacked);
+
+Expr MakeCallDPSPacked(Expr func, Tuple args, Array<TensorStructInfo> out_sinfo_list) {
+  for (const TensorStructInfo& sinfo : out_sinfo_list) {
+    const auto* shape = sinfo->shape.as<ShapeExprNode>();
+    CHECK(shape != nullptr)
+        << "out_sinfo of call_dps_packed should have defined ShapeExpr as shape. "
+           "However, one given structure info is "
+        << sinfo;
+  }
+
+  StructInfo out_sinfo{nullptr};
+  if (out_sinfo_list.size() == 1) {
+    out_sinfo = out_sinfo_list[0];
+  } else {
+    out_sinfo = TupleStructInfo({out_sinfo_list.begin(), out_sinfo_list.end()});
+  }
+
+  static const Op& op = Op::Get("relax.call_dps_packed");
+  return Call(op, {func, args}, {}, {out_sinfo});
+}
+
+TVM_REGISTER_GLOBAL("relax.op.call_dps_packed").set_body_typed(MakeCallDPSPacked);
 
 // call builtin
 StructInfo InferStructInfoCallBuiltinWithCtx(const Call& call, const BlockBuilder& ctx) {
@@ -250,7 +306,7 @@ TVM_REGISTER_GLOBAL("relax.op.invoke_closure").set_body_typed(InvokeClosure);
 RELAY_REGISTER_OP("relax.shape_of")
     .set_num_inputs(1)
     .add_argument("input", "Expr", "The input expression")
-    .set_attr<FInferStructInfo>("FInferStructInfo", ReturnShapeStructInfo);
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoShapeOf);
 
 Expr MakeShapeOf(Expr expr) {
   static const Op& op = Op::Get("relax.shape_of");
@@ -388,15 +444,13 @@ TVM_REGISTER_GLOBAL("relax.op.vm.alloc_storage").set_body_typed(MakeVMAllocStora
 
 // vm alloc_tensor
 
-Expr InferShapeVMAllocTensor(const Call& call, DiagnosticContext diag_ctx) { return call->args[1]; }
-
 StructInfo InferStructInfoVMAllocTensor(const Call& call, const BlockBuilder& ctx) {
   DataType out_dtype;
   if (const auto* dtype_node = call->args[3].as<DataTypeImmNode>()) {
     const DataTypeImm dtype_imm = GetRef<DataTypeImm>(dtype_node);
     out_dtype = dtype_imm->value;
   }
-  if (const auto* output_shape = call->args[1].as<ShapeExprNode>()) {
+  if (const auto* output_shape = call->args[2].as<ShapeExprNode>()) {
     return TensorStructInfo(GetRef<Expr>(output_shape), out_dtype);
   }
   return TensorStructInfo(out_dtype, kUnknownNDim);

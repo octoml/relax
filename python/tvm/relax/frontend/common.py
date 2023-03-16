@@ -19,6 +19,7 @@
 from typing import Dict, List, Tuple, Union, Callable, Any
 
 import tvm
+from tvm import relax
 from ...ir import Span, SourceName
 
 
@@ -56,7 +57,7 @@ def detach_params(mod: tvm.IRModule) -> Tuple[tvm.IRModule, Dict[str, List[tvm.n
     return detached_mod, params_dict
 
 
-def emit_te_with_span(bb, func: Callable, *args: Any, **kwargs: Any) -> tvm.relax.Var:
+def emit_te_with_span(bb, func: Callable, *args: Any, **kwargs: Any) -> relax.Var:
     """Same as block_builder.emit_te, but attaches a span to the generated call.
     Uses the current span in the SpanContext.
     """
@@ -66,31 +67,26 @@ def emit_te_with_span(bb, func: Callable, *args: Any, **kwargs: Any) -> tvm.rela
     return bb.emit(call)
 
 
-def attach_span(op: tvm.relax.Call):
+def attach_span(op: relax.Call):
     """Attach a span to a Relax op if it doesn't already have one.
     Uses the current span in the SpanContext.
-
     Parameters
     ----------
-    op : tvm.relax.Expr
+    op : relax.Expr
         The op to attach a span to.
-
     Returns
     -------
-    op : tvm.relax.Expr
+    op : relax.Expr
         The op with a span attached.
     """
-    assert isinstance(op, tvm.relax.Call), "Expected a Call node but got: {op}".format(
-        op=str(type(op))
-    )
+    assert isinstance(op, relax.Call), "Expected a Call node but got: {op}".format(op=str(type(op)))
     if op.span is None:
-        return tvm.relax.Call(op.op, op.args, op.attrs, op.sinfo_args, SpanContext.current())
+        return relax.Call(op.op, op.args, op.attrs, op.sinfo_args, SpanContext.current())
     return op
 
 
 class SpanContext:
     """A context manager for setting the current Span.
-
     Parameters
     ----------
     span : Union[Span, str]
@@ -114,7 +110,6 @@ class SpanContext:
     @staticmethod
     def current():
         """Get the span in the current context.
-
         Returns
         -------
         span : Optional[Span]

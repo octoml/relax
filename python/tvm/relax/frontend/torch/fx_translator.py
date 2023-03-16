@@ -212,6 +212,10 @@ class TorchFXImporter:
         lhs, rhs = self.retrieve_args(node)
         return self._call_binary_op(relax.op.less, lhs, rhs)
 
+    def _eq(self, node: fx.node.Node) -> relax.Expr:
+        lhs, rhs = self.retrieve_args(node)
+        return self._call_binary_op(relax.op.equal, lhs, rhs)
+
     ########## Creation ##########
 
     def _arange(self, node: fx.node.Node) -> relax.Var:
@@ -461,6 +465,38 @@ class TorchFXImporter:
             dim = None
         return self.block_builder.emit(relax.op.squeeze(x, dim))
 
+    def _cumsum(self, node: fx.node.Node) -> relax.Var:
+        x = self.env[node.args[0]]
+
+        if "dim" in node.kwargs:
+            dim = node.kwargs["dim"]
+        elif len(node.args) > 1:
+            dim = node.args[1]
+        else:
+            dim = None
+        if "dtype" in node.kwargs:
+            dtype = TorchFXImporter._convert_data_type(str(node.kwargs["dtype"]), self.env)
+        else:
+            dtype = None
+        if "out" in node.kwargs:
+            raise ValueError("specifying out for cumsum is not supported yet")
+
+        return self.block_builder.emit(relax.op.cumsum(x, dim, dtype))
+
+    def _index_select(self, node: fx.node.Node) -> relax.Var:
+        x = self.env[node.args[0]]
+        dim = node.args[1]
+        index = self.env[node.args[2]]
+        return self.block_builder.emit(relax.op.take(x, index, dim))
+
+    def _masked_fill(self, node: fx.node.Node) -> relax.Var:
+        x = self.env[node.args[0]]
+        mask = self.env[node.args[1]]
+        value = node.args[2]
+        rx_value = relax.const(value)
+        values = self.block_builder.emit(relax.op.full_like(x, rx_value))
+        return self.block_builder.emit(relax.op.where(mask, values, x))
+
     ########## Search ##########
 
     def _argmax_argmin(self, op: Callable) -> Callable:
@@ -609,8 +645,38 @@ class TorchFXImporter:
 
     def _layer_norm(self, node: fx.node.Node) -> relax.Var:
         import torch  # type: ignore
+        import numpy as np  # type: ignore
 
         x = self.env[node.args[0]]
+
+        # functional.layer_norm
+        if node.target not in self.named_modules:
+            # static or symbolic
+            normalized_shape = (
+                node.args[1] if type(node.args[1]) == tuple else self.env[node.args[1]]
+            )
+            dim_num = len(normalized_shape)
+            axes = list(range(-dim_num, 0))
+
+            gamma = self.env[node.kwargs["weight"]]
+            beta = node.kwargs["bias"]
+            if beta is None:
+                shape_tuple = [int(s) for s in normalized_shape.values]
+                beta = relax.const(np.zeros(shape_tuple), x.struct_info.dtype)
+            else:
+                beta = self.env[beta]
+            eps = node.kwargs["eps"]
+
+            return self.block_builder.emit(
+                relax.op.nn.layer_norm(
+                    x,
+                    gamma,
+                    beta,
+                    axes=axes,
+                    epsilon=eps,
+                )
+            )
+
         module = self.named_modules[node.target]
 
         if module.elementwise_affine:
@@ -847,6 +913,7 @@ class TorchFXImporter:
             "sqrt": self._sqrt,
             "round": self._round,
             "lt": self._lt,
+            "eq": self._eq,
             "truediv": self._truediv,
             "fill_": self._inplace_fill,
             "new_ones": self._new_ones,
@@ -872,6 +939,7 @@ class TorchFXImporter:
             "permute": self._permute,
             "reshape": self._reshape,
             "split": self._split,
+            "cumsum": self._cumsum,
             "chunk": self._chunk,
             "transpose": self._transpose,
             "squeeze": self._squeeze,
@@ -886,6 +954,7 @@ class TorchFXImporter:
             "clamp": self._clamp,
             "relu": lambda node: self.block_builder.emit(relax.op.nn.relu(self.env[node.args[0]])),
             "gelu": lambda node: self.block_builder.emit(relax.op.nn.gelu(self.env[node.args[0]])),
+            "tanh": lambda node: self.block_builder.emit(relax.op.tanh(self.env[node.args[0]])),
             "interpolate": self._interpolate,
             "size": self._size,
             "getattr": self._getattr,
@@ -893,6 +962,9 @@ class TorchFXImporter:
             "contiguous": lambda node: self.env[node.args[0]],
             "to": lambda node: self.env[node.args[0]],
             "adaptive_avg_pool2d": self._adaptive_avg_pool2d(is_module=False),
+            "layer_norm": self._layer_norm,
+            "index_select": self._index_select,
+            "masked_fill": self._masked_fill,
         }
 
     def from_fx(
