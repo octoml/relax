@@ -1120,7 +1120,7 @@ class CompositeFunctionAnnotator : public ExprMutator {
   Expr VisitExpr_(const CallNode* call_node) final {
     if (auto const* gvar = call_node->op.as<GlobalVarNode>()) {
       if (auto it = gvar_map_.find(gvar); it != gvar_map_.end()) {
-        return Call(it->second, call_node->args);
+        return Call(it->second, call_node->args, {}, {}, call_node->span);
       }
       auto func = builder_->GetContextIRModule()->Lookup(GetRef<GlobalVar>(gvar));
       if (auto composite_name = func->GetAttr<String>(attr::kComposite)) {

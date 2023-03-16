@@ -122,3 +122,17 @@ def test_construct_schedule_map():
     pair = schedule_map["Div(2)"][0]
     assert pair[0] == "relax.divide(0)"
     assert pair[1] == "native"
+
+
+# def test_another():
+#     import onnx
+#
+#     # Test for OneHot
+#     test_model = onnx.load("/home/gogu/git/octoml/models/tinyrandom/model.onnx")
+#
+#     # Apply the simplified octoml API.
+#     octo_model = tvm.octo.compile(test_model, target=tvm.target.Target("cuda"))
+#
+#     print(octo_model.schedule_map)
+#
+#     breakpoint()
