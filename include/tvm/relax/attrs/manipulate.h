@@ -102,6 +102,44 @@ struct SqueezeAttrs : public tvm::AttrsNode<SqueezeAttrs> {
   }
 };  // struct SqueezeAttrs
 
+/*! \brief Attributes used in repeat operators */
+struct RepeatAttrs : public tvm::AttrsNode<RepeatAttrs> {
+  int repeats;
+  Optional<Integer> axis;
+
+  TVM_DECLARE_ATTRS(RepeatAttrs, "relax.attrs.RepeatAttrs") {
+    TVM_ATTR_FIELD(repeats).describe("The number of repetitions.");
+    TVM_ATTR_FIELD(axis).describe(
+        "The axis along which to repeat values. The negative numbers are interpreted "
+        "counting from the backward. By default, use the flattened input array, and "
+        "return a flat output array.");
+  }
+};  // struct RepeatAttrs
+
+/*! \brief Attributes used in tile operators */
+struct TileAttrs : public tvm::AttrsNode<TileAttrs> {
+  Array<Integer> repeats;
+
+  TVM_DECLARE_ATTRS(TileAttrs, "relax.attrs.TileAttrs") {
+    TVM_ATTR_FIELD(repeats).describe("The number of repetitions of data along each axis.");
+  }
+};  // struct TileAttrs
+
+/*! \brief Attributes used in cumsum operators */
+struct CumsumAttrs : public tvm::AttrsNode<CumsumAttrs> {
+  Optional<Integer> axis;
+  DataType dtype;
+
+  TVM_DECLARE_ATTRS(CumsumAttrs, "relax.attrs.CumsumAttrs") {
+    TVM_ATTR_FIELD(axis).describe(
+        "Axis along which the cumulative sum is computed."
+        "The default (None) is to compute the cumsum over the flattened array.");
+    TVM_ATTR_FIELD(dtype).describe(
+        "Type of the returned array and of the accumulator in which the elements are summed."
+        "If dtype is not specified, it defaults to the dtype of data.");
+  }
+};  // struct CumsumAttrs
+
 }  // namespace relax
 }  // namespace tvm
 

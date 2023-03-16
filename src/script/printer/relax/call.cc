@@ -86,18 +86,16 @@ ExprDoc PrintCallee(const relax::Expr& n, const ObjectPath& n_p, const IRDocsifi
   // TODO(@junrushao): handle callee better
   if (const auto* ext = n.as<relax::ExternFuncNode>()) {
     return LiteralDoc::Str(ext->global_symbol, n_p);
-  } else if (const auto* gv = n.as<tvm::GlobalVarNode>()) {
-    IdDoc callee(gv->name_hint);
-    callee->source_paths.push_back(n_p);
-    return callee;
   } else {
     return d->AsDoc<ExprDoc>(n, n_p);
   }
 }
 
-Optional<ExprDoc> PrintCallTIR(const relax::Call& n, const ObjectPath& n_p, const IRDocsifier& d) {
+Optional<ExprDoc> PrintCallTIRDPSPacked(const relax::Call& n, const ObjectPath& n_p,
+                                        const IRDocsifier& d) {
   static const Op& call_tir_op = Op::Get("relax.call_tir");
-  if (!n->op.same_as(call_tir_op)) {
+  static const Op& call_dps_packed_op = Op::Get("relax.call_dps_packed");
+  if (!n->op.same_as(call_tir_op) && !n->op.same_as(call_dps_packed_op)) {
     return NullOpt;
   }
   ICHECK(n->args.size() == 2 || n->args.size() == 3);
@@ -123,6 +121,9 @@ Optional<ExprDoc> PrintCallTIR(const relax::Call& n, const ObjectPath& n_p, cons
   } else {
     kwargs_values.push_back(d->AsDoc<ExprDoc>(o_sinfo, o_sinfo_p));
   }
+  if (n->op.same_as(call_dps_packed_op)) {
+    return Relax(d, "call_dps_packed")->Call(args, kwargs_keys, kwargs_values);
+  }
   // Step 4. Print n->args[2], the tir variables
   if (n->args.size() == 3) {
     kwargs_keys.push_back("tir_vars");
@@ -134,8 +135,8 @@ Optional<ExprDoc> PrintCallTIR(const relax::Call& n, const ObjectPath& n_p, cons
 TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
     .set_dispatch<relax::Call>(  //
         "", [](relax::Call n, ObjectPath n_p, IRDocsifier d) -> Doc {
-          // Special case: call_tir
-          if (Optional<ExprDoc> doc = PrintCallTIR(n, n_p, d)) {
+          // Special case: call_tir, call_dps_packed
+          if (Optional<ExprDoc> doc = PrintCallTIRDPSPacked(n, n_p, d)) {
             return doc.value();
           }
           ExprDoc prefix{nullptr};
@@ -146,9 +147,6 @@ TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
           if (const auto* op = n->op.as<relax::ExternFuncNode>()) {
             prefix = Relax(d, "call_packed");
             args.push_back(LiteralDoc::Str(op->global_symbol, n_p->Attr("op")));
-          } else if (const auto* op = n->op.as<tvm::GlobalVarNode>()) {
-            prefix = IdDoc(op->name_hint);
-            prefix->source_paths.push_back(n_p->Attr("op"));
           } else if (const auto* op = n->op.as<tvm::OpNode>()) {
             std::string name = op->name;
             if (name.rfind("relax.", 0) == 0) {
@@ -157,7 +155,8 @@ TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
               prefix = IdDoc(name);
             }
             prefix->source_paths.push_back(n_p->Attr("op"));
-          } else if (n->op->IsInstance<relax::VarNode>()) {
+          } else if (n->op->IsInstance<relax::VarNode>() ||
+                     n->op->IsInstance<tvm::GlobalVarNode>()) {
             prefix = d->AsDoc<ExprDoc>(n->op, n_p->Attr("op"));
           } else {
             LOG(FATAL) << "TypeError: Unsupported op: " << n->op->GetTypeKey();

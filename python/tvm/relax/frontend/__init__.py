@@ -17,4 +17,4 @@
 """
 Frontends for constructing Relax programs, with the model importers
 """
-from .common import detach_params, SpanContext, attach_span, emit_te_with_span
+from .common import detach_params

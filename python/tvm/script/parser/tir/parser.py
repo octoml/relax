@@ -21,7 +21,7 @@ from functools import partial
 from typing import Any
 
 import tvm
-from tvm.ir import PrimType
+from tvm.ir import GlobalVar, PrimType
 from tvm.tir import Buffer, IterVar, PrimExpr, Var
 
 from ...ir_builder import ir as I
@@ -144,9 +144,8 @@ def bind_assign_value(self: Parser, node: doc.expr, var_name: str, value: Any) -
         IRBuilder.name(var_name, value)
         return value
     elif isinstance(value, PrimExpr):
-        var = Var("", value.dtype)
-        IRBuilder.name(var_name, var)
-        frame = T.let(var, value)
+        frame = T.LetStmt(value)
+        var = frame.var
         frame.add_callback(partial(frame.__exit__, None, None, None))
         frame.__enter__()
         return var
@@ -295,7 +294,7 @@ def visit_ann_assign(self: Parser, node: doc.AnnAssign) -> None:
     if not isinstance(ann_var, Var):
         self.report_error(node.annotation, "Annotation should be Var")
     self.eval_assign(target=lhs, source=ann_var, bind_value=bind_assign_value)
-    frame = T.let(ann_var, rhs)
+    frame = T.LetStmt(rhs, var=ann_var)
     frame.add_callback(partial(frame.__exit__, None, None, None))
     frame.__enter__()
 
@@ -475,7 +474,7 @@ def visit_return(self: Parser, node: doc.Return) -> None:
 
 
 @dispatch.register(token="tir", type_name="tvm_declare_function")
-def visit_tvm_declare_function(self: Parser, node: doc.FunctionDef) -> None:
+def visit_tvm_declare_function(self: Parser, node: doc.FunctionDef) -> GlobalVar:
     """The function declaration step for tir
 
     Parameters
@@ -495,5 +494,4 @@ def visit_tvm_declare_function(self: Parser, node: doc.FunctionDef) -> None:
 
     # Only ret_type is needed for func_signature.
     func_signature = tvm.tir.PrimFunc([], None, ret_type=ret_type)
-    global_var = I.decl_function(node.name, func_signature)
-    self.var_table.add(node.name, global_var)
+    return I.decl_function(node.name, func_signature)

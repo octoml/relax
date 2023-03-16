@@ -39,7 +39,7 @@ def identity_tir(a: T.handle, b: T.handle) -> None:
 
 def test_call_tir() -> None:
     v0 = rx.Var("v0", R.Tensor([54, 96], "float32"))
-    v1 = rx.call_tir(rx.extern("test.op.identity"), [v0], R.Tensor((54, 96), "float32"))
+    v1 = rx.call_dps_packed(rx.extern("test.op.identity"), [v0], R.Tensor((54, 96), "float32"))
     v1 = rx.call_tir(identity_tir, [v0], R.Tensor((54, 96), "float32"))
 
 
@@ -93,6 +93,14 @@ def test_implicit_op():
     ## Create TupleGetItem for other expr
     assert isinstance(x[0], rx.TupleGetItem)
     assert isinstance(x[1][0], rx.TupleGetItem)
+
+
+def test_vm_alloc_tensor():
+    bb = rx.BlockBuilder()
+    storage = rx.Var("storage", rx.TensorStructInfo(dtype="float32"))
+    alloc = rx.op.vm.alloc_tensor(storage, offset=0, shape=rx.ShapeExpr([4, 5]), dtype="float32")
+    alloc = bb.normalize(alloc)
+    tvm.ir.assert_structural_equal(alloc.struct_info, R.Tensor([4, 5], "float32"))
 
 
 if __name__ == "__main__":

@@ -574,7 +574,7 @@ class Normalizer : public BlockBuilderImpl, private ExprFunctor<Expr(const Expr&
     if (unchanged) {
       call = GetRef<Call>(op);
     } else {
-      call = Call(new_op, new_args, op->attrs, op->sinfo_args, op->span);
+      call = Call(new_op, new_args, op->attrs, op->sinfo_args);
     }
 
     if (!call->struct_info_.defined()) {
