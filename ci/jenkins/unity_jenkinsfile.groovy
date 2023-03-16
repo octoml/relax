@@ -32,7 +32,7 @@ import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
 // NOTE: these lines are scanned by docker/dev_common.sh. Please update the regex as needed. -->
 ci_lint = 'tlcpack/ci-lint:20221025-182121-e41d0ed6e'
 ci_gpu = 'tlcpack/ci-gpu:20221128-070141-ae4fd7df7'
-ci_cpu = 'tlcpack/ci-cpu:20230110-070003-d00168ffb'
+ci_cpu = 'tlcpackstaging/ci_cpu:relax-20230217-001605-fcb3d9e71'
 ci_wasm = 'tlcpack/ci-wasm:v0.72'
 ci_i386 = 'tlcpack/ci-i386:v0.75'
 ci_qemu = 'tlcpack/ci-qemu:v0.11'
@@ -135,9 +135,9 @@ def should_skip_ci(pr_number) {
 
 cancel_previous_build()
 
-def lint() {
+def lint(node_type) {
 stage('Prepare') {
-  node('CPU-SMALL') {
+  node(node_type) {
     // When something is provided in ci_*_param, use it, otherwise default with ci_*
     ci_lint = params.ci_lint_param ?: ci_lint
     ci_cpu = params.ci_cpu_param ?: ci_cpu
@@ -161,10 +161,12 @@ stage('Prepare') {
     """, label: 'Docker image names')
   }
 }
+}
 
+def sanity_check(node_type) {
 stage('Sanity Check') {
   timeout(time: max_time, unit: 'MINUTES') {
-    node('CPU-SMALL') {
+    node(node_type) {
       ws(per_exec_ws('tvm/sanity')) {
         init_git()
         is_docs_only_build = sh (
@@ -187,8 +189,17 @@ stage('Sanity Check') {
   }
 }
 }
+try {
+    lint('CPU-SMALL-SPOT')
+} catch(Exception ex) {
+    lint('CPU-SMALL')
+}
 
-lint()
+try {
+    sanity_check('CPU-SPOT')
+} catch(Exception ex) {
+    sanity_check('CPU')
+}
 
 // Run make. First try to do an incremental make from a previous workspace in hope to
 // accelerate the compilation. If something is wrong, clean the workspace and then
@@ -308,10 +319,8 @@ def add_hexagon_permissions() {
 // NOTE: limit tests to relax folder for now to allow us to skip some of the tests
 // that are mostly related to changes in main.
 // This helps to speedup CI time and reduce CI cost.
-stage('Build and Test') {
-  if (is_docs_only_build != 1) {
-    parallel 'BUILD: GPU': {
-      node('GPU') {
+def build_test_gpu(node_type) {
+      node(node_type) {
         ws(per_exec_ws('tvm/build-gpu')) {
           init_git()
           sh "${docker_run} ${ci_gpu} nvidia-smi"
@@ -320,9 +329,10 @@ stage('Build and Test') {
           sh "${docker_run} ${ci_gpu} ./tests/scripts/unity/task_python_relax_gpuonly.sh"
         }
       }
-    },
-    'BUILD: CPU': {
-      node('CPU-SMALL') {
+}
+
+def build_test_cpu(node_type) {
+      node(node_type) {
         ws(per_exec_ws('tvm/build-cpu')) {
           init_git()
           sh "${docker_run} ${ci_cpu} ./tests/scripts/task_config_build_cpu.sh build"
@@ -330,6 +340,23 @@ stage('Build and Test') {
           sh "${docker_run} ${ci_cpu} ./tests/scripts/unity/task_python_relax.sh"
         }
       }
+}
+
+stage('Build and Test') {
+  if (is_docs_only_build != 1) {
+    parallel 'BUILD: GPU': {
+      try {
+        build_test_gpu('GPU-SPOT')
+      } catch(Exception ex) {
+        build_test_gpu('GPU')
+      }
+    },
+    'BUILD: CPU': {
+      try {
+        build_test_cpu('CPU-SPOT')
+    } catch(Exception ex) {
+      build_test_cpu('CPU')
+    }
     }
   } else {
     Utils.markStageSkippedForConditional('BUILD: CPU')

@@ -16,9 +16,11 @@
 # under the License.
 # pylint: disable=invalid-name
 """Commons for Relax frontend."""
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union, Callable, Any
 
 import tvm
+from tvm import relax
+from ...ir import Span, SourceName
 
 
 def detach_params(mod: tvm.IRModule) -> Tuple[tvm.IRModule, Dict[str, List[tvm.nd.NDArray]]]:
@@ -53,3 +55,64 @@ def detach_params(mod: tvm.IRModule) -> Tuple[tvm.IRModule, Dict[str, List[tvm.n
         else:
             detached_mod[gv] = func
     return detached_mod, params_dict
+
+
+def emit_te_with_span(bb, func: Callable, *args: Any, **kwargs: Any) -> relax.Var:
+    """Same as block_builder.emit_te, but attaches a span to the generated call.
+    Uses the current span in the SpanContext.
+    """
+
+    call = bb.call_te(func, *args, **kwargs)
+    call = attach_span(call)
+    return bb.emit(call)
+
+
+def attach_span(op: relax.Call):
+    """Attach a span to a Relax op if it doesn't already have one.
+    Uses the current span in the SpanContext.
+    Parameters
+    ----------
+    op : relax.Expr
+        The op to attach a span to.
+    Returns
+    -------
+    op : relax.Expr
+        The op with a span attached.
+    """
+    assert isinstance(op, relax.Call), "Expected a Call node but got: {op}".format(op=str(type(op)))
+    if op.span is None:
+        return relax.Call(op.op, op.args, op.attrs, op.sinfo_args, SpanContext.current())
+    return op
+
+
+class SpanContext:
+    """A context manager for setting the current Span.
+    Parameters
+    ----------
+    span : Union[Span, str]
+        The span to set as the current span.
+    """
+
+    __current_span = None
+
+    def __init__(self, span: Union[Span, str]):
+        assert isinstance(span, (Span, str)), "span must be a Span or str"
+        if isinstance(span, str):
+            span = Span(SourceName(span), 0, 0, 0, 0)
+        SpanContext.__current_span = span
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, ptype, value, trace):
+        SpanContext.__current_span = None
+
+    @staticmethod
+    def current():
+        """Get the span in the current context.
+        Returns
+        -------
+        span : Optional[Span]
+            The current span.
+        """
+        return SpanContext.__current_span

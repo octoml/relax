@@ -293,7 +293,8 @@ def build(
         target = tvm.target.Target(target)
 
     passes = []
-    passes.append(relax.transform.RewriteDataflowReshape())
+    # TODO(jwfromm) Reenable once slice bug is fixed.
+    # passes.append(relax.transform.RewriteDataflowReshape())
     passes.append(relax.transform.ToNonDataflow())
     passes.append(relax.transform.CallTIRRewrite())
     passes.append(relax.transform.StaticPlanBlockMemory())
