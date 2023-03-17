@@ -235,6 +235,42 @@ TVM_REGISTER_OP("relax.nn.batch_norm")
     .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoBatchNorm)
     .set_attr<FRelaxInferLayout>("FRelaxInferLayout", InferLayoutBatchNorm);
 
+/* relax.nn.lrn */
+TVM_REGISTER_NODE_TYPE(LRNAttrs);
+
+Expr lrn(Expr data, int size, int axis, float alpha, float beta, float bias) {
+  ObjectPtr<LRNAttrs> attrs = make_object<LRNAttrs>();
+  attrs->size = size;
+  attrs->axis = axis;
+  attrs->alpha = alpha;
+  attrs->beta = beta;
+  attrs->bias = bias;
+
+  static const Op& op = Op::Get("relax.nn.lrn");
+  return Call(op, {std::move(data)}, Attrs{attrs}, {});
+}
+
+TVM_REGISTER_GLOBAL("relax.op.nn.lrn").set_body_typed(lrn);
+
+StructInfo InferStructInfoLRN(const Call& call, const BlockBuilder& ctx) {
+  Array<TensorStructInfo> input_sinfo = GetInputTensorStructInfo(call, ctx);
+  if (!input_sinfo[0]->dtype.is_float() && !input_sinfo[0]->dtype.is_bfloat16()) {
+    ctx->ReportFatal(
+        Diagnostic::Error(call)
+        << call->op
+        << " requires the input tensor to have float dtype. However, the given input dtype is "
+        << input_sinfo[0]->dtype);
+  }
+  auto output_sinfo = make_object<TensorStructInfoNode>(*input_sinfo[0].get());
+  return TensorStructInfo(output_sinfo);
+}
+
+TVM_REGISTER_OP("relax.nn.lrn")
+    .set_attrs_type<LRNAttrs>()
+    .set_num_inputs(1)
+    .add_argument("data", "Tensor", "Input to which local response normalization will be applied.")
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoLRN);
+
 /* relax.nn.layer_norm */
 TVM_REGISTER_NODE_TYPE(LayerNormAttrs);
 
