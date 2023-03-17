@@ -1471,19 +1471,10 @@ class ReduceMean(OnnxOpConverter):
     """Converts an onnx ReduceMean node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v11(cls, bb, inputs, attr):
+    def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
         axes = attr.get("axes", None)
         keepdims = attr.get("keepdims", 1)
-        return attach_span(relax.op.mean(data, axes, keepdims))
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        data = inputs[0]
-        axes = inputs[1]
-        keepdims = attr.get("keepdims", 1)
-        assert isinstance(axes, relax.Constant), "Only constant axes currently supported."
-        axes = axes.data.numpy().tolist()
         return attach_span(relax.op.mean(data, axes, keepdims))
 
 
@@ -1491,19 +1482,10 @@ class ReduceProd(OnnxOpConverter):
     """Converts an onnx ReduceProd node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v11(cls, bb, inputs, attr):
+    def _impl_v13(cls, bb, inputs, attr):
         data = inputs[0]
         axes = attr.get("axes", None)
         keepdims = attr.get("keepdims", 1)
-        return attach_span(relax.op.prod(data, axes, keepdims))
-
-    @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
-        data = inputs[0]
-        axes = inputs[1]
-        keepdims = attr.get("keepdims", 1)
-        assert isinstance(axes, relax.Constant), "Only constant axes currently supported."
-        axes = axes.data.numpy().tolist()
         return attach_span(relax.op.prod(data, axes, keepdims))
 
 
