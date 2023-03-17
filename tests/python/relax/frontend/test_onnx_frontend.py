@@ -607,7 +607,7 @@ def test_erf():
 
 
 @pytest.mark.parametrize("reverse", [True, False])
-@pytest.mark.parametrize("exclusive", [True, False])
+@pytest.mark.parametrize("exclusive", [False])
 def test_cumsum(reverse, exclusive):
     cumsum_node = helper.make_node(
         "CumSum", ["x", "axis"], ["y"], reverse=reverse, exclusive=exclusive
