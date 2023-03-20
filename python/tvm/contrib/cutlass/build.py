@@ -568,11 +568,11 @@ def _extract_arg_idx(pattern_name, f):
     func_args = list(f.params)
 
     arg_idx = {}
-    for arg_name, arg_pattern in pattern_entry.arg_patterns.items():
-        arg_expr = matched_expr[arg_pattern]
+    for name, annotation_pattern in pattern_entry.annotation_patterns.items():
+        arg_expr = matched_expr[annotation_pattern]
         if arg_expr not in func_args:
-            raise ValueError(f"Cannot find arg {arg_name} in the fused function parameters")
-        arg_idx[arg_name] = func_args.index(arg_expr)
+            continue
+        arg_idx[name] = func_args.index(arg_expr)
 
     return arg_idx
 
@@ -765,6 +765,7 @@ class CutlassRelaxFunctionAnnotator(relax.PyExprMutator):
                 "op_type": op_type,
                 "lhs_arg_idx": arg_idx["lhs"],
                 "rhs_arg_idx": arg_idx["rhs"],
+                "residual_arg_idx": arg_idx.get("residual"),
                 "bias_arg_idx": arg_idx.get("bias"),
                 "arg0_dtype": signature["arg0_dtype"],
                 "arg1_dtype": signature["arg1_dtype"],

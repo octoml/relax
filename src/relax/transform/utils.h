@@ -100,12 +100,21 @@ class MemoizedExprTranslator : public ::tvm::relax::ExprFunctor<OutputType(const
 };
 
 /*!
- * \brief Remove unused global relax functions in an IRModule.
+ * \brief Dead code elimination
+ * Currently it removes:
+ *   1. Unused local VarBindings in a DataflowBlock.
+ *      The used var set is set to empty at the beginning of each DataflowBlock.
+ *      We reverse scan the DataflowBlock, if a VarBinding
+ *        - bindings to a dataflowvar, or
+ *        - is used in the used var set
+ *      We keep it and add its var to the used var set. Otherwise, we remove it.
+ *   2. Unused Relax functions in the module.
+ *      We detect the call chain from the entry function, and remove all unused functions.
  * \param mod The target module
  * \param entry_functions list of entry functions
  * \return The updated module.
  */
-TVM_DLL IRModule RemoveUnusedFunctions(IRModule mod, Array<runtime::String> entry_funcs);
+TVM_DLL IRModule DeadCodeElimination(const IRModule& mod, Array<runtime::String> entry_funcs);
 
 /*!
  * \brief Get the external symbol of the Relax function name.
@@ -154,6 +163,48 @@ bool IsNestedTensorConditioned(const StructInfo& sinfo, FType f_condition) {
   }
   return false;
 }
+
+/*!
+ * \brief Check if the given StructInfo is a nested tensor.
+ * \param sinfo The StructInfo to be checked.
+ * \return true if the given StructInfo is a nested tensor.
+ */
+bool IsNestedTensor(const StructInfo& sinfo);
+
+/*!
+ * \brief Check if the given expr is a nested tensor.
+ * \param expr The expr to be checked.
+ * \return true if the given expr is a nested tensor.
+ */
+bool IsNestedTensor(const Expr& expr);
+
+// TODO(@bohan): implements some postorder function accepts a visitor closure
+class VarReplacer : public ExprMutator {
+ public:
+  using VarMap = std::unordered_map<Id, Var, ObjectPtrHash, ObjectPtrEqual>;
+
+  explicit VarReplacer(const VarMap& var_remap) : var_remap_(var_remap) {}
+
+  static Expr Replace(const Expr& expr, const VarMap& var_remap) {
+    VarReplacer replacer(var_remap);
+    return replacer(expr);
+  }
+
+ private:
+  Expr VisitExpr_(const VarNode* op) final {
+    Var var = GetRef<Var>(op);
+    auto it = var_remap_.find(var->vid);
+    return it == var_remap_.end() ? var : it->second;
+  }
+
+  Expr VisitExpr_(const DataflowVarNode* op) final {
+    Var var = GetRef<Var>(op);
+    auto it = var_remap_.find(var->vid);
+    return it == var_remap_.end() ? var : it->second;
+  }
+
+  const VarMap& var_remap_;
+};
 
 /*!
  * \brief Create a Constant with a scalar
