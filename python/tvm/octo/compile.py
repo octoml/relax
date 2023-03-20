@@ -26,6 +26,7 @@ from tvm.relax.frontend.onnx import from_onnx
 from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
 from .utils import get_cuda_target, get_llvm_target
 from .octo_model import OctoModel
+from .schedule_cumsum import ScheduleCumsum
 
 
 def load_onnx_model(
@@ -157,6 +158,10 @@ def compile(
 
     # If target is gpu and compiled with Cutlass, offload where possible.
     if target.kind.name == "cuda":
+        # Schedule any cumsum operators if needed. We need to do this explicitly
+        # to make it work with thrust.
+        with target:
+            relax_mod = ScheduleCumsum()(relax_mod)
         if tvm.get_global_func("relax.ext.cutlass", True):
             # Match subgraphs that can be offloaded to cutlass and offload them.
             relax_mod = offload_cutlass(relax_mod, target)

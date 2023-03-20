@@ -479,7 +479,7 @@ class Not(OnnxOpConverter):
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
-        return emit_te_with_span(bb, topi.bitwise_not, inputs[0])
+        return attach_span(relax.op.bitwise_not(inputs[0]))
 
 
 class Tanh(OnnxOpConverter):
@@ -595,24 +595,16 @@ class CumSum(OnnxOpConverter):
     """Converts an onnx CumSum node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
+    def _impl_v14(cls, bb, inputs, attr):
         data = inputs[0]
+        assert not attr.get("exclusive", False), "Exclusive option not yet supported."
         if len(inputs) > 1:
             axis = int(inputs[1].data.numpy())
         else:
             axis = None
         if attr.get("reverse", 0) != 0:
             data = emit_te_with_span(bb, topi.flip, data, axis=axis if axis else 0)
-        data = emit_te_with_span(
-            bb,
-            topi.cumsum,
-            data=data,
-            axis=axis,
-            exclusive=attr.get("exclusive", None),
-        )
-        if attr.get("reverse", 0) != 0:
-            data = emit_te_with_span(bb, topi.flip, data, axis=axis if axis else 0)
-        return data
+        return attach_span(relax.op.cumsum(data, axis))
 
 
 class Squeeze(OnnxOpConverter):
@@ -949,6 +941,9 @@ class Expand(OnnxOpConverter):
         data = inputs[0]
         shape = inputs[1]
 
+        if isinstance(shape, relax.ShapeExpr):
+            return relax.op.broadcast_to(data, shape)
+
         # If possible, directly expand to constant shape.
         if isinstance(shape, relax.Constant):
             new_shape = shape.data.numpy().tolist()
@@ -1042,7 +1037,7 @@ class Attention(OnnxOpConverter):
         # split weight and biases and do the matmuls
         w_Q, w_K, w_V = split_1[0], split_1[1], split_1[2]
 
-        split_2 = emit_te_with_span(bb, topi.split, bias, 3, 0)
+        split_2 = attach_span(relax.op.split(bias, 3, 0))
         split_2 = bb.normalize(attach_span(relax.op.split(bias, 3, 0)))
         b_Q, b_K, b_V = split_2[0], split_2[1], split_2[2]
         # need to merge batch dimensions since TVM matmul is 2D
@@ -1097,7 +1092,14 @@ class Attention(OnnxOpConverter):
         V_present = bb.normalize(
             attach_span(relax.op.reshape(V, (batch_size, num_heads, seq_len, head_size)))
         )
-        present = emit_te_with_span(bb, topi.stack, [K_present, V_present], 0)
+        present = attach_span(
+            relax.op.concat(
+                [
+                    attach_span(relax.op.expand_dims(K_present, 0)),
+                    attach_span(relax.op.expand_dims(V_present, 0)),
+                ]
+            )
+        )
 
         att_scores = bb.normalize(
             attach_span(relax.op.matmul(Q, attach_span(relax.op.permute_dims(K, [0, 2, 1]))))
@@ -1117,7 +1119,8 @@ class Attention(OnnxOpConverter):
 
         # build the attention mask
         att_mask = bb.normalize(attach_span(relax.op.astype(mask_index, score_dtype)))
-        att_mask = emit_te_with_span(bb, topi.expand_dims, att_mask, 1, num_newaxis=2)
+        att_mask = attach_span(relax.op.expand_dims(att_mask, 1))
+        att_mask = attach_span(relax.op.expand_dims(att_mask, 1))
         att_mask = attach_span(relax.op.subtract(relax.const(1, dtype=score_dtype), att_mask))
         att_mask = attach_span(relax.op.multiply(att_mask, relax.const(-10000, dtype=score_dtype)))
 
@@ -1426,7 +1429,7 @@ class ReduceMax(OnnxOpConverter):
     """Converts an onnx ReduceMax node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
+    def _impl_v11(cls, bb, inputs, attr):
         data = inputs[0]
         axes = attr.get("axes", None)
         keepdims = attr.get("keepdims", 1)
@@ -1437,7 +1440,7 @@ class ReduceMin(OnnxOpConverter):
     """Converts an onnx ReduceMin node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
+    def _impl_v11(cls, bb, inputs, attr):
         data = inputs[0]
         axes = attr.get("axes", None)
         keepdims = attr.get("keepdims", 1)
@@ -1448,10 +1451,19 @@ class ReduceSum(OnnxOpConverter):
     """Converts an onnx ReduceSum node into an equivalent Relax expression."""
 
     @classmethod
-    def _impl_v13(cls, bb, inputs, attr):
+    def _impl_v11(cls, bb, inputs, attr):
         data = inputs[0]
         axes = attr.get("axes", None)
         keepdims = attr.get("keepdims", 1)
+        return attach_span(relax.op.sum(data, axes, keepdims))
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        axes = inputs[1]
+        keepdims = attr.get("keepdims", 1)
+        assert isinstance(axes, relax.Constant), "Only constant axes currently supported."
+        axes = axes.data.numpy().tolist()
         return attach_span(relax.op.sum(data, axes, keepdims))
 
 
@@ -1902,7 +1914,7 @@ class ONNXGraphImporter:
             # Perform special handling for shape expressions. If an input is a
             # shape expr, make sure the current op can handle it, otherwise
             # convert it to a tensor.
-            shape_compatible_ops = ["Reshape", "ConstantOfShape", "Gather", "Slice"]
+            shape_compatible_ops = ["Reshape", "ConstantOfShape", "Gather", "Slice", "Expand"]
             for i, inp in enumerate(inputs):
                 if (
                     inp is not None

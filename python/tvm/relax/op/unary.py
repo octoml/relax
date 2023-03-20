@@ -287,6 +287,22 @@ def negative(x: Expr) -> Expr:
     return _ffi_api.negative(x)  # type: ignore
 
 
+def bitwise_not(x: Expr) -> Expr:
+    """Compute element-wise logical negation of the input data.
+
+    Parameters
+    ----------
+    x : relax.Expr
+        The input data
+
+    Returns
+    -------
+    result : relax.Expr
+        The computed result
+    """
+    return _ffi_api.bitwise_not(x)  # type: ignore
+
+
 def round(x: Expr) -> Expr:
     """Rounds each element of the input data to nearest integer.
 
