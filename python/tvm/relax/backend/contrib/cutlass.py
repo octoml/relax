@@ -17,12 +17,12 @@
 
 """Pattern table for CUTLASS backend"""
 
-from typing import Mapping, Optional, Tuple
+from typing import Mapping, Optional, Sequence, Tuple
 
 import tvm
 from tvm.contrib.cutlass.build import is_shape_valid_for_cutlass_matmul
-from tvm.relax import Call, Expr, ShapeExpr, transform
-from tvm.relax.dpl import CallPattern, DFPattern
+from tvm.relax import ShapeExpr, Var, transform
+from tvm.relax.transform import PatternCheckContext
 
 from ..pattern_registry import get_patterns_with_prefix, register_patterns
 from ..patterns import (
@@ -52,33 +52,27 @@ def _is_supported_dtype(lhs_dtype, rhs_dtype):
     )
 
 
-def _find_call(op_name: str, match_result: Mapping[DFPattern, Expr]) -> Optional[Expr]:
-    result = None
+def _has_dependency(from_var: Var, to_var: Var, var_usages: Mapping[Var, Sequence[Var]]):
+    if from_var == to_var:
+        return True
 
-    for pattern, expr in match_result.items():
-        if (
-            isinstance(expr, Call)
-            and isinstance(pattern, CallPattern)
-            and isinstance(expr.op, tvm.ir.Op)
-            and expr.op.name == op_name
-        ):
-            if result is not None:
-                raise ValueError(f"Found multiple matched call node for {op_name}")
-            result = expr
+    checked = set()
+    vars_to_check = [to_var]
+    while vars_to_check:
+        current_var = vars_to_check.pop()
+        for user in var_usages.get(current_var, []):
+            if user == from_var:
+                return True
+            if user not in checked:
+                checked.add(user)
+                vars_to_check.append(user)
 
-    return result
+    return False
 
 
-def _check_conv2d(
-    match_result: Mapping[DFPattern, Expr],
-    _: Expr,
-):
+def _check_conv2d(context: PatternCheckContext) -> bool:
     """Check if the given conv2d workload can be offloaded to CUTLASS."""
-
-    conv2d_call = _find_call("relax.nn.conv2d", match_result)
-    if conv2d_call is None:
-        return False
-
+    conv2d_call = context.annotated_expr["root"]
     data_layout = conv2d_call.attrs.data_layout
     kernel_layout = conv2d_call.attrs.kernel_layout
     data, weight, *_ = conv2d_call.args
@@ -89,6 +83,15 @@ def _check_conv2d(
     ):
         return False
 
+    if "residual" in context.annotated_expr:
+        residual = context.annotated_expr["residual"]
+        if not isinstance(residual, Var):
+            residual = context.value_to_bound_var[residual]
+        conv2d_var = context.value_to_bound_var[conv2d_call]
+        if _has_dependency(from_var=residual, to_var=conv2d_var, var_usages=context.var_usages):
+            # If residual depends on the result of conv2d, this cannot be handled by cutlass.
+            return False
+
     # pylint: disable=invalid-name
     IC = data.struct_info.shape.values[3]
     OC = weight.struct_info.shape.values[0]
@@ -96,17 +99,10 @@ def _check_conv2d(
     return not IC == OC == conv2d_call.attrs.groups
 
 
-def _check_matmul(
-    match_result: Mapping[DFPattern, Expr],
-    _: Expr,
-) -> bool:
+def _check_matmul(context: PatternCheckContext) -> bool:
     """Check if the given matmul workload can be offloaded to CUTLASS."""
-
-    matmul_call: Call = _find_call("relax.matmul", match_result)
-    if matmul_call is None:
-        return False
-
-    lhs, rhs, *_ = matmul_call.args
+    lhs = context.annotated_expr["lhs"]
+    rhs = context.annotated_expr["rhs"]
 
     lhs_dtype = lhs.struct_info.dtype
     rhs_dtype = rhs.struct_info.dtype
@@ -195,17 +191,25 @@ def residual_block_patterns():
     patterns = []
 
     for activation, name_postfix in [(None, ""), ("relax.nn.relu", "_relu")]:
-        for name, pat, arg_pat, _ in conv2d_patterns()[1:]:
-            for bin_op in ["relax.add", "relax.multiply"]:
-                patterns.append(
-                    (
-                        name + "_residual_" + bin_op.split(".")[-1] + name_postfix,
-                        *make_residual_block_pattern(
-                            (pat, arg_pat), binary_op=bin_op, activation=activation
-                        ),
-                        _check_conv2d,
-                    )
-                )
+        for check, base_patterns in [
+            (_check_conv2d, conv2d_patterns()),
+            (_check_matmul, matmul_patterns()),
+        ]:
+            for name, pat, arg_pat, _ in base_patterns:
+                # Append residual patterns only to those base patterns with bias add,
+                # since conv2d or matmul + residual add without bias is already supported
+                # via conv2d or matmul + bias patterns (the residual input is treated as "bias").
+                if "bias" in name:
+                    for bin_op in ["relax.add", "relax.multiply"]:
+                        patterns.append(
+                            (
+                                name + "_residual_" + bin_op.split(".")[-1] + name_postfix,
+                                *make_residual_block_pattern(
+                                    (pat, arg_pat), binary_op=bin_op, activation=activation
+                                ),
+                                check,
+                            )
+                        )
 
     return patterns
 
@@ -236,7 +240,7 @@ register_patterns(
 )
 
 
-def partition_for_cutlass(mod):
+def partition_for_cutlass(mod, annotate_codegen=True):
     """
     Partition the input module into CUTLASS-supported subgraphs.
 
@@ -245,6 +249,11 @@ def partition_for_cutlass(mod):
     mod: tvm.IRModule
         The IRModule to be partitioned.
 
+    annotate_codegen: bool
+        Whether to wrap each created composite function with another function, whose
+        body consists only of a call to the composite function. See the doc of FuseOpsByPattern
+        for more detail.
+
     Returns
     -------
     mod: tvm.IRModule
@@ -252,6 +261,7 @@ def partition_for_cutlass(mod):
         compiled by the CUTLASS backend.
     """
 
-    cutlass_pattern_entries = get_patterns_with_prefix("cutlass")
-    patterns = [(e.name, e.pattern, e.check) for e in cutlass_pattern_entries]
-    return transform.FuseOpsByPattern(patterns, bind_constants=False, annotate_codegen=True)(mod)
+    patterns = get_patterns_with_prefix("cutlass")
+    return transform.FuseOpsByPattern(
+        patterns, bind_constants=False, annotate_codegen=annotate_codegen
+    )(mod)

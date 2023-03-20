@@ -216,16 +216,107 @@ TVM_DLL Pass AnnotateTIROpPattern();
 TVM_DLL Pass FuseOps(int fuse_opt_level = -1);
 
 /*!
+ * \brief The pattern object used as the input of FuseOpsByPattern. For bindings to be
+ * fused, it needs to be matched with `pattern` and the `check` function needs to return
+ * true.
+ */
+class FusionPatternNode : public Object {
+ public:
+  /*!
+   * \brief The name of pattern. It becomes the value of the kComposite attribute
+   * of a fused function after successful matching
+   */
+  String name;
+
+  /*!
+   * \brief The dataflow pattern that will be used to match expression in the DataflowBlock.
+   * All the call nodes covered by the pattern will be extracted into the fused function.
+   */
+  DFPattern pattern;
+
+  /*!
+   * \brief The map which is used to extract important expressions from the pattern match
+   * result. All DFPattern in this map should be part of the `pattern`.
+   */
+  Map<String, DFPattern> annotation_patterns;
+
+  /*!
+   * \brief The function to determine whether the match result is accepted. This can be
+   * NullOpt if check function is not necessary for this pattern.
+   *
+   * It should have signature
+   * bool(const PatternCheckContext& context)
+   */
+  Optional<PackedFunc> check;
+
+  void VisitAttrs(tvm::AttrVisitor* v) {
+    v->Visit("name", &name);
+    v->Visit("pattern", &pattern);
+    v->Visit("annotation_patterns", &annotation_patterns);
+    v->Visit("check", &check);
+  }
+
+  static constexpr const char* _type_key = "relax.transform.FusionPattern";
+  TVM_DECLARE_FINAL_OBJECT_INFO(FusionPatternNode, Object);
+};
+
+class FusionPattern : public ObjectRef {
+ public:
+  FusionPattern(String name, DFPattern pattern, Map<String, DFPattern> annotation_patterns,
+                Optional<PackedFunc> check);
+
+  FusionPattern(String name, DFPattern pattern) : FusionPattern(name, pattern, {}, NullOpt) {}
+
+  TVM_DEFINE_NOTNULLABLE_OBJECT_REF_METHODS(FusionPattern, ObjectRef, FusionPatternNode);
+};
+
+/*!
+ * \brief The input of FusionPattern::check.
+ */
+class PatternCheckContextNode : public Object {
+ public:
+  /*!
+   * \brief A map which contains all expressions matched by the sub patterns in
+   * FusionPattern::annotation_patterns.
+   */
+  Map<String, Expr> annotated_expr;
+
+  /*!
+   * \brief A map mapping variable definitions to a set of uses.
+   */
+  Map<Var, Array<Var>> var_usages;
+
+  /*!
+   * \brief Map from value to its bound variable.
+   */
+  Map<Expr, Var> value_to_bound_var;
+
+  void VisitAttrs(tvm::AttrVisitor* v) {
+    v->Visit("annotated_expr", &annotated_expr);
+    v->Visit("var_usages", &var_usages);
+    v->Visit("value_to_bound_var", &value_to_bound_var);
+  }
+
+  static constexpr const char* _type_key = "relax.transform.PatternCheckContext";
+  TVM_DECLARE_FINAL_OBJECT_INFO(PatternCheckContextNode, Object);
+};
+
+class PatternCheckContext : public ObjectRef {
+ public:
+  PatternCheckContext(Map<String, Expr> annotated_expr, Map<Var, Array<Var>> var_usages,
+                      Map<Expr, Var> value_to_bound_var);
+
+  TVM_DEFINE_NOTNULLABLE_OBJECT_REF_METHODS(PatternCheckContext, ObjectRef,
+                                            PatternCheckContextNode);
+};
+
+/*!
  * \brief Apply pattern matching to each function in the given module, and group matched
  * expressions into a new function. The end result is similar to FuseOps, but fusion is driven
  * completely by the provided patterns.
  *
- * \param pattern_names The name of each pattern. It becomes the value of the kComposite attribute
- * of a fused function after successful matching.
  * \param patterns The patterns to detect. The order of the patterns determines the order
  * of priority in which they are matched. Higher-priority patterns should come earlier in the list.
- * \param checks The callback functions with type (Map<DFPattern, Expr>, Expr) -> bool. It takes a
- * match result and returns a boolean value to indicate whether the match result is accepted.
  * \param bind_constants Whether or not to keep bound constants of the grouped function.
  * \param annotate_codegen If true, wrap each created composite function with another function,
  * whose body consists only of a call to the composite function, and annotate the outer function
@@ -235,9 +326,7 @@ TVM_DLL Pass FuseOps(int fuse_opt_level = -1);
  * an external backend without using the MergeCompositeFunctions pass.
  * \return The Pass.
  */
-TVM_DLL Pass FuseOpsByPattern(const tvm::Array<runtime::String>& pattern_names,
-                              const tvm::Array<DFPattern>& patterns,
-                              const tvm::Array<PackedFunc>& checks, bool bind_constants = true,
+TVM_DLL Pass FuseOpsByPattern(const tvm::Array<FusionPattern>& patterns, bool bind_constants = true,
                               bool annotate_codegen = false);
 
 /*!
@@ -258,13 +347,6 @@ TVM_DLL Pass MergeCompositeFunctions();
 TVM_DLL Pass FuseTIR();
 
 /*!
- * \brief Remove unused global relax functions in an IRModule.
- * \param entry_functions list of entry functions
- * \return The Pass.
- */
-TVM_DLL Pass RemoveUnusedFunctions(Array<runtime::String> entry_functions);
-
-/*!
  * \brief Run codegen.
  * \param target_options pairs of target name and compilation options
  * \param entry_functions list of entry functions
@@ -280,6 +362,7 @@ TVM_DLL Pass RunCodegen(Optional<Map<String, Map<String, ObjectRef>>> target_opt
  * \return The Pass.
  */
 TVM_DLL Pass SimplifyNormInference();
+
 /*!
  * \brief Returns a pass which replaces PrimFuncs which have matching kOperatorName attribute in \p
  * op_impl_map, with replacement PrimFunc that could possibly have different layouts on i/o
@@ -294,6 +377,34 @@ TVM_DLL Pass SimplifyNormInference();
  */
 TVM_DLL Pass AlterOpImpl(const Map<String, tir::PrimFunc>& op_impl_map,
                          const Map<String, Array<tir::IndexMap>>& op_buffer_transforms);
+
+/*!
+ * \brief Layout conversion pass.
+ * \param desired_layouts The desired layouts for some operators.
+ * \return The Pass.
+ */
+TVM_DLL Pass ConvertLayout(Map<String, Array<String>> desired_layouts);
+
+/*!
+ * \brief Dead code elimination.
+ * \sa RemoveAllUnused
+ * Currently it removes:
+ *   1. Unused local VarBindings in a DataflowBlock.
+ *   2. Unused DataflowBlocks in a function.
+ *   3. Unused Relax functions in the module.
+ *      We detect the call chain from the entry function, and remove all unused functions.
+ * \return The Pass.
+ */
+TVM_DLL Pass DeadCodeElimination(Array<runtime::String> entry_functions);
+
+/*!
+ * \brief Automatic mixed precision pass. Currently the pass assumes the input module to be fp32
+ * only, and will automatically cast fp32 to fp16 for certain ops.
+ * \param out_dtype The output data type of gemm/conv, which is the data type of the accumulator.
+ * \return The Pass.
+ */
+TVM_DLL Pass ToMixedPrecision(const DataType& out_dtype);
+
 }  // namespace transform
 }  // namespace relax
 }  // namespace tvm

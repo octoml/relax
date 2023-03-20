@@ -17,37 +17,16 @@
  * under the License.
  */
 
-/*!
- * \file datatype.h
- * \brief The functions to make Relax datatype operator calls.
- */
-#ifndef TVM_RELAX_OP_TENSOR_DATATYPE_H_
-#define TVM_RELAX_OP_TENSOR_DATATYPE_H_
-
-#include <tvm/relax/attrs/datatype.h>
-
-#include "../op_common.h"
+#include "utils.h"
 
 namespace tvm {
 namespace relax {
 
-/*!
- * \brief Cast input tensor to the given data type.
- * \param x The input data to the operator.
- * \param dtype The target data type
- * \return The casted result.
- */
-Expr astype(Expr x, DataType dtype);
+bool IsNestedTensor(const StructInfo& sinfo) {
+  return IsNestedTensorConditioned(sinfo, [](const TensorStructInfo& sinfo) { return true; });
+}
 
-/*!
- * \brief A wrapper to wrap the input const tensor to the given data type.
- * \param x The input const tensor to the operator.
- * \param dtype The target data type
- * \return The wrapped result.
- */
-Expr wrap_param(Expr x, DataType dtype);
+bool IsNestedTensor(const Expr& expr) { return IsNestedTensor(GetStructInfo(expr)); }
 
 }  // namespace relax
 }  // namespace tvm
-
-#endif  // TVM_RELAX_OP_TENSOR_DATATYPE_H_

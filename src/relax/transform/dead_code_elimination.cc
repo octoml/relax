@@ -19,15 +19,21 @@
  */
 
 /*!
- * \file tvm/relax/transform/remove_unused_funcs.cc
- * \brief Remove unused global relax functions in a IRModule.
+ * \file tvm/relax/transform/dead_code_elimination.cc
+ * \brief Dead code elimination pass.
+ * \sa tvm/relax/ir/binding_rewrite.cc
+ *
+ * Currently it removes:
+ *   1. Unused local VarBindings in a DataflowBlock.
+ *   2. Unused DataflowBlocks in a function.
+ *   3. Unused Relax functions in the module.
+ *      We detect the call chain from the entry function, and remove all unused functions.
  */
 
+#include <tvm/relax/analysis.h>
+#include <tvm/relax/expr.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/transform.h>
-
-#include <unordered_set>
-#include <vector>
 
 #include "utils.h"
 
@@ -81,14 +87,6 @@ class CallTracer : ExprVisitor {
   std::unordered_set<Expr, ObjectPtrHash, ObjectPtrEqual> visiting_;
 };
 
-/*!
- * \brief Remove functions that are not used.
- *
- * \param mod_ IRModule.
- * \param entry_funcs The set of functions that can be entry function.
- *
- * \return The module with dead functions removed.
- */
 IRModule RemoveUnusedFunctions(IRModule mod_, Array<runtime::String> entry_funcs) {
   auto tracer = CallTracer(mod_);
   for (auto entry : entry_funcs) {
@@ -105,16 +103,30 @@ IRModule RemoveUnusedFunctions(IRModule mod_, Array<runtime::String> entry_funcs
   return mod_;
 }
 
-}  // namespace relax
-
-namespace transform {
-Pass RemoveUnusedFunctions(Array<runtime::String> entry_functions) {
-  runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func =
-      [=](IRModule m, PassContext pc) { return relax::RemoveUnusedFunctions(m, entry_functions); };
-  return CreateModulePass(pass_func, 0, "RemoveUnusedFunctions", {});
+IRModule DeadCodeElimination(const IRModule& mod, Array<runtime::String> entry_functions) {
+  // S1: remove unused functions to reduce the number of functions to be analyzed.
+  IRModule tmp_mod = RemoveUnusedFunctions(mod, entry_functions);
+  // S2: remove unused variables in each function.
+  for (const auto& gv : tmp_mod->GetGlobalVars()) {
+    auto func = tmp_mod->Lookup(gv);
+    if (func->IsInstance<FunctionNode>()) {
+      tmp_mod->Update(gv, RemoveAllUnused(Downcast<Function>(func)));
+    }
+  }
+  // S3: remove unused functions again as some callers may be removed in S2.
+  return RemoveUnusedFunctions(tmp_mod, entry_functions);
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.RemoveUnusedFunctions").set_body_typed(RemoveUnusedFunctions);
+namespace transform {
+
+Pass DeadCodeElimination(Array<runtime::String> entry_functions) {
+  runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func =
+      [=](IRModule m, PassContext pc) { return relax::DeadCodeElimination(m, entry_functions); };
+  return CreateModulePass(pass_func, 1, "DeadCodeElimination", {});
+}
+
+TVM_REGISTER_GLOBAL("relax.transform.DeadCodeElimination").set_body_typed(DeadCodeElimination);
 
 }  // namespace transform
+}  // namespace relax
 }  // namespace tvm
