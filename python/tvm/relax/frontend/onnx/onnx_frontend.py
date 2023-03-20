@@ -878,9 +878,7 @@ class Slice(OnnxOpConverter):
             assert all(len(i) == 1 for i in [starts, ends, steps])
             sliced_values = shape_data[starts[0] : ends[0] : steps[0]]
             return relax.const(sliced_values, "int64")
-        return emit_te_with_span(
-            bb, topi.strided_slice, data, starts, ends, strides=steps, axes=axes
-        )
+        return attach_span(relax.op.strided_slice(data, axes, starts, ends, steps))
 
 
 class Pad(OnnxOpConverter):
