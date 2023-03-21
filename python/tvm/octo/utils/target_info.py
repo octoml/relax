@@ -122,7 +122,7 @@ def get_cuda_target() -> tvm.target.Target:
         A TVM target that fully describes the current devices CPU.
     """
     # If we cant find nvidia-smi, we wont be able to extract more information.
-    if shutil.which("llc") is None:
+    if shutil.which("nvidia-smi") is None:
         return tvm.target.Target("cuda")
 
     # Otherwise, query nvidia-smi to learn which gpu this is.
