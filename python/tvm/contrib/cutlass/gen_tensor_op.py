@@ -738,47 +738,4 @@ def instantiate_template(func_name, annotations, func_args):
         code = instantiate_attention_template(attrs, func_args)
         return CodegenResult(code, headers)
 
-    elif "attention" in func_name:
-        headers.append("kernel_forward.h")
-        data_type = dtype_map[annotations["arg0_dtype"]]
-        attrs["data_type"] = DataTypeTag[data_type]
-        attrs["num_batches"] = b = annotations["num_batches"]
-        attrs["num_queries"] = s = annotations["num_queries"]
-        attrs["num_keys"] = annotations["num_keys"]
-        attrs["num_heads"] = n = annotations["num_heads"]
-        attrs["head_dim"] = h = annotations["head_dim"]
-        attrs["head_dim_value"] = h_v = annotations["head_dim_value"]
-        data_type_size = DataTypeSize[data_type]
-        if (data_type_size * h // 8) % 16 == 0 and (data_type_size * h_v // 8) % 16 == 0:
-            attrs["kIsAligned"] = True
-        elif (h % 4 == 0) and (h_v % 4 == 0):
-            attrs["kIsAligned"] = False
-        else:
-            raise NotImplementedError()
-        if h_v > 64:
-            attrs["kQueriesPerBlock"] = 32
-            attrs["kKeysPerBlock"] = 128
-            attrs["kSingleValueIteration"] = h_v <= 128
-        else:
-            attrs["kQueriesPerBlock"] = 64
-            attrs["kKeysPerBlock"] = 64
-            attrs["kSingleValueIteration"] = True
-        attrs["output_size"] = b * s * n * h_v
-        attrs["arch"] = "cutlass::arch::Sm{}".format(annotations["arch"])
-        attrs["kSupportsDropout"] = False
-        if len(func_args) > 3:
-            attrs["kSupportsBias"] = True
-            if len(annotations["arg3_shape"]) == 4:
-                attrs["bias_layout"] = "BNSS'"
-            elif len(annotations["arg3_shape"]) == 3:
-                attrs["bias_layout"] = "B1SS'"
-            elif len(annotations["arg3_shape"]) == 2:
-                attrs["bias_layout"] = "B11S'"
-            else:
-                raise NotImplementedError()
-        else:
-            attrs["kSupportsBias"] = False
-        code = instantiate_attention_template(attrs, func_args)
-        return CodegenResult(code, headers)
-
     raise ValueError("Do not have a template for {}".format(func_name))

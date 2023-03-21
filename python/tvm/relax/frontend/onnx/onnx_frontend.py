@@ -602,9 +602,10 @@ class CumSum(OnnxOpConverter):
             axis = int(inputs[1].data.numpy())
         else:
             axis = None
+        data = attach_span(relax.op.cumsum(data, axis))
         if attr.get("reverse", 0) != 0:
             data = emit_te_with_span(bb, topi.flip, data, axis=axis if axis else 0)
-        return attach_span(relax.op.cumsum(data, axis))
+        return data
 
 
 class Squeeze(OnnxOpConverter):
