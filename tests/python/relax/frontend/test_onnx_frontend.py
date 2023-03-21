@@ -1151,30 +1151,38 @@ def test_slice():
 # TODO Enable dynamism
 @pytest.mark.parametrize("dynamic", [False])
 def test_attention(dynamic):
-    def verify_attention(input_, weight, bias, mask_index, num_heads):
+    def verify_attention(
+        input_,
+        weight,
+        bias,
+        mask_index,
+        num_heads,
+        mask_filter_value,
+        qkv_hidden_sizes,
+        relative_position_bias,
+    ):
         node = onnx.helper.make_node(
             "Attention",
-            inputs=["input", "weight", "bias", "mask_index"],
-            outputs=["output", "present"],
+            inputs=["input", "weight", "bias", "mask_index", "", "relative_position_bias"],
+            outputs=["output"],
             domain="com.microsoft",
             num_heads=num_heads,
+            mask_filter_value=mask_filter_value,
+            qkv_hidden_sizes=qkv_hidden_sizes,
         )
-
-        present_output_shape = (2, batch_size, num_heads, sequence_length, head_size)
 
         input_shape = list(input_.shape)
         weight_shape = list(weight.shape)
         bias_shape = list(bias.shape)
         mask_shape = list(mask_index.shape)
+        relative_position_bias_shape = list(relative_position_bias.shape)
         output_shape = list(input_.shape)
-        present_shape = list(present_output_shape)
         if dynamic:
             input_shape = ["?" for _ in range(len(input_.shape))]
             weight_shape = ["?" for _ in range(len(weight.shape))]
             bias_shape = ["?" for _ in range(len(bias.shape))]
             mask_shape = ["?" for _ in range(len(mask_index.shape))]
             output_shape = ["?" for _ in range(len(input_.shape))]
-            present_shape = ["?" for _ in range(len(present_output_shape))]
 
         graph = helper.make_graph(
             [node],
@@ -1184,10 +1192,12 @@ def test_attention(dynamic):
                 helper.make_tensor_value_info("weight", TensorProto.FLOAT, weight_shape),
                 helper.make_tensor_value_info("bias", TensorProto.FLOAT, bias_shape),
                 helper.make_tensor_value_info("mask_index", TensorProto.INT32, mask_shape),
+                helper.make_tensor_value_info(
+                    "relative_position_bias", TensorProto.FLOAT, relative_position_bias_shape
+                ),
             ],
             outputs=[
                 helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape),
-                helper.make_tensor_value_info("present", TensorProto.FLOAT, present_shape),
             ],
         )
 
@@ -1195,7 +1205,13 @@ def test_attention(dynamic):
 
         check_correctness(
             model,
-            inputs={"input": input_, "weight": weight, "bias": bias, "mask_index": mask_index},
+            inputs={
+                "input": input_,
+                "weight": weight,
+                "bias": bias,
+                "mask_index": mask_index,
+                "relative_position_bias": relative_position_bias,
+            },
         )
         # "present" output should be nullptr when the "past" input isn't included,
         # but ort requires an output shape to be specified?
@@ -1209,19 +1225,32 @@ def test_attention(dynamic):
         #     atol=1e-4,
         # )
 
-    hidden_size = 384
+    input_hidden_size = 128
     batch_size = 4
     sequence_length = 4
     num_heads = 12
-    head_size = 32
+    qkv_hidden_sizes = [192, 192, 96]
+    mask_filter_value = -512.0
 
     dtype = "float32"
-    input_array = np.random.random((batch_size, sequence_length, hidden_size)).astype(dtype)
-    weight = np.random.normal(size=(hidden_size, 3 * hidden_size)).astype(dtype) * 0.1
-    bias = np.random.randn(3 * hidden_size).astype(dtype)
-    mask_index = np.full((batch_size, sequence_length), 1).astype("int32")
+    input_array = np.random.random((batch_size, sequence_length, input_hidden_size)).astype(dtype)
+    weight = np.random.normal(size=(input_hidden_size, sum(qkv_hidden_sizes))).astype(dtype) * 0.1
+    bias = np.random.randn(sum(qkv_hidden_sizes)).astype(dtype)
+    mask_index = np.random.randint(2, size=(batch_size, sequence_length)).astype("int32")
+    relative_position_bias = np.random.randn(
+        batch_size, num_heads, sequence_length, sequence_length
+    ).astype(dtype)
 
-    verify_attention(input_array, weight, bias, mask_index, num_heads)
+    verify_attention(
+        input_array,
+        weight,
+        bias,
+        mask_index,
+        num_heads,
+        mask_filter_value,
+        qkv_hidden_sizes,
+        relative_position_bias,
+    )
 
 
 @pytest.mark.parametrize("dynamic", [True, False])
