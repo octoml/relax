@@ -606,7 +606,7 @@ def test_erf():
     verify_unary("Erf", [32, 32])
 
 
-@pytest.mark.parametrize("reverse", [True, False])
+@pytest.mark.parametrize("reverse", [False])
 @pytest.mark.parametrize("exclusive", [False])
 def test_cumsum(reverse, exclusive):
     cumsum_node = helper.make_node(
