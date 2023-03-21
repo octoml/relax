@@ -30,7 +30,9 @@ from .schedule_cumsum import ScheduleCumsum
 
 
 def load_onnx_model(
-    model_file: Union[str, Path, onnx.ModelProto], shape_dict: Optional[Dict[str, List]] = None
+    model_file: Union[str, Path, onnx.ModelProto],
+    shape_dict: Optional[Dict[str, List]] = None,
+    dtype_dict: Optional[Union[str, Dict[str, str]]] = "float32",
 ) -> tvm.IRModule:
     """Convert an input onnx model into a relax module.
 
@@ -43,6 +45,10 @@ def load_onnx_model(
     shape_dict : Optional[Dict[str, List]]
         An optional dictionary that maps inputs to specific shapes. If not provided,
         the default values in the onnx graph will be used.
+
+    dtype_str: Optional[Union[str, Dict[str, str]]]
+        An optional string or dictionary that maps inputs to its specific data type.
+        If not provided, the default type of "float32" will be used.
 
     Returns
     -------
@@ -63,7 +69,7 @@ def load_onnx_model(
     model_file = gs.export_onnx(sorted_graph)
 
     # Convert the graph into a relax implementation.
-    relax_mod = from_onnx(model_file, shape_dict=shape_dict)
+    relax_mod = from_onnx(model_file, shape_dict=shape_dict, dtype_dict=dtype_dict)
 
     return relax_mod
 
@@ -112,6 +118,7 @@ def compile(
     model: Union[str, Path, onnx.ModelProto],
     target: Optional[tvm.target.Target] = None,
     shape_dict: Optional[Dict[str, List]] = None,
+    dtype_dict: Optional[Union[str, Dict[str, str]]] = "float32",
 ):
     """Entrypoint to compiling a model using the Unity Flow.
 
@@ -128,6 +135,10 @@ def compile(
     shape_dict : Optional[Dict[str, List]]
         An optional dictionary that maps inputs to specific shapes. If not provided,
         the default values in the onnx graph will be used.
+
+    type_dict : Optional[Union[str, Dict[str, str]]]
+        An optional string or dictionary that maps inputs to its specific data type.
+        If not provided, the default type of "float32" will be used.
 
     Returns
     -------
@@ -146,7 +157,7 @@ def compile(
         target = tvm.target.Target(target)
 
     # Convert model into a relax module.
-    relax_mod = load_onnx_model(model, shape_dict)
+    relax_mod = load_onnx_model(model, shape_dict=shape_dict, dtype_dict=dtype_dict)
 
     # Extract information about input shapes and types so we can
     # randomly generate them later if needed.

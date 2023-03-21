@@ -35,8 +35,7 @@ Not all TVM kernels currently support dynamic shapes, please file an issue on
 github.com/apache/tvm/issues if you hit an error with dynamic kernels.
 """
 import warnings
-from typing import Union, List, Dict, Tuple, Any
-import onnx.onnx_ml_pb2
+from typing import Union, Tuple, Optional, List, Dict, Any
 
 import numpy as _np
 
@@ -46,6 +45,8 @@ from tvm.ir import IRModule
 from tvm.ir.supply import NameSupply
 from tvm.relax import testing
 from tvm.relax.frontend.common import attach_span, emit_te_with_span
+
+import onnx.onnx_ml_pb2
 
 
 def get_type(elem_type: Union[str, int]) -> str:
@@ -2026,8 +2027,8 @@ class ONNXGraphImporter:
 
 def from_onnx(
     model: onnx.onnx_ml_pb2.GraphProto,
-    shape_dict: Dict[str, List] = None,
-    dtype_dict: str = "float32",
+    shape_dict: Optional[Dict[str, List]] = None,
+    dtype_dict: Optional[Union[str, Dict[str, str]]] = "float32",
     opset: int = None,
     sanitize_input_names: bool = True,
 ) -> Tuple[IRModule, Dict]:
@@ -2042,7 +2043,7 @@ def from_onnx(
         ONNX ModelProto after ONNX v1.1.0
     shape_dict : dict of str to tuple, optional
         The input shape to the graph
-    dtype_dict : str or dict of str to str
+    dtype_dict : str or dict of str to str, optional
         The input types to the graph
     opset : int, optional
         Override to autodetected opset.
