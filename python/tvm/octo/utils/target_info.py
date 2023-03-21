@@ -135,7 +135,22 @@ def get_cuda_target() -> tvm.target.Target:
     # To do so, lowercase the name and replace spaces with dases.
     target_name = "nvidia/" + product_name.replace(" ", "-").lower()
 
-    return tvm.target.Target(target_name)
+    target = tvm.target.Target(target_name)
+
+    # Attach libs if available.
+    # Check if thrust symbols are defined.
+    libs = []
+    if tvm._ffi.get_global_func("tvm.contrib.thrust.sum_scan", allow_missing=True):
+        libs.append("thrust")
+
+    # Append libs to target.
+    target = str(target)
+    if libs:
+        target += " -libs="
+        for lib in libs:
+            target += f"{lib},"
+
+    return tvm.target.Target(target)
 
 
 def get_default_threads() -> int:
