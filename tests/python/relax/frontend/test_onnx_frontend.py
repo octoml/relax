@@ -996,7 +996,10 @@ def test_all_reduce_funcs(func, dynamic):
         )
 
 
-def test_arg_min_max():
+@pytest.mark.parametrize("in_dtype", [np.float32, np.int32])
+@pytest.mark.parametrize("axis", [None, 0, 1, 2])
+@pytest.mark.parametrize("keepdims", [None, True, False])
+def test_arg_min_max(in_dtype, axis, keepdims):
     def verify_arg_min_max(input_dim, in_dtype, op_name="ArgMax", axis=None, keepdims=None):
         a_np1 = np.random.uniform(-10, 10, input_dim).astype(in_dtype)
         out_shape = list(a_np1.shape)
@@ -1025,11 +1028,8 @@ def test_arg_min_max():
         model = helper.make_model(graph, producer_name="arg_min_max_test")
         check_correctness(model)
 
-    for in_dtype in [np.float32, np.int32]:
-        for axis in [None, 0, 1, 2]:
-            for keepdims in [None, True, False]:
-                verify_arg_min_max([3, 4, 4], in_dtype, "ArgMax", axis, keepdims)
-                verify_arg_min_max([3, 4, 4], in_dtype, "ArgMin", axis, keepdims)
+    verify_arg_min_max([3, 4, 4], in_dtype, "ArgMax", axis, keepdims)
+    verify_arg_min_max([3, 4, 4], in_dtype, "ArgMin", axis, keepdims)
 
 
 @pytest.mark.parametrize("dynamic", [False, True])
