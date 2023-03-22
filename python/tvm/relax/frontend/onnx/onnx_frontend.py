@@ -1008,182 +1008,147 @@ class Attention(OnnxOpConverter):
     def _impl_v1(cls, bb, inputs, attr):
         num_heads = attr["num_heads"]
 
+        assert "do_rotary" not in attr, "rotary position embedding is not currently supported"
         assert (
-            "qkv_hidden_sizes" not in attr
-        ), "different hidden sizes for Q, K, V are not currently supported"
-        assert "unidirectional" not in attr, "unidirectional attention not current supported"
+            "past_present_share_buffer" not in attr
+        ), "past state for key and value is not currently supported"
+        assert "scale" not in attr, "custom scale is not currently supported"
+        assert "unidirectional" not in attr, "unidirectional attention is not currently supported"
 
-        # (batch, seq, in_hidden)
-        input_emb = inputs[0]
+        if "mask_filter_value" in attr:
+            mask_filter_value = attr["mask_filter_value"]
+        else:
+            mask_filter_value = -10000.0
 
-        # (in_hidden, 3 * out_hidden), where out_hidden = num_heads * head_size
+        # (batch_size, sequence_length, input_hidden_size)
+        input_emb = bb.normalize(inputs[0])
+
+        # (input_hidden_size, hidden_size + hidden_size + v_hidden_size)
         weight = bb.normalize(inputs[1])
 
-        # (3 * out_hidden,)
-        bias = bb.normalize(inputs[2])
+        def optional_input(k: int):
+            if inputs[k] is not None:
+                return bb.normalize(inputs[k])
+            else:
+                return None
 
-        # 1. (    batch,              1,        max_seq, max_seq)
-        # 2. (    batch, past_seq + seq,)
-        # 3. (    batch,            seq, past_seq + seq,)
-        # 4. (    batch,)
-        # 5. (2 * batch,)
-        # For now, we only support case 2.
-        mask_index = bb.normalize(inputs[3])
+        # (hidden_size + hidden_size + v_hidden_size)
+        bias = optional_input(2)
 
-        # (2, batch, num_heads, past_seq, head_size)
-        past = inputs[4]
+        # 1. (    batch_size,             1,   max_seq_len, max_seq_len,)
+        # 2. (    batch_size, total_seq_len,)
+        # 3. (    batch_size,       seq_len, total_seq_len,)
+        # 4. (    batch_size,)
+        # 5. (2 * batch_size,)
+        # For now, we only support case 2 & 3.
+        mask_index = optional_input(3)
 
-        # (batch, num_heads, seq, seq)
-        extra_add = inputs[5]
-        input_emb_shape = [val.value for val in input_emb.struct_info.shape.values]
-        (batch_size, seq_len, _) = input_emb_shape
+        # (2, batch_size, num_heads, past_sequence_length, head_size)
+        assert inputs[4] is None, "past state for key and value is not currently supported"
 
-        (out_hidden_x3,) = [val.value for val in bias.struct_info.shape.values]
-        assert out_hidden_x3 % 3 == 0, "bias shape should be divisible by 3"
-        out_hidden = out_hidden_x3 // 3
+        # (batch_size, num_heads, sequence_length, total_sequence_length)
+        qk_bias = optional_input(5)
+
+        assert inputs[6] is None, "past_sequence_length is not currently supported"
+
+        (batch_size, seq_len, input_hidden_size) = [
+            val.value for val in input_emb.struct_info.shape.values
+        ]
+        weight_shape = [val.value for val in weight.struct_info.shape.values]
+
         assert (
-            out_hidden % num_heads == 0
-        ), "output hidden size should be divisible by number of attention heads"
-        head_size = out_hidden // num_heads
+            weight_shape[0] == input_hidden_size
+        ), "input and weight should share the same input hiden size"
+
+        if "qkv_hidden_sizes" in attr:
+            assert (
+                attr["qkv_hidden_sizes"][0] == attr["qkv_hidden_sizes"][1]
+            ), "Q and K should share the same hidden sizes"
+            hidden_size, _, hidden_size_v = attr["qkv_hidden_sizes"]
+        else:
+            hidden_size = hidden_size_v = weight_shape[1] // 3
 
         assert (
-            mask_index is not None
-        ), "Attention import currently only supports required mask_index"
-        mask_index_shape = [val.value for val in mask_index.struct_info.shape.values]
-        assert (
-            len(mask_index_shape) == 2
-            and mask_index_shape[0] == batch_size
-            and mask_index_shape[1] == seq_len
-        ), "currently only support (batch_size, sequence_length) mask index"
+            hidden_size % num_heads == 0
+        ), "hidden size should be divisible by number of attention heads"
+        head_size = hidden_size // num_heads
+        head_size_v = hidden_size_v // num_heads
 
-        assert past is None, "past K, V state is not currently supported"
-        assert extra_add is None, "extra add to QxK not currently supported"
-
-        split_1 = bb.normalize(attach_span(relax.op.split(weight, 3, 1)))
-        # split weight and biases and do the matmuls
-        w_Q, w_K, w_V = split_1[0], split_1[1], split_1[2]
-
-        split_2 = attach_span(relax.op.split(bias, 3, 0))
-        split_2 = bb.normalize(attach_span(relax.op.split(bias, 3, 0)))
-        b_Q, b_K, b_V = split_2[0], split_2[1], split_2[2]
-        # need to merge batch dimensions since TVM matmul is 2D
-
-        # TODO(@yuchen): check reverse_reshape, a hack here
-        input_emb = bb.normalize(
-            attach_span(
-                relax.op.reshape(
-                    input_emb, (input_emb_shape[0] * input_emb_shape[1], input_emb_shape[2])
-                )
+        if mask_index is not None:
+            mask_index_shape = [val.value for val in mask_index.struct_info.shape.values]
+            assert mask_index_shape in (
+                [batch_size, seq_len],
+                [
+                    batch_size,
+                    seq_len,
+                    seq_len,
+                ],
+            ), """mask index should be in shape of (batch_size, seq_len),
+            or (batch_size, seq_len, seq_len)"""
+            mask_bias = attach_span(
+                relax.op.subtract(relax.const(1, dtype=mask_index.struct_info.dtype), mask_index)
             )
-        )
-
-        mul = bb.normalize(attach_span(relax.op.matmul(input_emb, w_Q)))
-
-        Q = bb.normalize(attach_span(relax.op.add(mul, b_Q)))
-
-        mul2 = bb.normalize(attach_span(relax.op.matmul(input_emb, w_K)))
-        K = bb.normalize(attach_span(relax.op.add(mul2, b_K)))
-
-        mul3 = bb.normalize(attach_span(relax.op.matmul(input_emb, w_V)))
-        V = bb.normalize(attach_span(relax.op.add(mul3, b_V)))
-
-        # massage tensors in preparation for batched matmul
-        def massage(bb, tensor):
-            tensor = bb.normalize(
-                attach_span(relax.op.reshape(tensor, (batch_size, seq_len, num_heads, head_size)))
-            )
-
-            # (batch_size, num_heads, seq_len, head_size)
-            tensor = bb.normalize(attach_span(relax.op.permute_dims(tensor, [0, 2, 1, 3])))
-            tensor_shape = [val.value for val in tensor.struct_info.shape.values]
-
-            # (batch_size * num_heads, seq_len, head_size)
-            # TODO(@yuchen): check reverse_reshape, hack here
-            return bb.normalize(
+            mask_bias = attach_span(relax.op.astype(mask_bias, dtype=input_emb.struct_info.dtype))
+            mask_bias = bb.normalize(
                 attach_span(
-                    relax.op.reshape(
-                        tensor,
-                        (tensor_shape[0] * tensor_shape[1], tensor_shape[2], tensor_shape[3]),
+                    relax.op.multiply(
+                        mask_bias,
+                        relax.const(mask_filter_value, dtype=input_emb.struct_info.dtype),
                     )
                 )
             )
+            if qk_bias is None:
+                qk_bias = mask_bias
+            else:
+                if len(mask_index_shape) == 2:
+                    mask_bias = bb.normalize(
+                        attach_span(relax.op.reshape(mask_bias, [batch_size, 1, 1, seq_len]))
+                    )
+                elif len(mask_index_shape) == 3:
+                    mask_bias = bb.normalize(
+                        attach_span(relax.op.reshape(mask_bias, [batch_size, 1, seq_len, seq_len]))
+                    )
+                qk_bias = bb.normalize(attach_span(relax.op.add(qk_bias, mask_bias)))
 
-        Q = massage(bb, Q)
-        K = massage(bb, K)
-        V = massage(bb, V)
+        split_weight = bb.normalize(
+            attach_span(relax.op.split(weight, [hidden_size, hidden_size * 2], 1))
+        )
+        # split weight and biases and do the matmuls
+        weight_q, weight_k, weight_v = split_weight[0], split_weight[1], split_weight[2]
 
-        K_present = bb.normalize(
-            attach_span(relax.op.reshape(K, (batch_size, num_heads, seq_len, head_size)))
-        )
-        V_present = bb.normalize(
-            attach_span(relax.op.reshape(V, (batch_size, num_heads, seq_len, head_size)))
-        )
-        present = attach_span(
-            relax.op.concat(
-                [
-                    attach_span(relax.op.expand_dims(K_present, 0)),
-                    attach_span(relax.op.expand_dims(V_present, 0)),
-                ]
+        Q = attach_span(relax.op.matmul(input_emb, weight_q))
+        K = attach_span(relax.op.matmul(input_emb, weight_k))
+        V = attach_span(relax.op.matmul(input_emb, weight_v))
+
+        if bias:
+            bias_shape = [val.value for val in bias.struct_info.shape.values]
+            assert (
+                bias_shape[0] == weight_shape[1]
+            ), "bias and weight should share the same hidden size sum"
+            split_bias = bb.normalize(
+                attach_span(relax.op.split(bias, [hidden_size, hidden_size * 2], 0))
             )
+            bias_q, bias_k, bias_v = split_bias[0], split_bias[1], split_bias[2]
+            Q = attach_span(relax.op.add(Q, bias_q))
+            K = attach_span(relax.op.add(K, bias_k))
+            V = attach_span(relax.op.add(V, bias_v))
+
+        Q = bb.normalize(
+            attach_span(relax.op.reshape(Q, (batch_size, seq_len, num_heads, head_size)))
         )
-
-        att_scores = bb.normalize(
-            attach_span(relax.op.matmul(Q, attach_span(relax.op.permute_dims(K, [0, 2, 1]))))
+        K = bb.normalize(
+            attach_span(relax.op.reshape(K, (batch_size, seq_len, num_heads, head_size)))
         )
-        score_dtype = att_scores.checked_type.dtype
-        att_scores = bb.normalize(
-            attach_span(
-                relax.op.multiply(
-                    att_scores,
-                    relax.const(1 / _np.sqrt(head_size), dtype=att_scores.checked_type.dtype),
-                )
-            )
+        V = bb.normalize(
+            attach_span(relax.op.reshape(V, (batch_size, seq_len, num_heads, head_size_v)))
         )
-        att_scores = bb.normalize(
-            attach_span(relax.op.reshape(att_scores, (batch_size, num_heads, seq_len, seq_len)))
-        )
-
-        # build the attention mask
-        att_mask = bb.normalize(attach_span(relax.op.astype(mask_index, score_dtype)))
-        att_mask = attach_span(relax.op.expand_dims(att_mask, 1))
-        att_mask = attach_span(relax.op.expand_dims(att_mask, 1))
-        att_mask = attach_span(relax.op.subtract(relax.const(1, dtype=score_dtype), att_mask))
-        att_mask = attach_span(relax.op.multiply(att_mask, relax.const(-10000, dtype=score_dtype)))
-
-        # apply the mask
-        att_scores = attach_span(relax.op.add(att_scores, att_mask))
-        att_scores = bb.normalize(
-            attach_span(relax.op.reshape(att_scores, (batch_size * num_heads, seq_len, seq_len)))
-        )
-
-        att_probs = attach_span(relax.op.nn.softmax(att_scores, axis=-1))
-
-        output = bb.normalize(attach_span(relax.op.matmul(att_probs, V)))
-
-        # TODO(@yuchen): check reverse_reshape, hack here
-        output_shape = [val.value for val in output.struct_info.shape.values]
+        output = attach_span(relax.op.nn.attention(Q, K, V, qk_bias))
         output = bb.normalize(
-            attach_span(
-                relax.op.reshape(
-                    output,
-                    (
-                        int(output_shape[0]) // num_heads,
-                        num_heads,
-                        int(output_shape[1]),
-                        int(output_shape[2]),
-                    ),
-                )
-            )
+            attach_span(relax.op.reshape(output, (batch_size, seq_len, num_heads * head_size_v)))
         )
-
-        output = bb.normalize(attach_span(relax.op.permute_dims(output, axes=[0, 2, 1, 3])))
-        output_shape = [val.value for val in output.struct_info.shape.values]
-        output = bb.normalize(
-            attach_span(
-                relax.op.reshape(output, (int(output_shape[0]), int(output_shape[1]), out_hidden))
-            )
-        )
-        return relax.Tuple([output, present])
+        # add placeholder for optional present state supported in the future
+        placeholder = relax.const(0, dtype="float32")
+        return relax.Tuple([output, placeholder])
 
 
 class Identity(OnnxOpConverter):
