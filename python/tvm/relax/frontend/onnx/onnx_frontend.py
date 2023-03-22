@@ -794,7 +794,7 @@ class Exp(OnnxOpConverter):
         valid_types = ["float", "float32", "double", "float64", "float16"]
         cls._check_type(data.checked_type.dtype, valid_types)
 
-        return relax.op.exp(data)
+        return attach_span(relax.op.exp(data))
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
@@ -802,7 +802,7 @@ class Exp(OnnxOpConverter):
         valid_types = ["float", "float32", "double", "float64", "float16", "bfloat16"]
         cls._check_type(data.checked_type.dtype, valid_types)
 
-        return relax.op.exp(data)
+        return attach_span(relax.op.exp(data))
 
 
 class Less(OnnxOpConverter):
@@ -1564,13 +1564,13 @@ class ArgMax(OnnxOpConverter):
     def _impl_v1(cls, bb, inputs, attr):
         data = inputs[0]
         axis, keepdims = cls._check_attrs(data, attr, False)
-        return relax.op.argmax(data, axis, keepdims)
+        return attach_span(relax.op.argmax(data, axis, keepdims))
 
     @classmethod
     def _impl_v11(cls, bb, inputs, attr):
         data = inputs[0]
         axis, keepdims = cls._check_attrs(data, attr)
-        return relax.op.argmax(data, axis, keepdims)
+        return attach_span(relax.op.argmax(data, axis, keepdims))
 
     @classmethod
     def _impl_v12(cls, bb, inputs, attr):
@@ -1582,7 +1582,7 @@ class ArgMax(OnnxOpConverter):
             raise tvm.error.OpAttributeUnImplemented(
                 "'select_last_index' attribute has not been supported yet"
             )
-        return relax.op.argmax(data, axis, keepdims)
+        return attach_span(relax.op.argmax(data, axis, keepdims))
 
 
 class ArgMin(OnnxOpConverter):
@@ -1602,13 +1602,13 @@ class ArgMin(OnnxOpConverter):
     def _impl_v1(cls, bb, inputs, attr):
         data = inputs[0]
         axis, keepdims = cls._check_attrs(data, attr, False)
-        return relax.op.argmin(data, axis, keepdims)
+        return attach_span(relax.op.argmin(data, axis, keepdims))
 
     @classmethod
     def _impl_v11(cls, bb, inputs, attr):
         data = inputs[0]
         axis, keepdims = cls._check_attrs(data, attr)
-        return relax.op.argmin(data, axis, keepdims)
+        return attach_span(relax.op.argmin(data, axis, keepdims))
 
     @classmethod
     def _impl_v12(cls, bb, inputs, attr):
@@ -1620,7 +1620,7 @@ class ArgMin(OnnxOpConverter):
             raise tvm.error.OpAttributeUnImplemented(
                 "'select_last_index' attribute has not been supported yet"
             )
-        return relax.op.argmin(data, axis, keepdims)
+        return attach_span(relax.op.argmin(data, axis, keepdims))
 
 
 class SkipLayerNormalization(OnnxOpConverter):
