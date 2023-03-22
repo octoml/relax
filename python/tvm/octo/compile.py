@@ -296,7 +296,6 @@ def compile(
         input_dtype = inp.struct_info.dtype
         input_info[inp.name_hint] = (input_shape, input_dtype)
 
-    schedule_map = {}
     # If target is gpu and compiled with Cutlass, offload where possible.
     if target.kind.name == "cuda":
         # Schedule any cumsum operators if needed. We need to do this explicitly
@@ -308,6 +307,9 @@ def compile(
             relax_mod, schedule_map = offload_cutlass(relax_mod, target)
         else:
             print("Cutlass backend not detected. Consider enabling it for better performance.")
+    else:
+        assert target.kind.name == "llvm"
+        schedule_map = construct_schedule_map(relax_mod)
 
     # Perform legalization to lower Relax operators.
     relax_mod = relax.transform.LegalizeOps()(relax_mod)
