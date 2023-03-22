@@ -1049,11 +1049,15 @@ class Attention(OnnxOpConverter):
 
         if mask_index is not None:
             mask_index_shape = [val.value for val in mask_index.struct_info.shape.values]
-            assert mask_index_shape == [batch_size, seq_len] or mask_index_shape == [
-                batch_size,
-                seq_len,
-                seq_len,
-            ], "mask index should be shape of (batch_size, seq_len), or (batch_size, seq_len, seq_len)"
+            assert mask_index_shape in (
+                [batch_size, seq_len],
+                [
+                    batch_size,
+                    seq_len,
+                    seq_len,
+                ],
+            ), """mask index should be in shape of (batch_size, seq_len),
+            or (batch_size, seq_len, seq_len)"""
             mask_bias = attach_span(
                 relax.op.subtract(relax.const(1, dtype=mask_index.struct_info.dtype), mask_index)
             )
