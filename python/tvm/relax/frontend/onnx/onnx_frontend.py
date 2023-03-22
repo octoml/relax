@@ -1582,6 +1582,82 @@ class ReduceL2(OnnxOpConverter):
         )
 
 
+class ArgMax(OnnxOpConverter):
+    """Converts an onnx ArgMax node into an equivalent Relax expression."""
+
+    @classmethod
+    def _check_attrs(cls, data, attr, shift_axis=True):
+        dims_num = len(data.struct_info.shape)
+        axis = attr.get("axis", 0)
+        if shift_axis and axis < 0:
+            axis += dims_num
+        assert 0 <= axis < dims_num, "Axis is out of bounds"
+        keepdims = attr.get("keepdims", True)
+        return axis, keepdims
+
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        data = inputs[0]
+        axis, keepdims = cls._check_attrs(data, attr, False)
+        return relax.op.argmax(data, axis, keepdims)
+
+    @classmethod
+    def _impl_v11(cls, bb, inputs, attr):
+        data = inputs[0]
+        axis, keepdims = cls._check_attrs(data, attr)
+        return relax.op.argmax(data, axis, keepdims)
+
+    @classmethod
+    def _impl_v12(cls, bb, inputs, attr):
+        data = inputs[0]
+        axis, keepdims = cls._check_attrs(data, attr)
+        select_last_index = attr.get("select_last_index", False)
+        if select_last_index:
+            # TODO(vvchernov): support attr
+            raise tvm.error.OpAttributeUnImplemented(
+                "'select_last_index' attribute has not been supported yet"
+            )
+        return relax.op.argmax(data, axis, keepdims)
+
+
+class ArgMin(OnnxOpConverter):
+    """Converts an onnx ArgMin node into an equivalent Relax expression."""
+
+    @classmethod
+    def _check_attrs(cls, data, attr, shift_axis=True):
+        dims_num = len(data.struct_info.shape)
+        axis = attr.get("axis", 0)
+        if shift_axis and axis < 0:
+            axis += dims_num
+        assert 0 <= axis < dims_num, "Axis is out of bounds"
+        keepdims = attr.get("keepdims", True)
+        return axis, keepdims
+
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        data = inputs[0]
+        axis, keepdims = cls._check_attrs(data, attr, False)
+        return relax.op.argmin(data, axis, keepdims)
+
+    @classmethod
+    def _impl_v11(cls, bb, inputs, attr):
+        data = inputs[0]
+        axis, keepdims = cls._check_attrs(data, attr)
+        return relax.op.argmin(data, axis, keepdims)
+
+    @classmethod
+    def _impl_v12(cls, bb, inputs, attr):
+        data = inputs[0]
+        axis, keepdims = cls._check_attrs(data, attr)
+        select_last_index = attr.get("select_last_index", False)
+        if select_last_index:
+            # TODO(vvchernov): support attr
+            raise tvm.error.OpAttributeUnImplemented(
+                "'select_last_index' attribute has not been supported yet"
+            )
+        return relax.op.argmin(data, axis, keepdims)
+
+
 class SkipLayerNormalization(OnnxOpConverter):
     """Converts a microsoft contrib SkipLayerNormalization node into a Relax expression."""
 
@@ -1749,6 +1825,8 @@ def _get_convert_map():
         "ReduceSumSquare": ReduceSumSquare,
         "ReduceL1": ReduceL1,
         "ReduceL2": ReduceL2,
+        "ArgMax": ArgMax,
+        "ArgMin": ArgMin,
         "Expand": Expand,
         "ConstantOfShape": ConstantOfShape,
         "Slice": Slice,
