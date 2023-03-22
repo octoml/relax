@@ -53,7 +53,7 @@ int FindAxis(const Layout& dst, int axis) {
 }
 
 Layout InitialLayout(int ndim) {
-  ICHECK(ndim > 0 && ndim <= 26) << "Only support up to 26 dimensions";
+  ICHECK(ndim >= 0 && ndim <= 26) << "Only support up to 26 dimensions";
   return Layout("ABCDEFGHIJKLMNOPQRSTUVWXYZ").SubLayout(0, ndim);
 }
 
