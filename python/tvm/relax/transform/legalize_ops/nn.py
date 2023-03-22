@@ -274,7 +274,7 @@ def _nn_dropout(bb: BlockBuilder, call: Call) -> Expr:
     return call
 
 
-def te_attention(q: te.Tensor, k: te.Tensor, v: te.Tensor, bias: te.Tensor) -> te.Tensor:
+def _te_attention(q: te.Tensor, k: te.Tensor, v: te.Tensor, bias: te.Tensor) -> te.Tensor:
     batch_size, seq_len, num_head, head_dim = q.shape
     _, seq_len_kv, _, head_dim_v = v.shape
     q = topi.transpose(q, [0, 2, 1, 3])
@@ -302,14 +302,19 @@ def te_attention(q: te.Tensor, k: te.Tensor, v: te.Tensor, bias: te.Tensor) -> t
 @register_legalize("relax.nn.attention")
 def _nn_attention(bb: BlockBuilder, call: Call) -> Expr:
     return bb.call_te(
-        te_attention, call.args[0], call.args[1], call.args[2], None, primfunc_name_hint="attention"
+        _te_attention,
+        call.args[0],
+        call.args[1],
+        call.args[2],
+        None,
+        primfunc_name_hint="attention",
     )
 
 
 @register_legalize("relax.nn.attention_bias")
-def _nn_attention(bb: BlockBuilder, call: Call) -> Expr:
+def _nn_attention_bias(bb: BlockBuilder, call: Call) -> Expr:
     return bb.call_te(
-        te_attention,
+        _te_attention,
         call.args[0],
         call.args[1],
         call.args[2],
