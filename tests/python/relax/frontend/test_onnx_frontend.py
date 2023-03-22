@@ -29,7 +29,7 @@ import pytest
 import tvm
 import tvm.testing
 from tvm import relax
-from tvm.relax.frontend.onnx import from_onnx
+from tvm.relax.frontend.onnx import from_onnx, lookup_operator_name
 
 import onnx
 from onnx import helper, TensorProto, ModelProto, ValueInfoProto, mapping
@@ -158,11 +158,20 @@ def check_correctness(
 
 
 def test_span_is_added():
-    add_node = helper.make_node("Add", inputs=["input_1", "input_2"], outputs=["add_output"])
-    div_node = helper.make_node("Div", inputs=["add_output", "input_3"], outputs=["output"])
+    add_node = helper.make_node(
+        "Add", inputs=["input_1", "input_2"], outputs=["add_output"], name="Add_1"
+    )
+    div_node = helper.make_node(
+        "Div", inputs=["add_output", "input_3"], outputs=["div_output"], name="Div_2"
+    )
+    add2_node = helper.make_node(
+        "Add",
+        inputs=["div_output", "input_3"],
+        outputs=["output"],
+    )
 
     graph = helper.make_graph(
-        [add_node, div_node],
+        [add_node, div_node, add2_node],
         "test",
         inputs=[
             helper.make_tensor_value_info("input_1", TensorProto.FLOAT, [32, 32]),
@@ -178,8 +187,12 @@ def test_span_is_added():
     tvm_model = from_onnx_wrapper(model)
 
     bindings = tvm_model["main"].body.blocks[0].bindings
-    assert bindings[-2].value.span.source_name.name == "Add"
-    assert bindings[-1].value.span.source_name.name == "Div"
+    assert lookup_operator_name(bindings[-3].value.span, tvm_model) == "Add_1"
+    assert bindings[-3].value.span.source_name.name == "attr://tvm-frontend-op-ids"
+    assert lookup_operator_name(bindings[-2].value.span, tvm_model) == "Div_2"
+    assert bindings[-2].value.span.source_name.name == "attr://tvm-frontend-op-ids"
+    assert lookup_operator_name(bindings[-1].value.span, tvm_model) == 2
+    assert bindings[-1].value.span.source_name.name == "attr://tvm-frontend-op-ids"
 
 
 @pytest.mark.parametrize(
