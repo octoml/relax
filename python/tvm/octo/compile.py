@@ -158,6 +158,8 @@ def compile(
 
     # If target is gpu and compiled with Cutlass, offload where possible.
     if target.kind.name == "cuda":
+        # Apply layout rewriting so that convolution can be properly offloaded.
+        relax_mod = relax.transform.ConvertLayout({"relax.nn.conv2d": ["NHWC", "OHWI"]})(relax_mod)
         # Schedule any cumsum operators if needed. We need to do this explicitly
         # to make it work with thrust.
         with target:
