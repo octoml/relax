@@ -16,6 +16,7 @@
 # under the License.
 # pylint: disable=invalid-name, wrong-import-position, redefined-builtin, not-callable
 """Simplified interface for TVM Unity Flow."""
+import tempfile
 from pathlib import Path
 from typing import Union, Optional, Dict, List
 import onnx
@@ -24,6 +25,7 @@ import tvm
 from tvm import relax
 from tvm.relax.frontend.onnx import from_onnx
 from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
+from tvm.relax.transform.tuning_api import Trace
 from .utils import get_cuda_target, get_llvm_target
 from .octo_model import OctoModel
 from .schedule_cumsum import ScheduleCumsum
@@ -119,6 +121,7 @@ def compile(
     target: Optional[tvm.target.Target] = None,
     shape_dict: Optional[Dict[str, List]] = None,
     dtype_dict: Optional[Union[str, Dict[str, str]]] = "float32",
+    tuning_steps: Optional[int] = None,
 ):
     """Entrypoint to compiling a model using the Unity Flow.
 
@@ -139,6 +142,11 @@ def compile(
     type_dict : Optional[Union[str, Dict[str, str]]]
         An optional string or dictionary that maps inputs to its specific data type.
         If not provided, the default type of "float32" will be used.
+
+    tuning_steps : Optional[int]
+        The number of tuning trials to perform on the model. By default, no tuning will be done
+        and kernels will intead either be offloaded or use a default gpu binding. Doing a small
+        amount of tuning, however, can help accelerate certain models by quite a bit.
 
     Returns
     -------
@@ -184,7 +192,20 @@ def compile(
     # Perform legalization to lower Relax operators.
     relax_mod = relax.transform.LegalizeOps()(relax_mod)
 
-    # Schedule all remaining functions to be compatible with gpu if needed.
+    # If specified, perform tuning to optimize remaining workloads.
+    if tuning_steps:
+        with tempfile.TemporaryDirectory() as work_dir:
+            with target, tvm.transform.PassContext(trace=Trace(relax_mod), opt_level=0):
+                tuning_pass = relax.transform.MetaScheduleTuneIRMod(
+                    params={},
+                    work_dir=work_dir,
+                    max_trials_global=tuning_steps,
+                )
+                relax_mod = tuning_pass(relax_mod)
+                application_pass = relax.transform.MetaScheduleApplyDatabase(work_dir)
+                relax_mod = application_pass(relax_mod)
+
+    # Finally, add thread binding to remaining kernels to allow them to run on gpu.
     if target.kind.name == "cuda":
         with target, tvm.transform.PassContext(opt_level=3):
             relax_mod = tvm.tir.transform.DefaultGPUSchedule()(relax_mod)
