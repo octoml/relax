@@ -27,6 +27,7 @@ from tvm.ir import IRModule
 from tvm.ir.transform import PassContext
 from tvm.runtime import NDArray
 from tvm.target import Target
+from tvm.tir import Schedule
 from tvm.tir.expr import IntImm
 
 from .builder import Builder
@@ -48,6 +49,11 @@ if TYPE_CHECKING:
 
 _extract_task_func = get_global_func(  # pylint: disable=invalid-name
     "relax.backend.MetaScheduleExtractTask",
+    allow_missing=False,
+)
+
+_block_collector_func = get_global_func(  # pylint: disable=invalid-name
+    "tvm.meta_schedule.block_collector",
     allow_missing=False,
 )
 
@@ -83,6 +89,18 @@ def extract_tasks(
     if params:
         mod = BindParams("main", params)(mod)
     return list(_extract_task_func(mod, target))
+
+
+def is_thread_binded(mod: IRModule) -> bool:
+    """Check if the schedule is thread binded."""
+    sch = Schedule(mod)
+    blocks = _block_collector_func(sch, None)
+    for block in blocks:
+        loops = sch.get_loops(block)
+        for loop in loops:
+            if sch.get(loop).thread_binding is not None:
+                return True
+    return False
 
 
 def extracted_tasks_to_tune_contexts(
@@ -124,6 +142,9 @@ def extracted_tasks_to_tune_contexts(
         get_loggers_from_work_dir(work_dir, [t.task_name for t in extracted_tasks]),
         fork_seed(seed, n=len(extracted_tasks)),
     ):
+        if is_thread_binded(task.dispatched[0]):
+            logger.warn("The task {task.task_name} is already thread binded, skipping it.")
+            continue
         tasks.append(
             TuneContext(
                 mod=task.dispatched[0],
