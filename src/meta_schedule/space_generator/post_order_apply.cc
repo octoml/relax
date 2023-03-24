@@ -118,6 +118,7 @@ SpaceGenerator SpaceGenerator::PostOrderApply(runtime::PackedFunc f_block_filter
 TVM_REGISTER_NODE_TYPE(PostOrderApplyNode);
 TVM_REGISTER_GLOBAL("meta_schedule.SpaceGeneratorPostOrderApply")
     .set_body_typed(SpaceGenerator::PostOrderApply);
+TVM_REGISTER_GLOBAL("tvm.meta_schedule.block_collector").set_body_typed(BlockCollector::Collect);
 
 }  // namespace meta_schedule
 }  // namespace tvm
