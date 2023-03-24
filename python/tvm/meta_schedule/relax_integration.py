@@ -16,6 +16,7 @@
 # under the License.
 """Meta schedule integration with high-level IR"""
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+import warnings
 
 # isort: off
 from typing_extensions import Literal
@@ -143,7 +144,7 @@ def extracted_tasks_to_tune_contexts(
         fork_seed(seed, n=len(extracted_tasks)),
     ):
         if is_thread_binded(task.dispatched[0]):
-            logger.warn("The task {task.task_name} is already thread binded, skipping it.")
+            warnings.warn("The task {task.task_name} is already thread binded, skipping it.")
             continue
         tasks.append(
             TuneContext(
