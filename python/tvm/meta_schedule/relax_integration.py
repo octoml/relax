@@ -143,7 +143,7 @@ def extracted_tasks_to_tune_contexts(
         get_loggers_from_work_dir(work_dir, [t.task_name for t in extracted_tasks]),
         fork_seed(seed, n=len(extracted_tasks)),
     ):
-        if is_thread_binded(task.dispatched[0]):
+        if task.target.kind.name == "cuda" and is_thread_binded(task.dispatched[0]):
             warnings.warn("The task {task.task_name} is already thread binded, skipping it.")
             continue
         tasks.append(
