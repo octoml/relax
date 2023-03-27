@@ -1110,28 +1110,17 @@ class Attention(OnnxOpConverter):
                     )
                 qk_bias = bb.normalize(attach_span(relax.op.add(qk_bias, mask_bias)))
 
-        split_weight = bb.normalize(
-            attach_span(relax.op.split(weight, [hidden_size, hidden_size * 2], 1))
-        )
-        # split weight and biases and do the matmuls
-        weight_q, weight_k, weight_v = split_weight[0], split_weight[1], split_weight[2]
-
-        Q = attach_span(relax.op.matmul(input_emb, weight_q))
-        K = attach_span(relax.op.matmul(input_emb, weight_k))
-        V = attach_span(relax.op.matmul(input_emb, weight_v))
+        QKV = attach_span(relax.op.matmul(input_emb, weight))
 
         if bias:
             bias_shape = [val.value for val in bias.struct_info.shape.values]
             assert (
                 bias_shape[0] == weight_shape[1]
             ), "bias and weight should share the same hidden size sum"
-            split_bias = bb.normalize(
-                attach_span(relax.op.split(bias, [hidden_size, hidden_size * 2], 0))
-            )
-            bias_q, bias_k, bias_v = split_bias[0], split_bias[1], split_bias[2]
-            Q = attach_span(relax.op.add(Q, bias_q))
-            K = attach_span(relax.op.add(K, bias_k))
-            V = attach_span(relax.op.add(V, bias_v))
+            QKV = attach_span(relax.op.add(QKV, bias))
+
+        QKV = attach_span(relax.op.split(QKV, [hidden_size, hidden_size * 2], 2))
+        Q, K, V = QKV[0], QKV[1], QKV[2]
 
         Q = bb.normalize(
             attach_span(relax.op.reshape(Q, (batch_size, seq_len, num_heads, head_size)))
