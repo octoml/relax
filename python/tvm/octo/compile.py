@@ -108,7 +108,7 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
 
     # Construct CUTLASS codegen pass.
     cutlass_codegen_pass = relax.transform.RunCodegen(
-        {"cutlass": {"sm": sm, "find_first_valid": True}}
+        {"cutlass": {"sm": sm, "find_first_valid": False}}
     )
 
     # Generate code for matched cutlass kernels.
