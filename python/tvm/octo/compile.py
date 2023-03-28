@@ -191,6 +191,11 @@ def compile(
 
     # Perform legalization to lower Relax operators.
     relax_mod = relax.transform.LegalizeOps()(relax_mod)
+    relax_mod["layer_norm"] = relax_mod["layer_norm"].with_attr("op_pattern", 2)
+    relax_mod = relax.transform.FoldConstant()(relax_mod)
+    relax_mod = relax.transform.AnnotateTIROpPattern()(relax_mod)
+    relax_mod = relax.transform.FuseOps()(relax_mod)
+    relax_mod = relax.transform.FuseTIR()(relax_mod)
 
     # If specified, perform tuning to optimize remaining workloads.
     if tuning_steps:
