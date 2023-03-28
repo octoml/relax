@@ -78,7 +78,7 @@ def generate_random_inputs(
 
         # Extract datatype for the input.
         if i.type.tensor_type.elem_type:
-            dtype = str(onnx.mapping.TENSOR_TYPE_TO_NP_TYPE[i.type.tensor_type.elem_type])
+            dtype = str(mapping.TENSOR_TYPE_TO_NP_TYPE[i.type.tensor_type.elem_type])
         else:
             dtype = "float32"
 
@@ -1564,6 +1564,28 @@ def test_batch_norm():
 
     model = helper.make_model(graph, producer_name="batch_norm_test")
     check_correctness(model)
+
+
+def test_lrn():
+    def verify_lrn(shape, nsize, np_type, alpha=0.0001, beta=0.75, bias=1.0):
+        node = onnx.helper.make_node(
+            "LRN", inputs=["in"], outputs=["out"], alpha=alpha, beta=beta, bias=bias, size=nsize
+        )
+
+        dtype = mapping.NP_TYPE_TO_TENSOR_TYPE[np.dtype(np_type)]
+        graph = helper.make_graph(
+            [node],
+            "lrn_test",
+            inputs=[helper.make_tensor_value_info("in", dtype, list(shape))],
+            outputs=[helper.make_tensor_value_info("out", dtype, list(shape))],
+        )
+        model = helper.make_model(graph, producer_name="lrn_test")
+        check_correctness(model)
+
+    verify_lrn((5, 5, 5, 5), 3, "float16")
+    verify_lrn((5, 5, 5, 5), 3, "float64")
+    verify_lrn((5, 5, 5, 5), 3, "float32")
+    verify_lrn((5, 5, 5, 5), 3, "float32", alpha=0.0002, beta=0.5, bias=2.0)
 
 
 def test_max_pool():
