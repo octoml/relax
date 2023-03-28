@@ -95,6 +95,7 @@ ALLOW_EXTENSION = {
     "ini",
     # for scorecard
     "jsonschema",
+    "dockerignore",
 }
 
 # List of file names allowed

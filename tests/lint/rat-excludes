@@ -45,6 +45,7 @@ package-list
 MANIFEST
 .eslintignore
 .gitignore
+.dockerignore
 .gitattributes
 .gitmodules
 .clang-format

@@ -44,10 +44,6 @@ update_token:
       curl --request PUT --header "PRIVATE-TOKEN: $GITLAB_PERSONAL_ACCESS_TOKEN" \
       --silent --output /dev/null --show-error --fail \
       "https://gitlab.com/api/v4/projects/$CI_PROJECT_ID/variables/AWS_ECR_AUTH" --form "value=$AUTH"
-  only:
-    variables:
-      - $CI_PIPELINE_SOURCE == "web"
-      - $CI_COMMIT_REF_NAME == "main"
 
 docker_build:
   stage: build-docker
@@ -81,14 +77,16 @@ docker_build:
     name: 186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:$TAG
   script: |
     set -eux
+    cd scorecard
     ls
-    ./scorecard/scripts/show_node_info.sh
+    ./scripts/show_node_info.sh
     mkdir model-data
     echo "$GCP_AUTH_JSON" > gcp_auth.json
+    curl -L -o models.yaml --header "PRIVATE-TOKEN: $RELAX_SCORECARD_GITLAB_PAT" "https://gitlab.com/api/v4/projects/$RELAX_SCORECARD_PROJECT_ID/repository/files/models.yaml/raw?ref=main"
     export UPLOAD_GCP=1
     export TEST_RUNS=10
     export WARMUP_RUNS=3
-    pytest --tb=native -rA -v -s -q scorecard/relax-coverage/ -k "$PYTEST_FILTER"
+    pytest --tb=native -rA -v -s -q relax-coverage/ -k "$PYTEST_FILTER"
 
 benchmarks-baseline:
   <<: *benchmark_template
