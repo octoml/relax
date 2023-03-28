@@ -1,0 +1,13 @@
+stages:
+  - prepare-auth
+
+update_token:
+  image:
+    name: amazon/aws-cli
+    entrypoint: [""]
+  stage: prepare-auth
+  before_script:
+    - aws --version
+  script:
+    - echo hello
+
