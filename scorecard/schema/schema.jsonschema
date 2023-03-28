@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.com/product.schema.json",
+
+  "type": "object",
+  "properties": {
+    // Identifying fields
+    "test_run_id": {"type": "string", "description": "Uniquely identifies this benchmarking run"},
+    "model_set_id": {"type": "string", "description": "Identifies the group of models to which this one belongs"},
+    "model_name": {"type": "string", "description": "Uniquely identifies the model within the model set"},
+
+    // Operators
+    "framework_ops": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string", "description": "Name that uniquely identifies the per-framework operator"},
+          "op_type": {"type": "string", "description": "Name of the operator"},
+        },
+      },
+    },
+    "relay_ops": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string", "description": "Name of the operator"},
+          "framework_op_index": {"type": "integer", "description": "Index into framework_ops of the framework operator that generated this one"},
+          "schedule_method": {"type": "string", "description": "one of cutlass or native"},
+        },
+      },
+    },
+    "relay_fusion_groups": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "description": "Index into relay_ops of an operator in this fusion group"
+        },
+      },
+    },
+
+    // Test results
+    "tvm_latency": {
+      "type": "object",
+      "properties": {
+        "config_name": {
+          "type": "string",
+          "description": "Describes the configuration of the test runner to the extnnt needed to differentiate between configurations."
+        },
+        "num_iterations": {
+          "type": "integer",
+          "description": "Number of inference iterations as part of the mean"
+        },
+        "mean_sec": {
+          "type": "number",
+          "description": "Mean inference latency, in seconds. Excludes time spent copying data to and from the input and output tensor memory."
+        },
+        "p95_sec": {
+          "type": "number",
+          "description": "95th percentile inference latency, in seconds. Excludes time spent copying data to and from the input and output tensor memory."
+        },
+      },
+    },
+  },
+}

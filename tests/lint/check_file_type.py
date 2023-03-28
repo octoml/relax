@@ -93,6 +93,8 @@ ALLOW_EXTENSION = {
     "groovy",
     # Python-parseable config files
     "ini",
+    # for scorecard
+    "jsonschema",
 }
 
 # List of file names allowed

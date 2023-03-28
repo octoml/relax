@@ -1,5 +1,32 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+variables:
+  GCP_AUTH_JSON: $gcpAuthJson
+  AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+  AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+  AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+  IS_IN_CI: "1"
+
 stages:
   - prepare-auth
+  - build-docker
+  - test
+
 
 update_token:
   image:
@@ -9,5 +36,76 @@ update_token:
   before_script:
     - aws --version
   script:
-    - echo hello
+    - USER=AWS
+    - TOKEN=$(aws ecr get-login-password)
+    - AUTH=$(echo -n "$USER:$TOKEN" | base64 | tr -d "\n")
+    - |
+      set -eux
+      curl --request PUT --header "PRIVATE-TOKEN: $GITLAB_PERSONAL_ACCESS_TOKEN" \
+      --silent --output /dev/null --show-error --fail \
+      "https://gitlab.com/api/v4/projects/$CI_PROJECT_ID/variables/AWS_ECR_AUTH" --form "value=$AUTH"
+  only:
+    variables:
+      - $CI_PIPELINE_SOURCE == "web"
+      - $CI_COMMIT_REF_NAME == "main"
 
+docker_build:
+  stage: build-docker
+  image: docker:20
+  dependencies:
+    - update_token
+  tags:
+    - cpu-sole-tenant
+  script:
+    - apk add --update py-pip
+    - pip install awscli
+    - NO_CACHE=1 sh ./scorecard/docker/build.sh
+    # Generate a test suite ID to be used in later runs so all the concurrent results can be grouped together
+    - sh -c 'TEST_SUITE_ID=$(tr -dc a-z </dev/urandom | head -c 5 ; echo ''); echo "TEST_SUITE_ID=$TEST_SUITE_ID" >> output.env'
+  variables:
+    DOCKER_HOST: dind-service.kube-system.svc.cluster.local:2375
+    PUSH_TO_ECR: 1
+    GIT_COMMIT_SHA: $CI_COMMIT_SHA
+  artifacts:
+    reports:
+      dotenv: output.env
+
+.benchmark_template: &benchmark_template
+  tags:
+    - gpu-triton
+  stage: test
+  dependencies:
+    - docker_build
+  image:
+    # name: 186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:2023-03-10-b4fb5b6
+    name: 186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:$TAG
+  script: |
+    set -eux
+    ls
+    ./scorecard/scripts/show_node_info.sh
+    mkdir model-data
+    echo "$GCP_AUTH_JSON" > gcp_auth.json
+    export UPLOAD_GCP=1
+    export TEST_RUNS=10
+    export WARMUP_RUNS=3
+    pytest --tb=native -rA -v -s -q scorecard/relax-coverage/ -k "$PYTEST_FILTER"
+
+benchmarks-baseline:
+  <<: *benchmark_template
+  variables:
+    PYTEST_FILTER: onnx-trt
+
+benchmarks-relax:
+  <<: *benchmark_template
+  variables:
+    PYTEST_FILTER: relax-cuda and not stable-diffusion
+
+benchmarks-relax-sd-unet:
+  <<: *benchmark_template
+  variables:
+    PYTEST_FILTER: relax-cuda and stable-diffusion and unet
+
+benchmarks-relax-sd-vae:
+  <<: *benchmark_template
+  variables:
+    PYTEST_FILTER: relax-cuda and stable-diffusion and vae

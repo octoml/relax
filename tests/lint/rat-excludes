@@ -54,3 +54,6 @@ Cargo.lock
 
 # Template files for Jenkins
 .*\.groovy\.j2
+
+# JSON definitions
+.*\.jsonschema
