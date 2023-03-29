@@ -1336,15 +1336,24 @@ class LRN(OnnxOpConverter):
 
     @classmethod
     def _impl_v1(cls, bb, inputs, attr):
-        assert (
-            inputs[0].struct_info.dtype in ["float16", "float", "float32", "float64", "double"]
-        ), "input type is unsupported"
+        assert inputs[0].struct_info.dtype in [
+            "float16",
+            "float",
+            "float32",
+            "float64",
+            "double",
+        ], "input type is unsupported"
         return cls._default_impl(bb, inputs, attr)
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr):
         assert inputs[0].struct_info.dtype in [
-            "float16", "bfloat16", "float", "float32", "float64", "double"
+            "float16",
+            "bfloat16",
+            "float",
+            "float32",
+            "float64",
+            "double",
         ], "input type is unsupported"
         return cls._default_impl(bb, inputs, attr)
 

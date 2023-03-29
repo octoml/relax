@@ -233,6 +233,8 @@ TVM_REGISTER_GENERIC_FUNC(schedule_batch_matmul)
 TVM_REGISTER_GENERIC_FUNC(schedule_batch_norm)
     .set_default(WrapSchedule(topi::generic::default_schedule));
 
+TVM_REGISTER_GENERIC_FUNC(schedule_lrn).set_default(WrapSchedule(topi::generic::default_schedule));
+
 TVM_REGISTER_GENERIC_FUNC(schedule_pool)
     .set_default(WrapSchedule(topi::generic::default_schedule))
     .register_func({"cpu"}, WrapSchedule(topi::x86::default_schedule))

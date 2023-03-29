@@ -645,12 +645,12 @@ def batch_norm(
 
 
 def lrn(
-    data : Expr,
-    size : int,
-    axis : int = 1,
-    bias : float = 2,
-    alpha : float = 1e-4,
-    beta : float = 0.75,
+    data: Expr,
+    size: int,
+    axis: int = 1,
+    bias: float = 2,
+    alpha: float = 1e-4,
+    beta: float = 0.75,
 ) -> Expr:
     """This operator takes data as input and does local response normalization.
 
