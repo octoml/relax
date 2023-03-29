@@ -1387,6 +1387,84 @@ class Flatten(OnnxOpConverter):
         return attach_span(relax.op.reshape(inputs[0], new_shape))
 
 
+class Dropout(OnnxOpConverter):
+    """Converts an onnx Dropout node into an equivalent Relax expression."""
+
+    @classmethod
+    def _check_dtype(cls, dtype, add_valid_types = []):
+        valid_types = ["float", "float32", "double", "float64", "float16"]
+        valid_types += add_valid_types
+        assert dtype in valid_types, "Types {} are supported only, but {} is given".format(
+            valid_types, dtype
+        )
+
+    @classmethod
+    def _impl_v1(cls, bb, inputs, attr):
+        data = inputs[0]
+        cls._check_dtype(data.checked_type.dtype)
+
+        mode = attr.get("is_test", 0)
+        if mode != 0:
+            return data
+
+        rate = attr.get("ratio", 0.5)
+        if rate == 0:
+            return data
+        return relax.op.nn.dropout(data, rate)
+
+    @classmethod
+    def _impl_v7(cls, bb, inputs, attr):
+        data = inputs[0]
+        cls._check_dtype(data.checked_type.dtype)
+
+        rate = attr.get("ratio", 0.5)
+        if rate == 0:
+            return data
+        return relax.op.nn.dropout(data, rate)
+
+    @classmethod
+    def _impl_v12(cls, bb, inputs, attr):
+        data = inputs[0]
+        cls._check_dtype(data.checked_type.dtype)
+
+        if attr["seed"] is not None:
+            warnings.warn("Seed for dropout is not supported now")
+
+        if len(inputs) < 3: # training_mode is False and inputs[1] (ratio) is ignored
+            return data
+
+        mode = inputs[2] # training_mode
+        if mode is None or mode == False:
+            # TODO(vvchernov): possibly at inference mode we should return mask with ones also
+            return data
+
+        rate = inputs[1]
+        if rate == 0:
+            return data
+        return relax.op.nn.dropout(data, rate)
+
+    @classmethod
+    def _impl_v13(cls, bb, inputs, attr):
+        data = inputs[0]
+        cls._check_dtype(data.checked_type.dtype, ["bfloat16"])
+
+        if attr["seed"] is not None:
+            warnings.warn("Seed for dropout is not supported now")
+
+        if len(inputs) < 3: # training_mode is False and inputs[1] (ratio) is ignored
+            return data
+
+        mode = inputs[2] # training_mode
+        if mode is None or mode == False:
+            # TODO(vvchernov): possibly at inference mode we should return mask with ones also
+            return data
+
+        rate = inputs[1]
+        if rate == 0:
+            return data
+        return relax.op.nn.dropout(data, rate)
+
+
 class LayerNormalization(OnnxOpConverter):
     """Converts an onnx LayerNormalization node into an equivalent Relax expression."""
 
@@ -1791,6 +1869,7 @@ def _get_convert_map():
         "BatchNormalization": BatchNormalization,
         "GlobalAveragePool": GlobalAveragePool,
         "Flatten": Flatten,
+        "Dropout": Dropout,
         "MaxPool": MaxPool,
         "Identity": Identity,
         "Resize": Resize,
