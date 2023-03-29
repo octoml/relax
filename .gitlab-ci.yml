@@ -83,7 +83,7 @@ docker_build:
 
 .benchmark_template: &benchmark_template
   tags:
-    - gpu-triton
+    - gpu-a10g
   stage: test
   dependencies:
     - docker_build

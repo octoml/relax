@@ -221,7 +221,7 @@ def parse_args(valid_executors: List[str]):
         sub.add_argument(
             "--cuda-sm",
             type=int,
-            default=75,
+            default=86,
             help="CUDA target sm level (default: 75, compute capability for Tesla T4)",
         )
         sub.add_argument(
