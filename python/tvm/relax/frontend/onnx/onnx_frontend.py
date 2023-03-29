@@ -1956,6 +1956,9 @@ class ONNXGraphImporter:
         """Nodes are stored as directed acyclic graph."""
         for node_index, node in enumerate(graph.node):
             op_name = node.op_type
+            if node.name != "" or node.name is None:
+                op_name = node.name
+                node_index = int(node.split("_")[1])
             attr = self._parse_attr(node.attribute)
             # Create and populate input list.
             inputs = onnx_input()
