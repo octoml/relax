@@ -151,9 +151,9 @@ def compile(
         amount of tuning, however, can help accelerate certain models by quite a bit.
 
     work_dir : Optional[str]
-        An optional directory where tuning logs will be saved. If not provided, a temporary directory
-        will be used. This argument can be helpful for saving time when doing repeated runs with
-        tuning.
+        An optional directory where tuning logs will be saved. If not provided, a temporary 
+        directory will be used. This argument can be helpful for saving time when doing repeated 
+        runs with tuning.
 
     Returns
     -------
