@@ -209,9 +209,9 @@ struct BatchNormAttrs : public tvm::AttrsNode<BatchNormAttrs> {
 struct LRNAttrs : public tvm::AttrsNode<LRNAttrs> {
   int size;
   int axis;
-  float alpha;
-  float beta;
-  float bias;
+  double alpha;
+  double beta;
+  double bias;
 
   TVM_DECLARE_ATTRS(LRNAttrs, "relax.attrs.LRNAttrs") {
     TVM_ATTR_FIELD(size).describe("The number of channels.");

@@ -238,7 +238,7 @@ TVM_REGISTER_OP("relax.nn.batch_norm")
 /* relax.nn.lrn */
 TVM_REGISTER_NODE_TYPE(LRNAttrs);
 
-Expr lrn(Expr data, int size, int axis, float alpha, float beta, float bias) {
+Expr lrn(Expr data, int size, int axis, double alpha, double beta, double bias) {
   ObjectPtr<LRNAttrs> attrs = make_object<LRNAttrs>();
   attrs->size = size;
   attrs->axis = axis;
