@@ -37,7 +37,7 @@ RELAX_REGISTER_UNARY_NN_OP_AND_IMPL(silu, "nn.silu", /*require_float_dtype=*/tru
 /* relax.nn.leaky_relu */
 TVM_REGISTER_NODE_TYPE(LeakyReluAttrs);
 
-Expr leaky_relu(Expr data, float alpha) {
+Expr leaky_relu(Expr data, double alpha) {
   auto attrs = make_object<LeakyReluAttrs>();
   attrs->alpha = alpha;
   static const Op& op = Op::Get("relax.nn.leaky_relu");
