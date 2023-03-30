@@ -122,6 +122,7 @@ def compile(
     shape_dict: Optional[Dict[str, List]] = None,
     dtype_dict: Optional[Union[str, Dict[str, str]]] = "float32",
     tuning_steps: Optional[int] = None,
+    work_dir: Optional[str] = None,
 ):
     """Entrypoint to compiling a model using the Unity Flow.
 
@@ -147,6 +148,11 @@ def compile(
         The number of tuning trials to perform on the model. By default, no tuning will be done
         and kernels will intead either be offloaded or use a default gpu binding. Doing a small
         amount of tuning, however, can help accelerate certain models by quite a bit.
+
+    work_dir : Optional[str]
+        An optional directory where tuning logs will be saved. If not provided, a temporary directory
+        will be used. This argument can be helpful for saving time when doing repeated runs with
+        tuning.
 
     Returns
     -------
@@ -192,24 +198,25 @@ def compile(
     # Perform legalization to lower Relax operators.
     relax_mod = relax.transform.LegalizeOps()(relax_mod)
     # TODO(jwfromm) Implement a pass that does this without breaking things.
-    # relax_mod["layer_norm"] = relax_mod["layer_norm"].with_attr("op_pattern", 2)
+    relax_mod["layer_norm"] = relax_mod["layer_norm"].with_attr("op_pattern", 2)
     relax_mod = relax.transform.FoldConstant()(relax_mod)
     relax_mod = relax.transform.AnnotateTIROpPattern()(relax_mod)
     relax_mod = relax.transform.FuseOps()(relax_mod)
     relax_mod = relax.transform.FuseTIR()(relax_mod)
 
     # If specified, perform tuning to optimize remaining workloads.
+    if work_dir is None:
+        work_dir = tempfile.TemporaryDirectory()
     if tuning_steps:
-        with tempfile.TemporaryDirectory() as work_dir:
-            with target, tvm.transform.PassContext(trace=Trace(relax_mod), opt_level=0):
-                tuning_pass = relax.transform.MetaScheduleTuneIRMod(
-                    params={},
-                    work_dir=work_dir,
-                    max_trials_global=tuning_steps,
-                )
-                relax_mod = tuning_pass(relax_mod)
-                application_pass = relax.transform.MetaScheduleApplyDatabase(work_dir)
-                relax_mod = application_pass(relax_mod)
+        with target, tvm.transform.PassContext(trace=Trace(relax_mod), opt_level=0):
+            tuning_pass = relax.transform.MetaScheduleTuneIRMod(
+                params={},
+                work_dir=work_dir,
+                max_trials_global=tuning_steps,
+            )
+            relax_mod = tuning_pass(relax_mod)
+            application_pass = relax.transform.MetaScheduleApplyDatabase(work_dir)
+            relax_mod = application_pass(relax_mod)
 
     # Finally, add thread binding to remaining kernels to allow them to run on gpu.
     if target.kind.name == "cuda":
