@@ -1391,7 +1391,7 @@ class Dropout(OnnxOpConverter):
     """Converts an onnx Dropout node into an equivalent Relax expression."""
 
     @classmethod
-    def _check_dtype(cls, dtype, add_valid_types = []):
+    def _check_dtype(cls, dtype, add_valid_types=[]):  # pylint: disable=dangerous-default-value
         valid_types = ["float", "float32", "double", "float64", "float16"]
         valid_types += add_valid_types
         assert dtype in valid_types, "Types {} are supported only, but {} is given".format(
@@ -1430,11 +1430,11 @@ class Dropout(OnnxOpConverter):
         if attr["seed"] is not None:
             warnings.warn("Seed for dropout is not supported now")
 
-        if len(inputs) < 3: # training_mode is False and inputs[1] (ratio) is ignored
+        if len(inputs) < 3:  # training_mode is False and inputs[1] (ratio) is ignored
             return data
 
-        mode = inputs[2] # training_mode
-        if mode is None or mode == False:
+        mode = inputs[2]  # training_mode
+        if mode is None or not mode:
             # TODO(vvchernov): possibly at inference mode we should return mask with ones also
             return data
 
@@ -1451,11 +1451,11 @@ class Dropout(OnnxOpConverter):
         if attr["seed"] is not None:
             warnings.warn("Seed for dropout is not supported now")
 
-        if len(inputs) < 3: # training_mode is False and inputs[1] (ratio) is ignored
+        if len(inputs) < 3:  # training_mode is False and inputs[1] (ratio) is ignored
             return data
 
-        mode = inputs[2] # training_mode
-        if mode is None or mode == False:
+        mode = inputs[2]  # training_mode
+        if mode is None or not mode:
             # TODO(vvchernov): possibly at inference mode we should return mask with ones also
             return data
 
