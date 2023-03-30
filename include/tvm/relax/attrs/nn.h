@@ -180,6 +180,15 @@ struct AdaptivePool2DAttrs : public tvm::AttrsNode<AdaptivePool2DAttrs> {
   }
 };  // struct AdaptivePool2DAttrs
 
+/*! \brief Attributes used in leaky_relu operators */
+struct LeakyReluAttrs : public tvm::AttrsNode<LeakyReluAttrs> {
+  float alpha;
+
+  TVM_DECLARE_ATTRS(LeakyReluAttrs, "relax.attrs.LeakyReluAttrs") {
+    TVM_ATTR_FIELD(alpha).describe("The coefficient of leakage.");
+  }
+};  // struct LeakyReluAttrs
+
 /*! \brief Attributes used in softmax operators */
 struct SoftmaxAttrs : public tvm::AttrsNode<SoftmaxAttrs> {
   int axis;
