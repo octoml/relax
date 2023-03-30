@@ -499,6 +499,25 @@ def silu(data: Expr) -> Expr:
     return _ffi_api.silu(data)  # type: ignore
 
 
+def leaky_relu(data: Expr, alpha: float = 0.01) -> Expr:
+    """Leaky rectified linear unit.
+
+    .. math::
+        text{LeakyReLU}(x, alpha) = max(x, alpha*x)
+
+    Parameters
+    ----------
+    data : relax.Expr
+        The input data
+
+    Returns
+    -------
+    result : relax.Expr
+        The computed result.
+    """
+    return _ffi_api.leaky_relu(data, alpha)  # type: ignore
+
+
 def softmax(data: Expr, axis: int = -1) -> Expr:
     r"""Computes softmax.
 

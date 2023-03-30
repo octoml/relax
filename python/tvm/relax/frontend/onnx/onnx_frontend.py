@@ -507,6 +507,31 @@ class Relu(OnnxOpConverter):
         return attach_span(relax.op.nn.relu(inputs[0]))
 
 
+class LeakyRelu(OnnxOpConverter):
+    """Converts an onnx LeakyRelu node into an equivalent Relax expression."""
+
+    @classmethod
+    def _check_data(cls, inputs, attr, valid_types):
+        data = inputs[0]
+        dtype = data.checked_type.dtype
+        assert dtype in valid_types, "Types {} are supported only, but {} is given".format(
+            valid_types, dtype
+        )
+        return data, attr.get("alpha", 0.01)
+
+    @classmethod
+    def _impl_v6(cls, bb, inputs, attr):
+        valid_types = ["float", "float32", "double", "float64", "float16"]
+        data, alpha = cls._check_data(inputs, attr, valid_types)
+        return relax.op.nn.leaky_relu(data, alpha)
+
+    @classmethod
+    def _impl_v16(cls, bb, inputs, attr):
+        valid_types = ["float", "float32", "double", "float64", "float16", "bfloat16"]
+        data, alpha = cls._check_data(inputs, attr, valid_types)
+        return relax.op.nn.leaky_relu(data, alpha)
+
+
 class Pow(OnnxOpConverter):
     """Converts an onnx Pow node into an equivalent Relax expression."""
 
@@ -1747,6 +1772,7 @@ def _get_convert_map():
         "Tanh": Tanh,
         "Sqrt": Sqrt,
         "Relu": Relu,
+        "LeakyRelu": LeakyRelu,
         "Conv": Conv,
         "Pow": Pow,
         "Erf": Erf,
