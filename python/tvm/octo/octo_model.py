@@ -188,5 +188,11 @@ class OctoModel(object):
         """
         inputs = self.generate_inputs()
         self.vm.set_input("main", **inputs)
+        # Do layer by layer profiling
         report = self.vm.profile("main")
-        return report
+        # Also measure end to end performance.
+        timing_result = self.vm.time_evaluator("invoke_stateful", self.dev, number=10, repeat=10)(
+            "main"
+        )
+        print(report)
+        print(timing_result)
