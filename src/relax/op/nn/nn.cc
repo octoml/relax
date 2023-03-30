@@ -48,13 +48,11 @@ TVM_REGISTER_GLOBAL("relax.op.nn.leaky_relu").set_body_typed(leaky_relu);
 
 StructInfo InferStructInfoLeakyRelu(const Call& call, const BlockBuilder& ctx) {
   TensorStructInfo data_sinfo = GetUnaryInputTensorStructInfo(call, ctx);
-  if (data_sinfo->IsUnknownNdim()) {
-    return data_sinfo;
-  }
+
   if (!data_sinfo->IsUnknownDtype() &&
       !(data_sinfo->dtype.is_float() || data_sinfo->dtype.is_bfloat16())) {
-    ctx->ReportFatal(Diagnostic::Error(call) <<
-      "LeakyRelu requires the input tensor to have float dtype. However, the given input dtype is "
+    ctx->ReportFatal(Diagnostic::Error(call) << "LeakyRelu requires the input tensor to have float "
+                                                "dtype. However, the given input dtype is "
                                              << data_sinfo->dtype);
   }
 

@@ -202,7 +202,7 @@ def _nn_silu(bb: BlockBuilder, call: Call) -> Expr:
 
 
 @register_legalize("relax.nn.leaky_relu")
-def _nn_softmax(bb: BlockBuilder, call: Call) -> Expr:
+def _nn_leaky_relu(bb: BlockBuilder, call: Call) -> Expr:
     return bb.call_te(topi.nn.leaky_relu, call.args[0], call.attrs.alpha)
 
 
