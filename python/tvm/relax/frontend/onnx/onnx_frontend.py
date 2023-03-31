@@ -321,35 +321,8 @@ class Gather(OnnxOpConverter):
             else:
                 raise ValueError("Need to fix this case.")
 
-        # Indices must be at least rank 1, if we're given a scalar, expand it.
-        scalar_indices = False
-        if indices.struct_info.ndim == 0:
-            scalar_indices = True
-            indices = bb.normalize(attach_span(relax.op.expand_dims(indices, axis=0)))
-
-        if indices.struct_info.ndim == 1:
-            out = attach_span(relax.op.take(data, indices, axis))
-            # If indices were scalar, output dimension needs to be reduced.
-            if scalar_indices:
-                out = relax.op.squeeze(out, axis)
-            return attach_span(out)
-
-        # If indices is larger than rank 1, we must perform multiple gathers and concatenate them.
-        assert (
-            len(indices.struct_info.shape) == 2
-        ), "Only up to 2D indices are currently supported for Gather."
-        outputs = []
-        for i in range(indices.struct_info.shape[0].value):
-            index = attach_span(
-                relax.op.flatten(
-                    attach_span(relax.op.take(indices, relax.const([i], "int64"), axis=0))
-                )
-            )
-            # Use the slice of index to compute a partial gather.
-            partial_output = attach_span(relax.op.take(data, index, axis))
-            outputs.append(attach_span(relax.op.expand_dims(partial_output, axis=0)))
-        # Concatenate sub expressions and return.
-        return attach_span(relax.op.concat(outputs, axis=0))
+        # TODO(jwfromm) Make relax.take work with other indices shape.
+        return emit_te_with_span(bb, topi.take, data, indices, axis)
 
 
 class Gemm(OnnxOpConverter):

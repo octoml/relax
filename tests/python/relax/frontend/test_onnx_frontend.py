@@ -117,7 +117,9 @@ def check_correctness(
     inputs = generate_random_inputs(model, inputs)
 
     # Run the model through onnx to get the expected result.
-    ort_session = onnxruntime.InferenceSession(model.SerializeToString())
+    ort_session = onnxruntime.InferenceSession(
+        model.SerializeToString(), providers=["CPUExecutionProvider"]
+    )
     ort_output = ort_session.run([], inputs)
 
     # Convert the onnx model into relax through the onnx importer.
@@ -336,11 +338,11 @@ def test_cast(from_type, to_type):
 
 
 def test_gather():
-    def _verify_gather(data_shape, indices, out_shape):
-        gather_node = helper.make_node("Gather", ["data", "indices"], ["y"], axis=0)
+    def _verify_gather(data_shape, indices, out_shape, axis=0):
+        gather_node = helper.make_node("Gather", ["data", "indices"], ["y"], axis=axis)
 
         if isinstance(indices, (list, tuple)):
-            indices_shape = [len(indices)]
+            indices_shape = np.asarray(indices).shape
         else:
             indices_shape = []
 
@@ -349,7 +351,7 @@ def test_gather():
             "gather_test",
             inputs=[
                 helper.make_tensor_value_info("data", TensorProto.FLOAT, data_shape),
-                helper.make_tensor_value_info("indices", TensorProto.INT32, indices_shape),
+                helper.make_tensor_value_info("indices", TensorProto.INT64, indices_shape),
             ],
             outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, out_shape)],
         )
@@ -357,12 +359,13 @@ def test_gather():
         model = helper.make_model(graph, producer_name="gather_test")
         input_values = {
             "data": np.random.randn(*data_shape).astype("float32"),
-            "indices": np.array(indices).astype("int32"),
+            "indices": np.array(indices).astype("int64"),
         }
         check_correctness(model, inputs=input_values)
 
     _verify_gather([5, 4, 3, 2], [0, 1, 3], [3, 4, 3, 2])
     _verify_gather([3], 0, [])
+    _verify_gather([3, 3], [[0, 2]], [3, 1, 2], 1)
 
 
 @pytest.mark.parametrize("alpha", [None, 0.25])
