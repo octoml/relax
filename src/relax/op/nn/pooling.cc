@@ -71,8 +71,6 @@ Expr max_pool2d(Expr data, Array<IntImm> pool_size, Array<IntImm> strides, Array
 }
 
 TVM_REGISTER_GLOBAL("relax.op.nn.max_pool2d").set_body_typed(max_pool2d);
-// TODO(agladyshev): create avg_pool2d for set_body_typed (see above)
-TVM_REGISTER_GLOBAL("relax.op.nn.avg_pool2d").set_body_typed(max_pool2d);
 
 StructInfo InferStructInfoPool2D(const Call& call, const BlockBuilder& ctx) {
   TensorStructInfo data_sinfo = GetUnaryInputTensorStructInfo(call, ctx);
@@ -144,6 +142,7 @@ TVM_REGISTER_OP("relax.nn.max_pool2d")
     .set_attr<FRelaxInferLayout>("FRelaxInferLayout", InferLayoutPool2d)
     .set_attr<TMixedPrecisionPolicy>("TMixedPrecisionPolicy", MixedPrecisionPolicyKind::kFollow);
 
+/* relax.nn.avg_pool2d */
 Expr avg_pool2d(Expr data, Array<IntImm> pool_size, Array<IntImm> strides, Array<IntImm> padding,
                 Array<IntImm> dilation, bool ceil_mode, String layout,
                 Optional<String> out_layout) {
@@ -160,13 +159,6 @@ TVM_REGISTER_OP("relax.nn.avg_pool2d")
     .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoPool2D)
     .set_attr<FRelaxInferLayout>("FRelaxInferLayout", InferLayoutPool2d)
     .set_attr<TMixedPrecisionPolicy>("TMixedPrecisionPolicy", MixedPrecisionPolicyKind::kFollow);
-
-// TODO(agladyshev): create InferStructInfoAvgPool2D for set_attr (see above)
-TVM_REGISTER_OP("relax.nn.avg_pool2d")
-    .set_num_inputs(1)
-    .add_argument("data", "Tensor", "The input tensor")
-    .set_attrs_type<MaxPool2DAttrs>()
-    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoMaxPool2D);
 
 /* relax.nn.adaptive_avg_pool2d */
 TVM_REGISTER_NODE_TYPE(AdaptivePool2DAttrs);

@@ -1344,12 +1344,8 @@ class Pool:
         pads = tuple(flatten_pads)
         return pads
 
-
-class MaxPool(OnnxOpConverter, Pool):
-    """Converts an onnx MaxPool node into an equivalent Relax expression."""
-
     @classmethod
-    def _impl_v12(cls, bb, inputs, attr):
+    def _base_impl_v12(cls, bb, inputs, attr, type="max"):
         # Unpack inputs and attributes.
         data = inputs[0]
         auto_pad = attr.get("auto_pad", b"NOTSET").decode("utf-8")
@@ -1370,9 +1366,24 @@ class MaxPool(OnnxOpConverter, Pool):
         if auto_pad in ("SAME_UPPER", "SAME_LOWER"):
             pads = cls._prepare_auto_pads(auto_pad, data, kernel_shape, strides, dilations)
 
-        return attach_span(
-            relax.op.nn.max_pool2d(data, kernel_shape, strides, pads, dilations, ceil_mode)
-        )
+        if type == "max":
+            return attach_span(
+                relax.op.nn.max_pool2d(data, kernel_shape, strides, pads, dilations, ceil_mode)
+            )
+        elif type == "avg":
+            return attach_span(
+                relax.op.nn.avg_pool2d(data, kernel_shape, strides, pads, dilations, ceil_mode)
+            )
+        else:
+            raise ValueError(f"Pooling type {type} is unsupported")
+
+
+class MaxPool(OnnxOpConverter, Pool):
+    """Converts an onnx MaxPool node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v12(cls, bb, inputs, attr):
+        return cls._base_impl_v12(cls, bb, inputs, attr)
 
 
 class AveragePool(OnnxOpConverter, Pool):
@@ -1380,29 +1391,7 @@ class AveragePool(OnnxOpConverter, Pool):
 
     @classmethod
     def _impl_v12(cls, bb, inputs, attr):
-        # Unpack inputs and attributes.
-        data = inputs[0]
-        auto_pad = attr.get("auto_pad", b"NOTSET").decode("utf-8")
-        ceil_mode = attr.get("ceil_mode", 0)
-        dilations = attr.get("dilations", [1, 1])
-        kernel_shape = attr.get("kernel_shape")
-        pads = attr.get("pads", 0)
-        strides = attr.get("strides", 1)
-
-        assert len(kernel_shape) == 2, "Currently only 2D pooling is supported."
-        assert auto_pad in [
-            "NOTSET",
-            "SAME_UPPER",
-            "SAME_LOWER",
-            "VALID",
-        ], f"Value {auto_pad} in attribute auto_pad is invalid."
-
-        if auto_pad in ("SAME_UPPER", "SAME_LOWER"):
-            pads = cls._prepare_auto_pads(auto_pad, data, kernel_shape, strides, dilations)
-
-        return attach_span(
-            relax.op.nn.avg_pool2d(data, kernel_shape, strides, pads, dilations, ceil_mode)
-        )
+         return cls._base_impl_v12(cls, bb, inputs, attr, "avg")
 
 
 class GlobalAveragePool(OnnxOpConverter):
