@@ -1567,7 +1567,7 @@ def test_batch_norm():
     check_correctness(model)
 
 
-# TODO(agladyshev): MaxPool, AveragePool
+@pytest.mark.parametrize("node_type", ["MaxPool", "AveragePool"])
 def test_max_pool(node_type):
     # Pool2D
     verify_unary(
