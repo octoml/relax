@@ -1568,7 +1568,7 @@ def test_batch_norm():
 
 
 @pytest.mark.parametrize("node_type", ["MaxPool", "AveragePool"])
-def test_max_pool(node_type):
+def test_pool(node_type):
     # Pool2D
     verify_unary(
         node_type,

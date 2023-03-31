@@ -1309,6 +1309,8 @@ class BatchNormalization(OnnxOpConverter):
 
 
 class Pool:
+    """Base class for MaxPool and AveragePool nodes."""
+
     @classmethod
     def _get_input_spatial_shape(cls, tensor):
         # shape is (N x C x D1 x D2 ... Dn)
@@ -1345,7 +1347,7 @@ class Pool:
         return pads
 
     @classmethod
-    def _base_impl_v12(cls, bb, inputs, attr, type="max"):
+    def _base_impl(cls, bb, inputs, attr, type="max"):
         # Unpack inputs and attributes.
         data = inputs[0]
         auto_pad = attr.get("auto_pad", b"NOTSET").decode("utf-8")
@@ -1383,7 +1385,7 @@ class MaxPool(OnnxOpConverter, Pool):
 
     @classmethod
     def _impl_v12(cls, bb, inputs, attr):
-        return cls._base_impl_v12(cls, bb, inputs, attr)
+        return cls._base_impl(bb, inputs, attr)
 
 
 class AveragePool(OnnxOpConverter, Pool):
@@ -1391,7 +1393,7 @@ class AveragePool(OnnxOpConverter, Pool):
 
     @classmethod
     def _impl_v12(cls, bb, inputs, attr):
-         return cls._base_impl_v12(cls, bb, inputs, attr, "avg")
+        return cls._base_impl(bb, inputs, attr, "avg")
 
 
 class GlobalAveragePool(OnnxOpConverter):
