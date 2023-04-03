@@ -1323,7 +1323,7 @@ class LRN(OnnxOpConverter):
     """Operator converter for Local Response Normalization."""
 
     @classmethod
-    def _defaut_impl(cls, bb, inputs, attr):
+    def _default_impl(cls, bb, inputs, attr):
         """LRN support only NCHW format
         https://github.com/onnx/onnx/blob/main/docs/Operators.md#LRN
         """
@@ -1332,7 +1332,7 @@ class LRN(OnnxOpConverter):
         beta = attr.get("beta", 0.75)
         bias = attr.get("bias", 1.0)
         nsize = attr.get("size")
-        return relax.op.lrn(inputs[0], nsize, axis, bias, alpha, beta)
+        return relax.op.nn.lrn(inputs[0], nsize, axis, bias, alpha, beta)
 
     @classmethod
     def _impl_v1(cls, bb, inputs, attr):
