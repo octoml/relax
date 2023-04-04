@@ -84,26 +84,19 @@ ENV ONNX_NIGHTLY_PATH /opt/onnx_nightly/lib/python3.10/site-packages
 
 # Build TVM
 ARG TVM_BUILT_AT
-RUN git clone https://github.com/octoml/relax --recursive
-RUN cd relax && git fetch origin && git config user.name test && git config user.email test@example.com
+COPY . .
+RUN git config user.name test && git config user.email test@example.com
 
 # Add this line to build in an un-merged PR
 # RUN PR_NUMBER=NN bash -c 'cd relax && curl -L "https://github.com/octoml/relax/pull/$PR_NUMBER.diff" | patch -p1 -N -d . && git add . && git commit -m"PR #$PR_NUMBER"'
-RUN bash -c 'cd relax && curl -L "https://github.com/octoml/relax/compare/TUZ-145.diff" | patch -p1 -N -d . && git add . && git commit -m"Add TUZ-145"'
+# RUN bash -c 'cd relax && curl -L "https://github.com/octoml/relax/compare/TUZ-145.diff" | patch -p1 -N -d . && git add . && git commit -m"Add TUZ-145"'
 
-RUN rm -rf relax/build
-COPY docker/build_relax.sh docker/build_relax.sh
-RUN bash docker/build_relax.sh
-RUN cd relax/python && python3 -m pip install --no-cache-dir -e .
+RUN rm -rf build
+RUN bash scorecard/docker/build_relax.sh
+RUN cd python && python3 -m pip install --no-cache-dir -e .
 
 # aws CLI
 RUN pip install awscli
-
-# testbench code
-COPY relax-coverage relax-coverage
-COPY schema schema
-COPY models.yaml models.yaml
-COPY hub_models.yaml hub_models.yaml
 
 ENV ORT_TENSORRT_FP16_ENABLE 1
 ENV AWS_DEFAULT_REGION us-west-2

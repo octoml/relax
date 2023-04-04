@@ -19,7 +19,7 @@
 set -eux
 
 set +x
-source docker/retry.sh
+source scorecard/docker/retry.sh
 set -x
 
 PUSH_TO_ECR="${PUSH_TO_ECR:=0}"
@@ -33,7 +33,7 @@ if [ "$NO_CACHE" == "1" ]; then
     CACHE_ARG="--no-cache"
 fi
 
-retry $RETRIES docker build . --build-arg TVM_BUILT_AT=$TVM_BUILT_AT -f docker/Dockerfile.${IMAGE_NAME} $CACHE_ARG --tag ${IMAGE_NAME}:latest
+retry $RETRIES docker build . --build-arg TVM_BUILT_AT=$TVM_BUILT_AT -f scorecard/docker/Dockerfile.${IMAGE_NAME} $CACHE_ARG --tag ${IMAGE_NAME}:latest
 
 # # testing code to skip the docker build but still have an image to work with
 # docker pull hello-world

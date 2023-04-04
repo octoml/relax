@@ -85,7 +85,6 @@ class RelaxBase(BaseRunner):
                 return e, ImportError.FAILED_OCTO_COMPILE, 0, [], []
 
         compile_time_ms = compile_timer.ms_duration
-        breakpoint()
 
         # NOTE: ONNX frontend sanitizes input names. This hack is brittle and presumes Python dict ordering is the same
         # between invocations. The real fix should be that OctoModel carries a mapping of framework names to Relax names.

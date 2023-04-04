@@ -357,9 +357,9 @@ def matches(pattern: Union[str, re.Pattern], text: str) -> bool:
     return pattern.search(text) is not None
 
 
-@parameterize_configs(MODELS)
-def test_offload_coverage(request, show_test_name, result_directory, run_config: Dict[str, Any]):
-    """ """
+# @parameterize_configs(MODELS)
+# def test_offload_coverage(request, show_test_name, result_directory, run_config: Dict[str, Any]):
+#     """ """
 
 
 @parameterize_configs(MODELS)

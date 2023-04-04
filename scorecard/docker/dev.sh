@@ -44,17 +44,16 @@ docker run \
     --env WARMUP_RUNS=$WARMUP_RUNS \
     --env UPLOAD_GCP=$UPLOAD_GCP \
     --env UPLOAD_PG=$UPLOAD_PG \
-    -v $PWD/$MODEL_DATA_DIR:/opt/scorecard/model-data \
-    -v $GCP_AUTH_JSON:/opt/scorecard/gcp_auth.json:ro \
-    -v $PWD/.coverage_results:/opt/scorecard/.coverage_results \
-    -v $PWD/.tuning_records:/opt/scorecard/.tuning_records \
+    -v $PWD/$MODEL_DATA_DIR:/opt/scorecard/scorecard/model-data \
+    -v $GCP_AUTH_JSON:/opt/scorecard/scorecard/gcp_auth.json:ro \
+    -v $PWD/.coverage_results:/opt/scorecard/scorecard/.coverage_results \
+    -v $PWD/.tuning_records:/opt/scorecard/scorecard/.tuning_records \
     -v $PWD/.fish_history:/root/.local/share/fish/fish_history \
-    -v $PWD/relax-coverage:/opt/scorecard/relax-coverage \
-    -v $PWD/schema:/opt/scorecard/schema \
-    -v $PWD/scripts:/opt/scorecard/scripts \
-    -v $PWD/models.yaml:/opt/scorecard/models.yaml \
-    -v $PWD/hub_models.yaml:/opt/scorecard/hub_models.yaml \
-    --mount type=volume,dst=/opt/scorecard/relax,volume-driver=local,volume-opt=type=none,volume-opt=o=bind,volume-opt=device=$PWD/doc-relax \
+    -v $PWD/relax-coverage:/opt/scorecard/scorecard/relax-coverage \
+    -v $PWD/schema:/opt/scorecard/scorecard/schema \
+    -v $PWD/scripts:/opt/scorecard/scorecard/scripts \
+    -v $PWD/models.yaml:/opt/scorecard/scorecard/models.yaml \
+    -v $PWD/hub_models.yaml:/opt/scorecard/scorecard/hub_models.yaml \
     --mount type=volume,dst=/root/.cache/onnx/hub,volume-driver=local,volume-opt=type=none,volume-opt=o=bind,volume-opt=device=$PWD/onnx-hub-cache \
     -it $IMAGE \
     fish

@@ -17,7 +17,7 @@
 # under the License.
 
 set -euxo pipefail
-cd relax
+git submodule update --init --recursive --jobs 0
 mkdir -p build
 cd build
 cmake -GNinja \
@@ -27,8 +27,8 @@ cmake -GNinja \
     -DSUMMARIZE=1 \
     -DUSE_CUDA=1 \
     -DUSE_MICRO=1 \
-    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DUSE_CUTLASS=1 \
     -DUSE_THRUST=1 \
     ..
-cmake --build . --
+cmake --build .
