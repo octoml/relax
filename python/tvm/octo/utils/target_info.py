@@ -135,6 +135,7 @@ def get_cuda_target() -> tvm.target.Target:
     # To do so, lowercase the name and replace spaces with dases.
     target_name = "nvidia/" + product_name.replace(" ", "-").lower()
     target_name = target_name.replace("tesla", "nvidia")
+    target_name = target_name.replace("a10g", "nvidia-a10")
 
     target = tvm.target.Target(target_name)
 
