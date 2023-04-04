@@ -48,6 +48,8 @@ from tvm.relax.frontend.common import attach_span, emit_te_with_span
 
 import onnx.onnx_ml_pb2
 
+ready_to_break = False
+
 
 def get_type(elem_type: Union[str, int]) -> str:
     """Converts onnx integer datatype to numpy datatype"""
@@ -311,15 +313,13 @@ class Gather(OnnxOpConverter):
             assert isinstance(
                 indices, relax.Constant
             ), "Only constant indices supported for shape gather."
+            assert all(
+                hasattr(i, "value") for i in data
+            ), "Symbolic shape dimensions not yet supported."
+            shape_data = [i.value for i in data]
             np_index = indices.data.numpy()
-            if len(np_index.shape) == 1:
-                np_index = np_index[0]
-            np_index = int(np_index)
-            shape_val = data[np_index]
-            if hasattr(shape_val, "value"):
-                return relax.const(shape_val.value, dtype="int64")
-            else:
-                raise ValueError("Need to fix this case.")
+            shape_out = _np.take(shape_data, np_index)
+            return relax.const(shape_out, dtype="int64")
 
         # TODO(jwfromm) Make relax.take work with other indices shape.
         return emit_te_with_span(bb, topi.take, data, indices, axis)
@@ -592,7 +592,10 @@ class Squeeze(OnnxOpConverter):
             axis = [int(x) for x in inputs[1].data.numpy()]
         # If data is constant, perform computation directly.
         if isinstance(inputs[0], relax.Constant):
-            out_data = _np.squeeze(inputs[0].data.numpy(), axis)
+            if not isinstance(axis, list):
+                axis = [axis]
+            for ax in axis:
+                out_data = _np.squeeze(inputs[0].data.numpy(), ax)
             return relax.const(out_data, inputs[0].struct_info.dtype)
         return attach_span(relax.op.squeeze(inputs[0], axis))
 
@@ -872,13 +875,25 @@ class Slice(OnnxOpConverter):
             steps = steps.data.numpy().tolist()
         else:
             steps = [1] * len(axes)
-        # If input is a shape tensor, we can directly extract it.
-        if isinstance(data, relax.ShapeExpr):
-            shape_data = [dim.value for dim in data]
+
+        # If input is a shape tensor or a constant tensor, we can directly extract it.
+        if isinstance(data, (relax.ShapeExpr, relax.Constant)):
+            if isinstance(data, relax.ShapeExpr):
+                out_dtype = "int64"
+                data = _np.asarray([dim.value for dim in data])
+            else:
+                out_dtype = data.struct_info.dtype
+                data = data.data.numpy()
             # Starts, ends, and steps must be 1-d for shape operation.
             assert all(len(i) == 1 for i in [starts, ends, steps])
-            sliced_values = shape_data[starts[0] : ends[0] : steps[0]]
-            return relax.const(sliced_values, "int64")
+            # Convert any negative values to positive.
+            if starts[0] < 0:
+                starts[0] = data.shape[axis] + starts[0]
+            if ends[0] < 0:
+                ends[0] = data.shape[axis] + ends[0]
+            sliced_values = _np.take(data, range(starts[0], ends[0], steps[0]), axis=axis)
+            return relax.const(sliced_values, out_dtype)
+
         return attach_span(relax.op.strided_slice(data, axes, starts, ends, steps))
 
 
@@ -1596,10 +1611,6 @@ class SkipLayerNormalization(OnnxOpConverter):
         beta = inputs[3]
         bias = inputs[4]
 
-        assert (
-            beta is not None and bias is not None
-        ), "SkipLayerNormalization import currently only supports required beta and bias"
-
         epsilon = attr.get("epsilon", 1e-12)
 
         data = attach_span(relax.op.add(data, skip))
@@ -1610,7 +1621,16 @@ class SkipLayerNormalization(OnnxOpConverter):
 
         # Expects three outputs though only the first is used. Construct a placeholder for others.
         placeholder = relax.const(0, dtype="float32")
-        return relax.Tuple([output, placeholder, placeholder])
+        outputs = [output, placeholder, placeholder]
+
+        # If 4 outputs are expected, compute input_skip_bias_sum and append it.
+        if attr["tvm_custom"]["num_outputs"] == 4:
+            input_skip_bias_sum = attach_span(relax.op.add(data, skip))
+            if bias is not None:
+                input_skip_bias_sum = attach_span(relax.op.add(input_skip_bias_sum, bias))
+            outputs.append(input_skip_bias_sum)
+
+        return relax.Tuple(outputs)
 
 
 class EmbedLayerNormalization(OnnxOpConverter):
@@ -1711,6 +1731,7 @@ def _get_convert_map():
         "Transpose": Transpose,
         "Unsqueeze": Unsqueeze,
         "Gelu": Gelu,
+        "FastGelu": Gelu,
         "BiasGelu": BiasGelu,
         "Where": Where,
         "Clip": Clip,
@@ -1946,6 +1967,10 @@ class ONNXGraphImporter:
             # Perform special handling for shape expressions. If an input is a
             # shape expr, make sure the current op can handle it, otherwise
             # convert it to a tensor.
+            print(node.name)
+            global ready_to_break
+            if node.name == "/h.0/attn/Concat_6":
+                ready_to_break = True
             shape_compatible_ops = ["Reshape", "ConstantOfShape", "Gather", "Slice", "Expand"]
             for i, inp in enumerate(inputs):
                 if (
