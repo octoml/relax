@@ -48,8 +48,6 @@ from tvm.relax.frontend.common import attach_span, emit_te_with_span
 
 import onnx.onnx_ml_pb2
 
-ready_to_break = False
-
 
 def get_type(elem_type: Union[str, int]) -> str:
     """Converts onnx integer datatype to numpy datatype"""
@@ -1967,10 +1965,6 @@ class ONNXGraphImporter:
             # Perform special handling for shape expressions. If an input is a
             # shape expr, make sure the current op can handle it, otherwise
             # convert it to a tensor.
-            print(node.name)
-            global ready_to_break
-            if node.name == "/h.0/attn/Concat_6":
-                ready_to_break = True
             shape_compatible_ops = ["Reshape", "ConstantOfShape", "Gather", "Slice", "Expand"]
             for i, inp in enumerate(inputs):
                 if (
