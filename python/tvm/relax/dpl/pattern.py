@@ -20,7 +20,7 @@
 # pylint: disable=pointless-statement
 
 import typing
-from typing import Dict, List, Optional, Tuple, Union, Callable
+from typing import Dict, List, Optional, Tuple, Union
 
 import tvm
 import tvm._ffi as tvm_ffi
@@ -31,7 +31,7 @@ from tvm.relay.op import get
 from ...ir import make_node
 from ...ir.base import Node
 from ...runtime import Object
-from ..expr import Expr, Var, Function
+from ..expr import Expr, Var
 from . import _ffi as ffi
 
 
@@ -52,7 +52,7 @@ def register_df_node(type_key=None):
 class DFPattern(Node):
     """Base class of all Patterns."""
 
-    def __call__(self, *args, varg_default_wildcard=False) -> "CallPattern":
+    def __call__(self, *args, varg_default_wildcard=False, add_constraint=True) -> "CallPattern":
         """
         Syntax sugar for creating a CallPattern with argument patterns
 
@@ -61,7 +61,7 @@ class DFPattern(Node):
         result: CallPattern
             The resulting CallPattern
         """
-        return CallPattern(self, args, varg_default_wildcard)
+        return CallPattern(self, args, varg_default_wildcard, add_constraint)
 
     def __or__(self, other: "DFPattern") -> "OrPattern":
         """
@@ -387,6 +387,9 @@ class CallPattern(DFPattern):
     varg_default_wildcard: bool
         If True, args can be fewer than actual provided arguments.
 
+    add_constraint: bool
+        If True, automatically add "used-by" constraints between caller and callee expressions.
+
     Note
     ----
     By setting varg_default_wildcard to True, we can only focus on the argument
@@ -400,10 +403,15 @@ class CallPattern(DFPattern):
         op: "DFPattern",
         args: Union[List["DFPattern"], typing.Tuple["DFPattern", ...]],
         varg_default_wildcard: bool = False,
+        add_constraint=True,
     ):
         self.__init_handle_by_constructor__(
             ffi.CallPattern, op, args, varg_default_wildcard  # type: ignore
         )
+
+        if add_constraint:
+            for i, arg in enumerate(args):
+                arg.used_by(self, i)
 
 
 @register_df_node
@@ -835,7 +843,7 @@ def _is_call_tir(
     elif isinstance(args, (list, tuple)):
         args = TuplePattern(args)
 
-    return is_op("relax.call_tir")(func_pattern, args)
+    return is_op("relax.call_tir")(func_pattern, args, add_constraint=False)
 
 
 # Todo(relax-team): Dataflow pattern for StructInfo, and match out_sinfo
@@ -871,7 +879,7 @@ def _is_call_dps_packed(
     elif isinstance(args, (list, tuple)):
         args = TuplePattern(args)
 
-    return is_op("relax.call_dps_packed")(func_pattern, args)
+    return is_op("relax.call_dps_packed")(func_pattern, args, add_constraint=False)
 
 
 def is_call_dps_packed(
@@ -915,7 +923,7 @@ def is_call_packed(
         The resulting CallPattern
     """
     if args is None:
-        return ExternFuncPattern(func_name)(varg_default_wildcard=True)
+        return ExternFuncPattern(func_name)(varg_default_wildcard=True, add_constraint=False)
     return ExternFuncPattern(func_name)(*args)
 
 
@@ -1115,39 +1123,3 @@ def make_fused_bias_activation_pattern(op_name, with_bias=False, activation=None
         return is_op(activation)(out)
 
     return out
-
-
-def rewrite(
-    pattern: DFPattern, rewriter: Callable[[Expr, Dict[DFPattern, Expr]], Expr], func: Function
-) -> Function:
-    """
-    Rewrite a function with the given pattern and the rewriter function.
-
-    Parameters
-    ----------
-    pattern: DFPattern
-        The pattern to match.
-
-    rewriter: Callable[[Expr, Dict[DFPattern, Expr]], Expr]
-        The function to be called on a successful matching for rewriting. Given the matched
-        call node and the map of patterns and matched expressions, it should return a new call node
-        to replace the original one or the original matched call node as is.
-
-        For example, to replace x + x with 2 * x, we can write the rewriter as follows:
-        ```
-        x = wildcard()
-        pattern = is_op("relax.add")(x, x)
-
-        def rewriter(orig, matchings):
-            return R.multiply(matchings[x], R.const(2, "float32"))
-        ```
-
-    func: Function
-        The function to rewrite.
-
-    Returns
-    -------
-    rewritten_func: Function
-        The rewritten or the input function, depending on the pattern matching result.
-    """
-    return ffi.rewrite(pattern, rewriter, func)

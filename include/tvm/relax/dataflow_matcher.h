@@ -58,21 +58,12 @@ Optional<Map<DFPattern, Expr>> ExtractMatchedExpr(
  * \param dfb The function to match.
  * \param start_hint The starting point expression to match to distinguish multiple matches.
  * \param must_include_hint If start_hint is given, the return pattern must include start_hint.
- * \return tvm::runtime::Map<DFPattern, Var>
+ * \return Matched patterns and corresponding bound variables
  */
-TVM_DLL tvm::runtime::Map<DFPattern, Var> MatchGraph(const PatternContext& ctx,
-                                                     const DataflowBlock& dfb,
-                                                     Optional<Var> start_hint = NullOpt,
-                                                     bool must_include_hint = false);
-
-/**
- * \brief Match a graph-wise pattern with the current context (PatternContext::Current()).
- */
-inline tvm::runtime::Map<DFPattern, Var> MatchGraphDefault(const DataflowBlock& dfb,
-                                                           Optional<Var> start_hint = NullOpt,
-                                                           bool must_include_hint = false) {
-  return MatchGraph(PatternContext::Current(), dfb, start_hint, must_include_hint);
-}
+TVM_DLL Optional<Map<DFPattern, Var>> MatchGraph(const PatternContext& ctx,
+                                                 const DataflowBlock& dfb,
+                                                 Optional<Var> start_hint = NullOpt,
+                                                 bool must_include_hint = false);
 
 }  // namespace relax
 }  // namespace tvm

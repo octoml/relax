@@ -24,9 +24,9 @@
 
 #ifndef TVM_RELAX_BINDING_REWRITE_H_
 
+#include <tvm/ir/name_supply.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/expr.h>
-#include <tvm/relax/utils.h>
 
 #include <map>
 #include <set>
@@ -52,7 +52,7 @@ class DataflowBlockRewriteNode : public Object {
   }
   /*! \brief Insert an expression as VarBinding with automatic variable name. */
   void Add(Expr expr, bool is_dfvar = false) {
-    Add(name_table_.GetUniqueName("tmp"), expr, is_dfvar);
+    Add(name_supply_->FreshName("tmp"), expr, is_dfvar);
   }
   /*! \brief Remove the definition statement of an unused variable. */
   void RemoveUnused(Var unused, bool allow_undef = false);
@@ -60,7 +60,7 @@ class DataflowBlockRewriteNode : public Object {
   void RemoveAllUnused();
 
   /*! \brief The rewritten dataflow block. */
-  DataflowBlock MutatedDataflowBlock() { return dfb_.value(); }
+  DataflowBlock MutatedDataflowBlock() { return dfb_; }
   /*! \brief The rewritten function. */
   Function MutatedFunc() { return root_fn_.value(); }
   /*! \brief The rewritten IRModule. */
@@ -78,14 +78,14 @@ class DataflowBlockRewriteNode : public Object {
  protected:
   friend class DataflowBlockRewrite;
 
-  Optional<DataflowBlock> dfb_;          //!< The rewritten dataflow block.
+  DataflowBlock dfb_;                    //!< The rewritten dataflow block.
   Optional<Function> root_fn_;           //!< The rewritten function.
   const FunctionNode* original_fn_ptr_;  //!< Pointer to the original function.
   Map<Var, Array<Var>> to_users_;        //!< Map from variable to its users.
   Array<Var> fn_outputs_;                //!< Variables required by function outputs.
 
  private:
-  NameTable name_table_;  //!< Name table for tracking and generating unique names.
+  NameSupply name_supply_;  //!< Name supply for tracking and generating unique names.
 };
 
 /*!

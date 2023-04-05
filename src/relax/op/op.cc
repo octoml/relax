@@ -341,6 +341,29 @@ Expr MakeTensorToShape(Expr expr) {
 
 TVM_REGISTER_GLOBAL("relax.op.tensor_to_shape").set_body_typed(MakeTensorToShape);
 
+// shape_to_tensor
+StructInfo ReturnShapeToTensorStructInfo(const Call& call, const BlockBuilder& ctx) {
+  ICHECK(call->args.size() == 1);
+  ICHECK(call->args[0]->struct_info_.defined());
+  const auto* sinfo = GetStructInfoAs<ShapeStructInfoNode>(call->args[0]);
+  ICHECK(sinfo);
+  int32_t ndim = sinfo->ndim;
+  return TensorStructInfo(ShapeExpr({PrimExpr(ndim)}), DataType::Int(64));
+}
+
+RELAY_REGISTER_OP("relax.shape_to_tensor")
+    .set_num_inputs(1)
+    .add_argument("input", "Expr", "The input expression")
+    .set_attr<FInferStructInfo>("FInferStructInfo", ReturnShapeToTensorStructInfo)
+    .set_attr<FCallPacked>("FCallPacked", "relax.run.shape_to_tensor");
+
+Expr MakeShapeToTensor(Expr expr) {
+  static const Op& op = Op::Get("relax.shape_to_tensor");
+  return Call(op, {expr}, {}, {});
+}
+
+TVM_REGISTER_GLOBAL("relax.op.shape_to_tensor").set_body_typed(MakeShapeToTensor);
+
 // alloc_tensor
 
 StructInfo InferStructInfoAllocateTensor(const Call& call, const BlockBuilder& ctx) {
@@ -478,6 +501,12 @@ StructInfo InferStructInfoVMAllocTensor(const Call& call, const BlockBuilder& ct
   }
   if (const auto* output_shape = call->args[2].as<ShapeExprNode>()) {
     return TensorStructInfo(GetRef<Expr>(output_shape), out_dtype);
+  } else if (const auto* shape_sinfo = GetStructInfoAs<ShapeStructInfoNode>(call->args[2])) {
+    if (shape_sinfo->values.defined()) {
+      return TensorStructInfo(ShapeExpr(shape_sinfo->values.value()), out_dtype);
+    } else {
+      return TensorStructInfo(out_dtype, shape_sinfo->ndim);
+    }
   }
   return TensorStructInfo(out_dtype, kUnknownNDim);
 }
@@ -512,6 +541,23 @@ Expr MakeCallTIRDyn(Expr func, Tuple args) {
 }
 
 TVM_REGISTER_GLOBAL("relax.op.vm.call_tir_dyn").set_body_typed(MakeCallTIRDyn);
+
+// builtin stop_lift_params
+StructInfo InferStructInfoStopLiftParams(const Call& call, const BlockBuilder& ctx) {
+  return InferStructInfoUnaryArith<false>(call, ctx);
+}
+
+RELAY_REGISTER_OP("relax.builtin.stop_lift_params")
+    .set_num_inputs(1)
+    .add_argument("x", "Expr", "The input data")
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoStopLiftParams);
+
+Expr MakeStopLiftParams(Expr x) {
+  static const Op& op = Op::Get("relax.builtin.stop_lift_params");
+  return Call(op, {x}, Attrs(), {});
+}
+
+TVM_REGISTER_GLOBAL("relax.op.builtin.stop_lift_params").set_body_typed(MakeStopLiftParams);
 
 }  // namespace relax
 }  // namespace tvm

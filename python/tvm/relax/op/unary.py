@@ -287,22 +287,6 @@ def negative(x: Expr) -> Expr:
     return _ffi_api.negative(x)  # type: ignore
 
 
-def bitwise_not(x: Expr) -> Expr:
-    """Compute element-wise logical negation of the input data.
-
-    Parameters
-    ----------
-    x : relax.Expr
-        The input data
-
-    Returns
-    -------
-    result : relax.Expr
-        The computed result
-    """
-    return _ffi_api.bitwise_not(x)  # type: ignore
-
-
 def round(x: Expr) -> Expr:
     """Rounds each element of the input data to nearest integer.
 
@@ -317,6 +301,30 @@ def round(x: Expr) -> Expr:
         The computed result.
     """
     return _ffi_api.round(x)  # type: ignore
+
+
+def rsqrt(x: Expr) -> Expr:
+    """Compute element-wise reciprocal square root of the input data.
+
+    .. math::
+
+      1/sqrt(x)
+
+    Parameters
+    ----------
+    x : relax.Expr
+        The input data
+
+    Returns
+    -------
+    result : relax.Expr
+        The computed result.
+
+    Note
+    ----
+    The input tensor is required to have float dtype
+    """
+    return _ffi_api.rsqrt(x)  # type: ignore
 
 
 def sigmoid(x: Expr) -> Expr:

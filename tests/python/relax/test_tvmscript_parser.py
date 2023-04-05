@@ -337,6 +337,21 @@ def test_relax_base_op():
     _check(foo, bb.get()["foo"])
 
 
+def test_relax_shape_to_tensor():
+    @R.function
+    def foo(x: R.Shape((4, 4))):
+        tensor = R.shape_to_tensor(x)
+        return tensor
+
+    x = relax.Var("x", R.Shape((4, 4)))
+    bb = relax.BlockBuilder()
+    with bb.function("foo", (x,)):
+        tensor = bb.emit(relax.op.shape_to_tensor(x))
+        bb.emit_func_output(tensor)
+
+    _check(foo, bb.get()["foo"])
+
+
 def test_symbolic_shape():
     @R.function
     def foo(x: R.Tensor(("m", "n"), "float32")) -> R.Tensor(("m", "n"), "float32"):
@@ -747,6 +762,7 @@ def test_annotation():
         q: R.Tensor(ndim=2) = R.add(w, w)
         t = R.add(w, z)
         sh: R.Shape = R.call_packed("shape_of", x, sinfo_args=R.Shape)
+        lv: R.Tensor(sh, dtype="float32") = R.reshape(x, sh)
         o: R.Object = R.call_packed("contrib.tensor_array_stack", x, y, sinfo_args=R.Object)
         return o
 
@@ -759,13 +775,15 @@ def test_annotation():
     assert isinstance(foo.ret_struct_info, relax.ObjectStructInfo)
     m = relax.get_shape_of(foo.params[0])[1]
     bindings = foo.body.blocks[0].bindings
+    sh = bindings[4].var
 
     _check_struct_info(bindings[0], relax.TensorStructInfo([32, m], "float32"))
     _check_struct_info(bindings[1], relax.TensorStructInfo(dtype="", ndim=-1))
     _check_struct_info(bindings[2], relax.TensorStructInfo(dtype="", ndim=2))
     _check_struct_info(bindings[3], relax.TensorStructInfo(dtype="", ndim=-1))
     _check_struct_info(bindings[4], relax.ShapeStructInfo(ndim=-1))
-    _check_struct_info(bindings[5], relax.ObjectStructInfo())
+    _check_struct_info(bindings[5], relax.TensorStructInfo(sh))
+    _check_struct_info(bindings[6], relax.ObjectStructInfo())
 
 
 def test_annotate_override():
@@ -1199,6 +1217,16 @@ def test_vm_ops():
     _check(foo)
 
 
+def test_builtin_ops():
+    @R.function
+    def foo(x: R.Tensor(("m", "n"), dtype="float32")):
+        tensor = R.builtin.stop_lift_params(x)
+        gv = tensor
+        return gv
+
+    _check(foo)
+
+
 def test_prim_value():
     @R.function
     def foo():
@@ -1308,6 +1336,28 @@ def test_context_aware_parsing():
         raise RuntimeError("Fail to pass context-aware parsing")
 
     tvm.ir.GlobalVar.__call__ = _break_env
+
+    _check(Module)
+
+
+def test_unit_tuple_on_rhs_of_assign():
+    @I.ir_module
+    class Module:
+        @R.function
+        def main(input: R.Tensor((5, 5))) -> R.Tuple(R.Tensor((5, 5))):
+            gv = (input,)
+            return gv
+
+    _check(Module)
+
+
+def test_empty_tuple_on_rhs_of_assign():
+    @I.ir_module
+    class Module:
+        @R.function
+        def main(input: R.Tensor((5, 5))) -> R.Tuple():
+            gv = ()
+            return gv
 
     _check(Module)
 
