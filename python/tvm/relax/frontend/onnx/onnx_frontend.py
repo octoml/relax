@@ -1862,7 +1862,8 @@ class ONNXGraphImporter:
 
     def _parse_graph_initializers(self, graph: onnx.onnx_ml_pb2.GraphProto):
         """Parse network inputs to relax, aka parameters."""
-        for init_tensor in graph.initializer:
+        while len(graph.initializer) > 0:
+            init_tensor = graph.initializer.pop()
             if not init_tensor.name.strip():
                 raise ValueError("Tensor's name is required.")
             array = self._parse_array(init_tensor)
@@ -2077,7 +2078,7 @@ class ONNXGraphImporter:
 
 
 def from_onnx(
-    model: onnx.onnx_ml_pb2.GraphProto,
+    model_path: str,
     shape_dict: Optional[Dict[str, List]] = None,
     dtype_dict: Optional[Union[str, Dict[str, str]]] = "float32",
     opset: int = None,
@@ -2090,8 +2091,8 @@ def from_onnx(
 
     Parameters
     ----------
-    model : protobuf object
-        ONNX ModelProto after ONNX v1.1.0
+    model_path : str
+        Path pointing to an onnx model.
     shape_dict : dict of str to tuple, optional
         The input shape to the graph
     dtype_dict : str or dict of str to str, optional
@@ -2109,6 +2110,7 @@ def from_onnx(
     params : dict of str to tvm.nd.NDArray
         The parameter dict to be used by relax
     """
+    model = onnx.load(model_path)
     # Error if the model version is below 1.1.0
     if model.ir_version < 3:
         raise ValueError(
@@ -2117,18 +2119,23 @@ def from_onnx(
             )
         )
 
+    # Attempt to topologically sort the graph.
     try:
-        import onnx  # pylint: disable=import-outside-toplevel, redefined-outer-name
+        import onnx_graphsurgeon as gs
 
-        if hasattr(onnx.checker, "check_model"):
-            # try use onnx's own model checker before converting any model
-            try:
-                onnx.checker.check_model(model)
-            except Exception as exception:  # pylint: disable=c-extension-no-member, broad-except
-                # the checker is a bit violent about errors, so simply print warnings here
-                warnings.warn(str(exception))
-    except ImportError as error:
-        raise ImportError("Unable to import onnx which is required {}".format(error))
+        sorted_graph = gs.import_onnx(model)
+        sorted_graph.toposort()
+        model = gs.export_onnx(sorted_graph)
+    except:
+        warnings.warn("Unable to topologically sort input graph.")
+
+    if hasattr(onnx.checker, "check_model"):
+        # try use onnx's own model checker before converting any model
+        try:
+            onnx.checker.check_model(model)
+        except Exception as exception:  # pylint: disable=c-extension-no-member, broad-except
+            # the checker is a bit violent about errors, so simply print warnings here
+            warnings.warn(str(exception))
 
     g = ONNXGraphImporter(shape_dict, dtype_dict, sanitize_input_names)
     graph = model.graph
