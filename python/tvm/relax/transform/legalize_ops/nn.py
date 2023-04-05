@@ -270,8 +270,7 @@ def _nn_group_norm(bb: BlockBuilder, call: Call) -> Expr:
 
 @register_legalize("relax.nn.dropout")
 def _nn_dropout(bb: BlockBuilder, call: Call) -> Expr:
-    logging.info("Dropout is handled by frontend translator at this moment and is not legalized.")
-    return call
+    return bb.call_te(topi.nn.dropout, call.args[0])
 
 
 def _te_attention(q: te.Tensor, k: te.Tensor, v: te.Tensor, bias: te.Tensor) -> te.Tensor:

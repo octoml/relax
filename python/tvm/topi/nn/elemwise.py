@@ -103,3 +103,29 @@ def prelu(x, slope, axis=1):
         return tvm.tir.Select(xval > 0, xval, xval * slope(indices[axis]))
 
     return te.compute(x.shape, _compute_channelwise)
+
+
+@tvm.te.tag_scope(tag=tag.ELEMWISE)
+def dropout(x):
+    """Take dropout of input x for inference.
+
+    Parameters
+    ----------
+    x : tvm.te.Tensor
+        Input argument.
+
+    Returns
+    -------
+    y : tvm.te.Tensor
+        The result.
+    """
+
+    def _compute_channelwise(*indices):
+        xval = x(*indices)
+        return tvm.tir.Cast("bool", xval)
+
+    def _compute_identity(*indices):
+        xval = x(*indices)
+        return xval
+
+    return te.compute(x.shape, _compute_identity), te.compute(x.shape, _compute_channelwise)

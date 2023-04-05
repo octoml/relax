@@ -2044,7 +2044,7 @@ class ONNXGraphImporter:
                 else:
                     inputs.append(None)
             i_name = self._parse_value_proto(node)
-            outputs = node.output
+            outputs = self._fix_outputs(op_name, node.output)
             attr["tvm_custom"] = {}
             attr["tvm_custom"]["name"] = i_name
             attr["tvm_custom"]["num_outputs"] = len(outputs)
@@ -2161,6 +2161,17 @@ class ONNXGraphImporter:
         else:
             raise NotImplementedError("Operator {} not implemented.".format(op_name))
         return sym
+
+    def _fix_outputs(self, op_name, outputs):
+        """A hack to handle dropout or similar operator that have more than one out
+        in ONNX.
+        """
+        if op_name == "Dropout":
+            if len(outputs) == 1:
+                return outputs
+            # TODO(vvchernov): support dropout mask?
+            outputs = outputs[:-1]
+        return outputs
 
 
 def from_onnx(
