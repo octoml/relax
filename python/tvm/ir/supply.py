@@ -43,7 +43,7 @@ class NameSupply(Object):
         add_prefix: bool
             If set to true, then the prefix of this NameSupply will be prepended to the name.
         """
-        return _ffi_api.NameSupply_FreshName(self, name, add_prefix)
+        return _ffi_api.NameSupply_FreshName(self, name, add_prefix, True)
 
     def reserve_name(self, name, add_prefix=True):
         """Reserves an existing name with this NameSupply.

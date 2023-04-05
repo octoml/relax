@@ -210,7 +210,7 @@ def residual_block_patterns():
     for activation, name_postfix in [(None, ""), ("relax.nn.relu", "_relu")]:
         for check, base_patterns in [
             (_check_conv2d, conv2d_patterns()),
-            (_check_matmul, matmul_patterns()),
+            # (_check_matmul, matmul_patterns()),
         ]:
             for name, pat, arg_pat, _ in base_patterns:
                 # Append residual patterns only to those base patterns with bias add,
