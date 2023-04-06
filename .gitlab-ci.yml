@@ -17,9 +17,9 @@
 
 variables:
   GCP_AUTH_JSON: $gcpAuthJson
-  AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
-  AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
-  AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+#  AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+#  AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+#  AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
   IS_IN_CI: "1"
 
 stages:
@@ -27,6 +27,17 @@ stages:
   - build-docker
   - test
 
+.configure_aws: &configure_aws
+    - |
+      export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s"
+      $(aws sts assume-role-with-web-identity
+      --role-arn ${ROLE_ARN}
+      --role-session-name "GitLabRunner-${CI_PROJECT_ID}-${CI_PIPELINE_ID}"
+      --web-identity-token $CI_JOB_JWT_V2
+      --duration-seconds 3600
+      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]'
+      --output text))
+    - aws sts get-caller-identity
 
 update_token:
   image:
@@ -35,6 +46,8 @@ update_token:
   stage: prepare-auth
   before_script:
     - aws --version
+  before_script:
+  - *configure_aws
   script:
     - USER=AWS
     - TOKEN=$(aws ecr get-login-password)
