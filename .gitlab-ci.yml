@@ -65,11 +65,10 @@ docker_build:
     - update_token
   tags:
     - cpu-sole-tenant
-  before_script:
-    - *configure_aws
   script:
     - apk add --update py-pip
     - pip install awscli
+    - *configure_aws
     - NO_CACHE=1 sh ./scorecard/docker/build.sh
     # Generate a test suite ID to be used in later runs so all the concurrent results can be grouped together
     - sh -c 'TEST_SUITE_ID=$(tr -dc a-z </dev/urandom | head -c 5 ; echo ''); echo "TEST_SUITE_ID=$TEST_SUITE_ID" >> output.env'
