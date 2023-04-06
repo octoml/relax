@@ -47,8 +47,7 @@ update_token:
   stage: prepare-auth
   before_script:
     - aws --version
-  before_script:
-  - *configure_aws
+    - *configure_aws
   script:
     - USER=AWS
     - TOKEN=$(aws ecr get-login-password)
@@ -66,6 +65,8 @@ docker_build:
     - update_token
   tags:
     - cpu-sole-tenant
+  before_script:
+    - *configure_aws
   script:
     - apk add --update py-pip
     - pip install awscli
@@ -89,6 +90,8 @@ docker_build:
   image:
     # name: 186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:2023-03-10-b4fb5b6
     name: 186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:$TAG
+  before_script:
+    - *configure_aws
   script: |
     set -eux
     cd scorecard
