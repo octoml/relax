@@ -47,8 +47,7 @@ update_token:
   stage: prepare-auth
   before_script:
     - aws --version
-  before_script:
-  - *configure_aws
+    - *configure_aws
   script:
     - USER=AWS
     - TOKEN=$(aws ecr get-login-password)
@@ -69,6 +68,7 @@ docker_build:
   script:
     - apk add --update py-pip
     - pip install awscli
+    - *configure_aws
     - NO_CACHE=1 sh ./scorecard/docker/build.sh
     # Generate a test suite ID to be used in later runs so all the concurrent results can be grouped together
     - sh -c 'TEST_SUITE_ID=$(tr -dc a-z </dev/urandom | head -c 5 ; echo ''); echo "TEST_SUITE_ID=$TEST_SUITE_ID" >> output.env'
@@ -89,6 +89,8 @@ docker_build:
   image:
     # name: 186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:2023-03-10-b4fb5b6
     name: 186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:$TAG
+  before_script:
+    - *configure_aws
   script: |
     set -eux
     cd scorecard
