@@ -18,10 +18,9 @@
 
 echo "scorecard Docker image
 
-ensure S3 credentials are set up (ask the team to get a new set):
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
+view available tests with:
+pytest --tb=native -v -s -q scorecard/relax-coverage --collect-only
 
-run tests with:
-pytest --tb=native -v -s -q relax-coverage
+run a test with:
+pytest --tb=native -v -s -q scorecard/relax-coverage -k 'the-test-name'
 "

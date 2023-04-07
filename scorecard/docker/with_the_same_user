@@ -23,7 +23,7 @@
 # outside of container.  Do not run this manually. It does not make sense. It is
 # intended to be called by ci_build.sh only.
 
-set -ex
+set -e
 
 # NOTE: sudo uses the env_reset option to reset environment variables to a secure bare minimum.
 # The --preserve-env option below passes those variables through to the invoked process; however,

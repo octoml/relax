@@ -17,6 +17,7 @@
 # under the License.
 
 set -euxo pipefail
+git config --global --add safe.directory /opt/scorecard
 git submodule update --init --recursive --jobs 0
 mkdir -p build
 cd build
