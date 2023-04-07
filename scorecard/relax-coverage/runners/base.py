@@ -26,7 +26,7 @@ from benchmarking_utils import BenchmarkConfig, FROM_HUB, sha256sum
 
 
 def flush_result(
-    result_directory: Path,
+    result_path: Optional[Path],
     compile_time_ms: float,
     import_error: Optional[str],
     runtimes_ms: List[float],
@@ -36,9 +36,11 @@ def flush_result(
     framework_ops: List[str],
     runtime_metadata: Dict[str, Any],
     relay_ops: List[Dict[str, Any]],
+    extra_info: Dict[str, Any],
 ) -> None:
     """
-    Print the results of a run to stdout
+    Print the results of a run to stdout if 'result_path' is None otherwise
+    write it to that file
     """
     model_config = run_config.config
 
@@ -52,9 +54,6 @@ def flush_result(
 
     end_to_end_runtimes_ms = np.array(runtimes_ms)
     relay_fusion_groups: List[List[int]] = []
-    # branch, sha = git_info()
-    branch = "tbd"
-    sha = "tbd"
 
     if model_config.file() == FROM_HUB:
         # TODO: implement this for hub models
@@ -88,12 +87,6 @@ def flush_result(
         "config_name": model_config.flow_config,
         # info to reproduce results
         "model_hash": model_sha,
-        "repo": {
-            "owner": "octoml",
-            "repo": "relax",
-            "sha": sha,
-            "branch": branch,
-        },
         "runtime_metadata": runtime_metadata,
         "import_error": import_error,
         "warmup_runs": run_config.warmup_runs,
@@ -115,6 +108,11 @@ def flush_result(
         "relay_ops": relay_ops,
         "relay_fusion_groups": relay_fusion_groups,
         # coverage results
+        **extra_info,
     }
 
-    print(json.dumps(data, indent=2), flush=True)
+    if result_path is None:
+        print(json.dumps(data, indent=2), flush=True)
+    else:
+        with open(result_path, "w") as f:
+            json.dump(data, f, indent=2)

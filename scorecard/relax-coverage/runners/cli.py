@@ -21,6 +21,7 @@ from benchmarking_utils import (
     ModelConfig,
     eprint,
     extract_framework_ops,
+    git_info,
 )
 from base import flush_result
 from pathlib import Path
@@ -66,6 +67,25 @@ def run(args, runner):
     Run the benchmark as defined by the CLI args
     """
 
+    if not args.overwrite and Path(args.result_path).exists():
+        print(
+            f"--result-path value: '{args.result_path}' already exists, "
+            "quitting (use --overwrite to ignore this check)"
+        )
+        exit(1)
+
+    extra_info = {}
+    if args.extra_data is not None:
+        extra_info = json.loads(args.extra_data)
+
+    branch, sha = git_info()
+    extra_info["repo"] = {
+        "owner": "octoml",
+        "repo": "relax",
+        "sha": sha,
+        "branch": branch,
+    }
+
     # Determine where the model inputs should come from
     if args.random_inputs:
         # No specific input to use, make one
@@ -96,7 +116,7 @@ def run(args, runner):
         onnx_model = runner.load_model()
     except Exception as error:
         flush_result(
-            result_directory=None,
+            result_path=args.result_path,
             run_config=runner.benchmark_config,
             runtimes_ms=[],
             shapes=[],
@@ -106,6 +126,7 @@ def run(args, runner):
             relay_ops=[],
             framework_ops=[],
             runtime_metadata=runner.metadata(),
+            extra_info=extra_info,
         )
         raise error
 
@@ -130,7 +151,7 @@ def run(args, runner):
 
     # Send the output results to a JSON file on disk
     flush_result(
-        result_directory=None,
+        result_path=args.result_path,
         run_config=runner.benchmark_config,
         runtimes_ms=runtimes_ms,
         shapes=None,
@@ -140,6 +161,7 @@ def run(args, runner):
         relay_ops=[],
         framework_ops=framework_ops,
         runtime_metadata=runner.metadata(),
+        extra_info=extra_info,
     )
 
     # Re-raise any failures
@@ -271,6 +293,19 @@ def parse_args(valid_executors: List[str]):
         "--executor",
         required=True,
         help=f"executor to use (options are {', '.join(valid_executors)})",
+    )
+    run.add_argument(
+        "--result-path",
+        help=f"path of a JSON file to store results in",
+    )
+    run.add_argument(
+        "--overwrite",
+        help=f"overwrite the --result-path destination if it exists",
+        action="store_true",
+    )
+    run.add_argument(
+        "--extra-data",
+        help=f"an arbitrary JSON object to add to the output",
     )
 
     # CLI for generating inputs for a model
