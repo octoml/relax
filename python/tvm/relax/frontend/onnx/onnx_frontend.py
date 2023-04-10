@@ -50,6 +50,24 @@ from tvm.relax.frontend.common import attach_span, emit_te_with_span
 import onnx.onnx_ml_pb2
 
 
+# Name of an IRModule attr that contains the names of frontend operators.
+FRONTEND_OP_IDS_ATTR_NAME = "tvm-frontend-op-ids"
+
+
+# SourceName.name that refers to an IRModule attr which contains the source lines for the referring
+# Span.
+FRONTEND_OP_IDS_SOURCE_NAME = f"attr://{FRONTEND_OP_IDS_ATTR_NAME}"
+
+
+def lookup_operator_name(span: tvm.ir.Span, ir_module: IRModule) -> str:
+    """Lookup the ONNX operator name that emitted a given Relax op."""
+    assert span.source_name.name == FRONTEND_OP_IDS_SOURCE_NAME, (
+        f"lookup_operator_name: expect a Span with source_name {FRONTEND_OP_IDS_SOURCE_NAME}, "
+        f"got {span!r}"
+    )
+    return ir_module.attrs[FRONTEND_OP_IDS_ATTR_NAME][span.line]
+
+
 def get_type(elem_type: Union[str, int]) -> str:
     """Converts onnx integer datatype to numpy datatype"""
     # If a string was passed instead of a tensor type, it does not need
@@ -1827,6 +1845,7 @@ class ONNXGraphImporter:
         self._name_supply = NameSupply()
         self._sanitize: bool = sanitize
         self.bb: relax.BlockBuilder = relax.BlockBuilder()  # pylint: disable=invalid-name
+        self._frontend_op_ids: List[Union[str, int]] = []
 
     def from_onnx(self, graph: onnx.onnx_ml_pb2.ModelProto, opset: int) -> IRModule:
         """Construct Relax expressions from the ONNX graph.
@@ -1842,6 +1861,7 @@ class ONNXGraphImporter:
         mod : tvm.IRModule
             The returned relax module
         """
+        self._frontend_op_ids = []
         with self.bb.function("main"):
             with self.bb.dataflow() as df:  # pylint: disable=invalid-name, unused-variable
                 self.opset = opset
@@ -1858,7 +1878,7 @@ class ONNXGraphImporter:
                 param_list = [v for k, v in self._inputs.items() if isinstance(v, relax.Var)]
                 output_var = self.bb.emit_output(outputs)
             self.bb.emit_func_output(output_var, params=param_list)
-        relax_mod = self.bb.get()
+        relax_mod = self.bb.get().with_attr(FRONTEND_OP_IDS_ATTR_NAME, self._frontend_op_ids)
         return relax_mod
 
     def _parse_graph_initializers(self, graph: onnx.onnx_ml_pb2.GraphProto):
@@ -1976,7 +1996,9 @@ class ONNXGraphImporter:
                 ):
                     raise ValueError(f"Node {node.name} cannot handle ShapeExpr inputs.")
 
-            op = self._convert_operator(op_name, node_index, inputs, attr, self.opset)
+            node_name = node.name if node.name else node_index
+
+            op = self._convert_operator(op_name, node_name, inputs, attr, self.opset)
             # Create struct information for the new operator.
             op = self.bb.normalize(op)
 
@@ -2043,7 +2065,12 @@ class ONNXGraphImporter:
         return attrs
 
     def _convert_operator(
-        self, op_name: str, node_index: int, inputs: List[relax.Function], attrs: Dict, opset: int
+        self,
+        op_name: str,
+        node_id: Union[str, int],
+        inputs: List[relax.Function],
+        attrs: Dict,
+        opset: int,
     ) -> relax.Function:
         """Convert ONNX operator into a Relax operator.
         The converter must specify conversions explicitly for incompatible name, and
@@ -2053,8 +2080,9 @@ class ONNXGraphImporter:
         ----------
         op_name : str
             Operator name, such as Convolution, FullyConnected
-        node_index : int
-            Index of the node in the ONNX graph.
+        node_id : [str, int]
+            Uniquely identifies this node. Either the node name, if not empty, or the index of the
+            node in the graph.
         inputs : list of tvm.relax.function.Function
             List of inputs.
         attrs : dict
@@ -2070,7 +2098,17 @@ class ONNXGraphImporter:
         if op_name in convert_map:
             convert_class = convert_map[op_name]
             op_function = convert_class.get_converter(opset)
-            span = tvm.ir.Span(tvm.ir.SourceName(op_name), node_index, node_index, 0, 0)
+
+            # Append one line with the node name.
+            span = tvm.ir.Span(
+                tvm.ir.SourceName(FRONTEND_OP_IDS_SOURCE_NAME),
+                len(self._frontend_op_ids),
+                len(self._frontend_op_ids),
+                0,
+                0,
+            )
+            self._frontend_op_ids.append(node_id)
+
             with relax.frontend.SpanContext(span):
                 sym = op_function(self.bb, inputs, attrs)
         else:
