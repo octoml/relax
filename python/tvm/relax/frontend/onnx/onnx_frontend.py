@@ -2080,7 +2080,7 @@ class ONNXGraphImporter:
         ----------
         op_name : str
             Operator name, such as Convolution, FullyConnected
-        node_id : [str, int]
+        node_id : Union[str, int]
             Uniquely identifies this node. Either the node name, if not empty, or the index of the
             node in the graph.
         inputs : list of tvm.relax.function.Function
