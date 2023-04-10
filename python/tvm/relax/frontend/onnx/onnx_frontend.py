@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+# pylint: disable=bare-except, import-outside-toplevel
 """ONNX: Open Neural Network Exchange importer for Relax.
 
 This module implemnets the required functionality to read ONNX models
@@ -883,13 +884,13 @@ class Slice(OnnxOpConverter):
                 out_dtype = data.struct_info.dtype
                 data = data.data.numpy()
             # Starts, ends, and steps must be 1-d for shape operation.
-            assert all(len(i) == 1 for i in [starts, ends, steps])
+            assert all(len(i) == 1 for i in [starts, ends, steps, axis])
             # Convert any negative values to positive.
             if starts[0] < 0:
-                starts[0] = data.shape[axis] + starts[0]
+                starts[0] = data.shape[axes[0]] + starts[0]
             if ends[0] < 0:
-                ends[0] = data.shape[axis] + ends[0]
-            sliced_values = _np.take(data, range(starts[0], ends[0], steps[0]), axis=axis)
+                ends[0] = data.shape[axes[0]] + ends[0]
+            sliced_values = _np.take(data, range(starts[0], ends[0], steps[0]), axis=axes[0])
             return relax.const(sliced_values, out_dtype)
 
         return attach_span(relax.op.strided_slice(data, axes, starts, ends, steps))

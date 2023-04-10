@@ -297,10 +297,6 @@ class Module(object):
         """Remove all imports of the module."""
         _ffi_api.ModuleClearImports(self)
 
-    def clear_imports(self):
-        """Remove all imports of the module."""
-        _ffi_api.ModuleClearImports(self)
-
     def save(self, file_name, fmt=""):
         """Save the module to file.
 
