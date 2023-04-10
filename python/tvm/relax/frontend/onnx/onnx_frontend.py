@@ -2078,7 +2078,7 @@ class ONNXGraphImporter:
 
 
 def from_onnx(
-    model_path: str,
+    model: Union[onnx.ModelProto, str],
     shape_dict: Optional[Dict[str, List]] = None,
     dtype_dict: Optional[Union[str, Dict[str, str]]] = "float32",
     opset: int = None,
@@ -2091,8 +2091,8 @@ def from_onnx(
 
     Parameters
     ----------
-    model_path : str
-        Path pointing to an onnx model.
+    model: Union[onnx.ModelProto, str]
+        Path pointing to an onnx model or a preloaded onnx model.
     shape_dict : dict of str to tuple, optional
         The input shape to the graph
     dtype_dict : str or dict of str to str, optional
@@ -2110,7 +2110,9 @@ def from_onnx(
     params : dict of str to tvm.nd.NDArray
         The parameter dict to be used by relax
     """
-    model = onnx.load(model_path)
+    # Load model from memory if needed.
+    if isinstance(model, str):
+        model = onnx.load(model)
     # Error if the model version is below 1.1.0
     if model.ir_version < 3:
         raise ValueError(
