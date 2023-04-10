@@ -23,9 +23,18 @@ The Relax scorecard is intended benchmark Relax against other frameworks. The mo
 
 ### One-Time Setup
 
+#### AWS Instance Setup
+
+If you intend to run on an AWS instance this may help replicate the scorecard results. If you already have a machine with the appropriate CUDA driver and GPUs you can skip this step.
+1. Go to the launch template page for [`test-mlsys-dev`](https://us-west-2.console.aws.amazon.com/ec2/home?region=us-west-2#LaunchInstanceFromTemplate:launchTemplateId=lt-0b2796d6ff89f5313) for `octoml-sandbox` as a `Sandbox-Developer` in the AWS EC2 console.
+2. Select or create an SSH key pair
+3. Launch the instance
+
+Once this is complete, wait the few minutes for the instance to come up then SSH in and proceed. You can skip the Docker setup steps below if you used the recommended AMI.
+
 #### Docker
 
-First, ensure that `nvidia-docker2` is set up and configured so that Docker can access GPUs. Run the installation steps if you have not already.
+Ensure that `nvidia-docker2` is set up and configured so that Docker can access GPUs. Run the installation steps if you have not already. If you are using the AMI from the previous section you can skip this step.
 
 ```bash
 sudo apt update
