@@ -33,7 +33,7 @@
 #include <array>
 #include <cstddef>
 #include <limits>
-#include <stack>
+#include <optional>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -540,27 +540,40 @@ struct RNode {
 /**
  * \brief This method try to match a real node and a pattern node along with its neighbors.
  */
-static bool try_match(PNode* p, RNode* r, DFPatternMatcher* m,
-                      const std::map<const VarNode*, std::set<const VarNode*>>& def2use,
-                      const std::map<const VarNode*, std::vector<const VarNode*>>& use2def) {
-  if (nullptr != p->matched && p->matched == r->ptr) return true;  // matched before.
-  if (!m->Match(GetRef<DFPattern>(p->ptr), GetRef<Var>(r->ptr))) return false;
+using UndoItems = std::vector<std::pair<PNode*, RNode*>>;
+static std::optional<UndoItems> try_match(
+    PNode* p, RNode* r, DFPatternMatcher* m,
+    const std::map<const VarNode*, std::vector<const VarNode*>>& def2use,
+    const std::map<const VarNode*, std::vector<const VarNode*>>& use2def) {
+  if (p->matched != nullptr && p->matched == r->ptr) return {};  // matched before.
+  if (!m->Match(GetRef<DFPattern>(p->ptr), GetRef<Var>(r->ptr))) return std::nullopt;
 
-  std::stack<std::pair<PNode*, RNode*>> undo_stack{};
+  UndoItems undo;
 
-  const auto commit = [&undo_stack](PNode* p, RNode* r) {
+  const auto commit = [&undo](PNode* p, RNode* r) {
     // match with each other.
+    // TODO(ganler, masahi): Why commit on the same p-r pair happens more than once?
+    if (p->ptr == r->matched) {
+      ICHECK_EQ(p->matched, r->ptr);
+      return;
+    }
     p->matched = r->ptr;
     r->matched = p->ptr;
-    undo_stack.emplace(p, r);
+    undo.emplace_back(p, r);
   };
 
-  const auto quit = [&undo_stack] {
-    while (!undo_stack.empty()) {
-      auto& top = undo_stack.top();
-      top.first->matched = nullptr;
-      top.second->matched = nullptr;
-      undo_stack.pop();
+  const auto quit = [&undo] {
+    for (auto& [p_node, r_node] : undo) {
+      p_node->matched = nullptr;
+      r_node->matched = nullptr;
+    }
+    return std::nullopt;
+  };
+
+  const auto try_match_update_undo = [&](PNode* p, RNode* r) {
+    if (auto undo_more = try_match(p, r, m, def2use, use2def)) {
+      undo.insert(undo.end(), undo_more->begin(), undo_more->end());
+      return true;
     }
     return false;
   };
@@ -568,31 +581,26 @@ static bool try_match(PNode* p, RNode* r, DFPatternMatcher* m,
   commit(p, r);
 
   // match parent patterns.
-  for (auto& pparent_pairs : p->parents) {
-    PNode* pparent = pparent_pairs.first;
-    const std::vector<PairCons>& constraints = pparent_pairs.second;
-
+  for (auto& [pparent, constraints] : p->parents) {
     bool any_cons_sat = false;
     for (auto& rparent : r->parents) {
       // skip if mismatch.
       if (rparent->matched && rparent->matched != pparent->ptr) continue;
 
       const auto& uses = def2use.at(rparent->ptr);
-      // skip if `rparent` is not used by `r`.
-      if (uses.cend() == uses.find(r->ptr)) continue;
 
       // check edge constraints.
       bool cons_sat = true;
       for (const auto& cons : constraints) {
-        if (PairCons::kOnlyUsedBy == cons.type && uses.size() != 1) {
+        if (cons.type == PairCons::kOnlyUsedBy && uses.size() != 1) {
           cons_sat = false;
           break;
         }
 
-        if (-1 != cons.index) {
+        if (cons.index != -1) {
           const auto& callees = use2def.at(r->ptr);
-          if (static_cast<size_t>(cons.index) >= callees.size() ||
-              rparent->ptr != callees[cons.index]) {
+          if (callees.size() <= static_cast<size_t>(cons.index) ||
+              callees[cons.index] != rparent->ptr) {
             cons_sat = false;
             break;
           }
@@ -603,7 +611,7 @@ static bool try_match(PNode* p, RNode* r, DFPatternMatcher* m,
 
       // try all parent R nodes that are not matched yet.
       // as long as ppattern can match one node.
-      if (!pparent->matched && try_match(pparent, rparent, m, def2use, use2def)) {
+      if (!pparent->matched && try_match_update_undo(pparent, rparent)) {
         commit(pparent, rparent);
         break;
       }
@@ -612,27 +620,24 @@ static bool try_match(PNode* p, RNode* r, DFPatternMatcher* m,
   }
 
   // forward matching;
-  for (auto& pchild_pairs : p->children) {
-    PNode* pchild = pchild_pairs.first;
-    const std::vector<PairCons>& constraints = pchild_pairs.second;
+  for (auto& [pchild, constraints] : p->children) {
     bool any_cons_sat = false;
     for (auto& rchild : r->children) {
       if (rchild->matched && rchild->matched != pchild->ptr) continue;
 
       const auto& uses = def2use.at(r->ptr);
-      if (uses.cend() == uses.find(rchild->ptr)) continue;
 
       // check edge constraints.
       bool all_cons_pass = true;
       for (const auto& cons : constraints) {
-        if (PairCons::kOnlyUsedBy == cons.type && uses.size() != 1) {
+        if (cons.type == PairCons::kOnlyUsedBy && uses.size() != 1) {
           all_cons_pass = false;
           break;
         }
 
-        if (-1 != cons.index) {
+        if (cons.index != -1) {
           const auto& callees = use2def.at(rchild->ptr);
-          if (static_cast<size_t>(cons.index) >= callees.size() || r->ptr != callees[cons.index]) {
+          if (callees.size() <= static_cast<size_t>(cons.index) || callees[cons.index] != r->ptr) {
             all_cons_pass = false;
             break;
           }
@@ -641,20 +646,20 @@ static bool try_match(PNode* p, RNode* r, DFPatternMatcher* m,
       if (!all_cons_pass) continue;
       any_cons_sat = true;
 
-      if (!pchild->matched && try_match(pchild, rchild, m, def2use, use2def)) {
+      if (!pchild->matched && try_match_update_undo(pchild, rchild)) {
         commit(pchild, rchild);
         break;
       }
     }
     if (!pchild->matched || !any_cons_sat) return quit();
   }
-
-  return true;
+  return undo;
 }
 
 class MatcherUseDefAnalysis : public relax::ExprVisitor {
  public:
-  std::map<const VarNode*, std::set<const VarNode*>> def2use;
+  std::vector<const VarNode*> vars;
+  std::map<const VarNode*, std::vector<const VarNode*>> def2use;
   // caller -> callee table.
   std::map<const VarNode*, std::vector<const VarNode*>> caller2callees;
 
@@ -671,7 +676,15 @@ class MatcherUseDefAnalysis : public relax::ExprVisitor {
   void VisitExpr_(const VarNode* op) override {
     if (nullptr == cur_user_) return;
 
-    def2use[op].insert(cur_user_);
+    auto check_and_push = [](std::vector<const VarNode*>& vec, const VarNode* var) {
+      if (std::find(vec.begin(), vec.end(), var) == vec.end()) {
+        vec.push_back(var);
+      }
+    };
+
+    check_and_push(def2use[op], cur_user_);
+    check_and_push(vars, op);
+
     caller2callees[cur_user_].push_back(op);
   }
 
@@ -680,9 +693,12 @@ class MatcherUseDefAnalysis : public relax::ExprVisitor {
   }
 };
 
-Map<DFPattern, Var> MatchGraph(const PatternContext& ctx, const DataflowBlock& dfb,
-                               Optional<Var> start_hint, bool must_include_hint) {
-  Map<DFPattern, Var> ret;
+Optional<Map<DFPattern, Var>> MatchGraph(const PatternContext& ctx, const DataflowBlock& dfb,
+                                         Optional<Var> start_hint, bool must_include_hint) {
+  if (ctx->src_ordered.size() == 0) {
+    return NullOpt;
+  }
+
   // TODO(@ganler): Handle non-may external use.
   ICHECK(ctx->allow_extern_use == PatternContextNode::kMay) << "Only kMay is supported yet.";
   ICHECK(!must_include_hint || start_hint.defined())
@@ -691,7 +707,6 @@ Map<DFPattern, Var> MatchGraph(const PatternContext& ctx, const DataflowBlock& d
   const auto var2val = AnalyzeVar2Value(dfb);
   DFPatternMatcher matcher(var2val);
 
-  // std::map<const VarNode*, std::set<const VarNode*>>
   MatcherUseDefAnalysis ud_analysis;
   ud_analysis.VisitBindingBlock_(dfb.get());
   const auto& def2use = ud_analysis.def2use;
@@ -701,9 +716,8 @@ Map<DFPattern, Var> MatchGraph(const PatternContext& ctx, const DataflowBlock& d
   std::unordered_map<const VarNode*, RNode> var2node;
   var2node.reserve(dfb->bindings.size());
 
-  for (const auto& du : def2use) {
-    const VarNode* cur_var = du.first;
-    const std::set<const VarNode*>& uses = du.second;
+  for (const VarNode* cur_var : ud_analysis.vars) {
+    const auto& uses = def2use.at(cur_var);
     RNode& cur_node = var2node[cur_var];
     cur_node.ptr = cur_var;
     for (const VarNode* use : uses) {
@@ -717,29 +731,27 @@ Map<DFPattern, Var> MatchGraph(const PatternContext& ctx, const DataflowBlock& d
   std::unordered_map<const DFPatternNode*, PNode> pattern2node;
   pattern2node.reserve(ctx->constraints.size());
 
-  for (const auto& def2use_pattern : ctx->constraints) {
-    const DFPatternNode* def_pattern = def2use_pattern.first.get();
-    const std::map<DFPattern, std::vector<PairCons>>& uses = def2use_pattern.second;
-    PNode& def_node = pattern2node[def_pattern];
-    def_node.ptr = def_pattern;
+  for (const auto& [def_pattern, uses] : ctx->constraints) {
+    PNode& def_node = pattern2node[def_pattern.get()];
+    def_node.ptr = def_pattern.get();
     def_node.children.reserve(uses.size());
-    for (const auto& use : uses) {
-      const auto& cons = use.second;
-      const DFPatternNode* use_pattern = use.first.get();
-      PNode& use_node = pattern2node[use_pattern];
-      use_node.ptr = use_pattern;
+    for (const auto& [use_pattern, cons] : uses) {
+      PNode& use_node = pattern2node[use_pattern.get()];
+      use_node.ptr = use_pattern.get();
       use_node.parents.emplace_back(&def_node, std::ref(cons));
       def_node.children.emplace_back(&use_node, std::ref(cons));
     }
   }
 
-  if (start_hint.defined()) {
-    Var v = start_hint.value();
-    auto rnode_ptr = var2node.find(v.get());
-    for (auto& ppair : pattern2node) {
-      if (try_match(&ppair.second, &rnode_ptr->second, &matcher, def2use, caller2callees)) {
-        for (auto ppair : pattern2node)
-          ret.Set(GetRef<DFPattern>(ppair.first), GetRef<Var>(ppair.second.matched));
+  Map<DFPattern, Var> ret;
+
+  if (start_hint) {
+    auto rnode_ptr = var2node.at(start_hint.value().get());
+    for (auto& p_node : pattern2node) {
+      if (try_match(&p_node.second, &rnode_ptr, &matcher, def2use, caller2callees)) {
+        for (const auto& [df_pattern, pattern_node] : pattern2node) {
+          ret.Set(GetRef<DFPattern>(df_pattern), GetRef<Var>(pattern_node.matched));
+        }
         return ret;
       }
     }
@@ -747,38 +759,50 @@ Map<DFPattern, Var> MatchGraph(const PatternContext& ctx, const DataflowBlock& d
     if (must_include_hint) return ret;
   }
 
-  PNode* pnode_start = &pattern2node.begin()->second;
+  PNode& pnode_start = pattern2node[ctx->src_ordered[0].get()];
 
-  if (!pnode_start->matched) {
-    for (auto& rpair : var2node) {
-      if (start_hint.defined() && start_hint.value().get() == rpair.first) continue;
-      if (try_match(pnode_start, &rpair.second, &matcher, def2use, caller2callees)) {
-        for (auto ppair : pattern2node)
-          ret.Set(GetRef<DFPattern>(ppair.first), GetRef<Var>(ppair.second.matched));
-
+  if (!pnode_start.matched) {
+    for (const auto& var : ud_analysis.vars) {
+      if (start_hint.defined() && start_hint.value().get() == var) continue;
+      RNode& r_node = var2node[var];
+      if (try_match(&pnode_start, &r_node, &matcher, def2use, caller2callees)) {
+        for (const auto& [df_pattern, pattern_node] : pattern2node) {
+          ret.Set(GetRef<DFPattern>(df_pattern), GetRef<Var>(pattern_node.matched));
+        }
         return ret;
       }
     }
   }
 
-  return ret;
+  return NullOpt;
 }
 
 TVM_REGISTER_GLOBAL("relax.dpl.match_dfb").set_body_typed(MatchGraph);
 
 /*!
- * \brief Apply pattern matching to each call node and replace matching ones with the output of
- * a user-provided rewriter function.
+ * \brief Apply pattern matching to each call node and dataflow block, and replace matching ones
+ * with the output of a user-provided rewriter function.
  */
 class PatternRewriter : ExprMutator {
  public:
+  using ExprMutator::VisitBindingBlock_;
   using ExprMutator::VisitExpr_;
 
-  PatternRewriter(DFPattern pat, PackedFunc rewriter_func)
-      : pattern_(pat), rewriter_func_(rewriter_func) {}
+  PatternRewriter(DFPattern pat, PackedFunc rewriter_func,
+                  const std::unordered_set<const VarNode*>& params)
+      : pattern_(pat), rewriter_func_(rewriter_func), params_(params) {}
 
-  static Expr Run(DFPattern pat, PackedFunc rewriter_func, Function f) {
-    PatternRewriter rewriter(pat, rewriter_func);
+  PatternRewriter(const PatternContext& ctx, PackedFunc rewriter_func,
+                  const std::unordered_set<const VarNode*>& params)
+      : ctx_(ctx), rewriter_func_(rewriter_func), params_(params) {}
+
+  template <typename PatternType>
+  static Expr Run(PatternType pat, PackedFunc rewriter_func, Function f) {
+    std::unordered_set<const VarNode*> params;
+    for (const auto& p : f->params) {
+      params.insert(p.get());
+    }
+    PatternRewriter rewriter(pat, rewriter_func, params);
     return RemoveAllUnused(Downcast<Function>(rewriter.VisitExpr(f)));
   }
 
@@ -794,7 +818,9 @@ class PatternRewriter : ExprMutator {
 
   Expr VisitExpr_(const CallNode* call_node) final {
     auto call = ExprMutator::VisitExpr_(call_node);
-    if (auto matches_opt = ExtractMatchedExpr(pattern_, call, bindings_)) {
+    if (!pattern_) {
+      return call;
+    } else if (auto matches_opt = ExtractMatchedExpr(pattern_.value(), call, bindings_)) {
       auto rewriten_expr = rewriter_func_(call, matches_opt.value());
       memo_[call_node] = rewriten_expr;
       return rewriten_expr;
@@ -802,16 +828,101 @@ class PatternRewriter : ExprMutator {
     return call;
   }
 
+  BindingBlock VisitBindingBlock_(const DataflowBlockNode* block_node) final {
+    if (!ctx_) {
+      return ExprMutator::VisitBindingBlock_(block_node);
+    }
+    return RewriteDataflowBlockFixedPoint(GetRef<DataflowBlock>(block_node));
+  }
+
  private:
-  DFPattern pattern_;
+  void EmitUsedVars(Expr val, const Array<Binding>& pending_bindings,
+                    std::unordered_set<const VarNode*>* emitted_vars) {
+    std::unordered_set<const VarNode*> unemitted_vars;
+    PostOrderVisit(val, [=, &unemitted_vars](Expr e) {
+      if (auto v = e.as<VarNode>(); v && !emitted_vars->count(v)) {
+        unemitted_vars.insert(v);
+      }
+    });
+
+    if (unemitted_vars.empty()) {
+      return;
+    }
+
+    size_t num_unemitted = unemitted_vars.size();
+    for (size_t i = 0; i < pending_bindings.size(); ++i) {
+      const auto& binding = pending_bindings[i];
+      if (auto var_bind = binding.as<VarBindingNode>();
+          var_bind && unemitted_vars.count(var_bind->var.get())) {
+        // var_bind->value may also depend on other unemitted vars in this range
+        Array<Binding> prev_bindings(pending_bindings.begin(), pending_bindings.begin() + i);
+        EmitUsedVars(var_bind->value, prev_bindings, emitted_vars);
+        this->VisitBinding(binding);
+        emitted_vars->insert(var_bind->var.get());
+        if (--num_unemitted == 0) {
+          return;
+        }
+      }
+    }
+  }
+
+  // Repeat until all matchable subsets of bindings are rewritten.
+  BindingBlock RewriteDataflowBlockFixedPoint(BindingBlock block) {
+    if (auto matches = MatchGraph(ctx_.value(), Downcast<DataflowBlock>(block))) {
+      builder_->BeginDataflowBlock();
+      Map<Var, Expr> replacements = rewriter_func_(matches.value());
+
+      std::unordered_set<const VarNode*> emitted_vars;
+
+      for (size_t i = 0; i < block->bindings.size(); ++i) {
+        const auto& binding = block->bindings[i];
+        if (auto var_bind = binding.as<VarBindingNode>()) {
+          if (replacements.count(var_bind->var)) {
+            auto new_val = replacements[var_bind->var];
+            Array<Binding> pending_bindings(block->bindings.begin() + i + 1, block->bindings.end());
+            // Make sure there is no unbound variable used in the new value before it is emitted
+            EmitUsedVars(new_val, pending_bindings, &emitted_vars);
+            this->ReEmitBinding(var_bind, builder_->Normalize(new_val));
+          } else if (!emitted_vars.count(var_bind->var.get())) {
+            this->VisitBinding(binding);
+            emitted_vars.insert(var_bind->var.get());
+          }
+        } else {
+          this->VisitBinding(binding);
+        }
+      }
+      return RewriteDataflowBlockFixedPoint(builder_->EndBlock());
+    }
+    return block;
+  }
+
+  /*! \brief The pattern for rewriting call nodes */
+  Optional<DFPattern> pattern_;
+  /*! \brief The pattern constraint contexts for rewriting dataflow blocks */
+  Optional<PatternContext> ctx_;
+  /*!
+   * \brief The user-provided rewriter function. Its signature and semantics are:
+   * - (Call, Map<DFPattern, Expr>) -> Call for call node rewriting. Given the matched
+   *    call node and the map of patterns and matched expressions, it should return a new call node
+   *    to replace the original one or the original matched call node as is.
+   * - Map<DFPattern, Var> -> Map<Var, Expr> for dataflow block rewriting. Given the map of patterns
+   *   and corresponding variables (bound variables or parameters), it should return a map that
+   *   specifies new values for matched bound variables.
+   */
   PackedFunc rewriter_func_;
+  std::unordered_set<const VarNode*> params_;
   Map<Var, Expr> bindings_;
   std::unordered_map<const Object*, Expr> memo_;
 };
 
-TVM_REGISTER_GLOBAL("relax.dpl.rewrite")
+TVM_REGISTER_GLOBAL("relax.dpl.rewrite_call")
     .set_body_typed([](DFPattern pat, PackedFunc rewriter, Function f) {
       return PatternRewriter::Run(pat, rewriter, f);
+    });
+
+TVM_REGISTER_GLOBAL("relax.dpl.rewrite_bindings")
+    .set_body_typed([](const PatternContext& ctx, PackedFunc rewriter, Function f) {
+      return PatternRewriter::Run(ctx, rewriter, f);
     });
 
 }  // namespace relax

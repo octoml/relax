@@ -157,10 +157,7 @@ class TorchFXImporter:
         arg = self.env[node.args[0]]
         if isinstance(arg, (int, float)):
             arg = relax.const(arg, "float32")
-        sqrt = self.block_builder.emit(relax.op.sqrt(arg))
-        return self.block_builder.emit(
-            relax.op.divide(relax.const(1, sqrt.struct_info.dtype), sqrt)
-        )
+        return self.block_builder.emit(relax.op.rsqrt(arg))
 
     def _round(self, node: fx.node.Node) -> relax.Expr:
         if "decimals" in node.kwargs and node.kwargs["decimals"] != 0:
@@ -251,7 +248,6 @@ class TorchFXImporter:
 
     def _arange(self, node: fx.node.Node) -> relax.Var:
         import torch
-        import numpy as np
 
         start_end_step = [None, None, None]
         if "start" in node.kwargs:
@@ -288,8 +284,10 @@ class TorchFXImporter:
             dtype = TorchFXImporter._convert_data_type(torch.get_default_dtype())
         else:
             dtype = "int64"
-
-        return relax.const(np.arange(*start_end_step, dtype=dtype))
+        start_end_step = [
+            self.env[x] if isinstance(x, torch.fx.node.Node) else x for x in start_end_step
+        ]
+        return relax.op.arange(*start_end_step, dtype=dtype)
 
     def _empty(self, node: fx.node.Node) -> relax.Var:
         dtype = TorchFXImporter._convert_data_type(str(node.kwargs["dtype"]), self.env)
@@ -636,6 +634,34 @@ class TorchFXImporter:
         weight = self.params[module.weight]
         bias = None if module.bias is None else self.params[module.bias]
         return self.block_builder.emit(relax.op.linear(x, weight, bias, "float32"))
+
+    def _conv1d(self, node: fx.node.Node) -> relax.Var:
+        x = self.env[node.args[0]]
+        module = self.named_modules[node.target]
+        weight = self.params[module.weight]
+
+        conv1d = self.block_builder.emit(
+            relax.op.nn.conv1d(
+                x,
+                weight,
+                strides=module.stride,
+                padding=module.padding,
+                dilation=module.dilation,
+                groups=module.groups,
+                data_layout="NCW",
+                kernel_layout="OIW",
+                out_dtype="float32",
+            )
+        )
+
+        if module.bias is None:
+            return conv1d
+
+        bias = self.params[module.bias]
+        assert len(self.shape_of(bias)) == 1
+        bias = relax.op.reshape(bias, (1, -1, 1))
+
+        return self.block_builder.emit(relax.op.add(conv1d, bias))
 
     def _conv2d(self, node: fx.node.Node) -> relax.Var:
         x = self.env[node.args[0]]
@@ -1001,6 +1027,7 @@ class TorchFXImporter:
         self.convert_map: Dict[Union[nn.Module, str], Callable[[fx.node.Node], relax.Var]] = {
             # call_module
             nn.Linear: self._linear,
+            nn.Conv1d: self._conv1d,
             nn.Conv2d: self._conv2d,
             nn.MaxPool2d: self._max_pool2d,
             nn.AdaptiveAvgPool2d: self._adaptive_avg_pool2d(is_module=True),

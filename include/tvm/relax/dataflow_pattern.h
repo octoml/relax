@@ -191,7 +191,10 @@ class PatternContextNode : public Object {
     kMustNot, /*!< All nodes except outputs only have internal depedencies in the matched graph. */
   } allow_extern_use = kMay;
   // src node -> <dst node, constraint type> constraints.
-  std::map<DFPattern, std::map<DFPattern, std::vector<PairCons>>> constraints;
+  // Dst nodes are kept in a vector to keep them ordered.
+  std::map<DFPattern, std::vector<std::pair<DFPattern, std::vector<PairCons>>>> constraints;
+  // Keep a separate vector of patterns to process constraints in a fixed order.
+  std::vector<DFPattern> src_ordered;
 
   static constexpr const char* _type_key = "relax.dpl.PatternContext";
   TVM_DECLARE_FINAL_OBJECT_INFO(PatternContextNode, Object);
@@ -224,20 +227,33 @@ class PatternContext : public ObjectRef {
    * \param cons The constraint type. \sa PairCons
    */
   void add_constraint(DFPattern producer, DFPattern consumer, PairCons cons) {
-    auto& vec = (*this)->constraints[producer][consumer];
-    ICHECK(std::find(vec.cbegin(), vec.cend(), cons) == vec.cend()) << "Constraint already exists";
-    vec.push_back(cons);
+    auto& pairs = (*this)->constraints[producer];
+    auto it = std::find_if(pairs.begin(), pairs.end(),
+                           [consumer](auto p) { return p.first == consumer; });
+    if (it == pairs.end()) {
+      pairs.emplace_back(consumer, std::vector{cons});
+    } else {
+      auto& vec = it->second;
+      ICHECK(std::find(vec.cbegin(), vec.cend(), cons) == vec.cend())
+          << "Constraint already exists";
+      vec.push_back(cons);
+    }
+
+    auto& patterns = (*this)->src_ordered;
+    if (std::find(patterns.begin(), patterns.end(), producer) == patterns.end()) {
+      patterns.push_back(producer);
+    }
   }
 
-  /*! \brief Get the pass context object on the top of the stack */
-  TVM_DLL static PatternContext Current();
+  /*! \brief Get the constraint context object on the top of the stack */
+  TVM_DLL static Optional<PatternContext> Current();
 
   class Internal;
 
  private:
-  /*! \brief The RAII-like entry of a pass context scope */
+  /*! \brief The RAII-like entry of a constraint context scope */
   TVM_DLL void EnterWithScope();
-  /*! \brief The RAII-like exit of a pass context scope */
+  /*! \brief The RAII-like exit of a constraint context scope */
   TVM_DLL void ExitWithScope();
   friend class Internal;
   friend class With<PatternContext>;

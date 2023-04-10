@@ -115,6 +115,7 @@ ALLOW_FILE_NAME = {
     "CODEOWNERSHIP",
     ".scalafmt.conf",
     "Cargo.lock",
+    "poetry.lock",
     "with_the_same_user",
 }
 

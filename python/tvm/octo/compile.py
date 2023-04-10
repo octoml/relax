@@ -16,11 +16,9 @@
 # under the License.
 # pylint: disable=invalid-name, wrong-import-position, redefined-builtin, not-callable
 """Simplified interface for TVM Unity Flow."""
+import gc
 import tempfile
-from pathlib import Path
 from typing import Union, Optional, Dict, List
-import onnx
-import onnx_graphsurgeon as gs
 import tvm
 from tvm import relax
 from tvm.relax.frontend.onnx import from_onnx
@@ -30,51 +28,6 @@ from .utils import get_cuda_target, get_llvm_target
 from .octo_model import OctoModel
 from .schedule_cumsum import ScheduleCumsum
 from .inject_op_pattern import InjectOpPattern
-
-
-def load_onnx_model(
-    model_file: Union[str, Path, onnx.ModelProto],
-    shape_dict: Optional[Dict[str, List]] = None,
-    dtype_dict: Optional[Union[str, Dict[str, str]]] = "float32",
-) -> tvm.IRModule:
-    """Convert an input onnx model into a relax module.
-
-    Parameters
-    ----------
-    model_file : Union[str, Path, onnx.ModelProto]
-        An input onnx model to convert. Can either be a path to a model or an already
-        loaded onnx protobuf.
-
-    shape_dict : Optional[Dict[str, List]]
-        An optional dictionary that maps inputs to specific shapes. If not provided,
-        the default values in the onnx graph will be used.
-
-    dtype_str: Optional[Union[str, Dict[str, str]]]
-        An optional string or dictionary that maps inputs to its specific data type.
-        If not provided, the default type of "float32" will be used.
-
-    Returns
-    -------
-    relax_mod : tvm.IRModule
-        A Relax module implementing the input onnx graph.
-    """
-    # Check input format and load if needed.
-    if isinstance(model_file, (Path, str)):
-        model_file = onnx.load(model_file)
-    else:
-        assert isinstance(
-            model_file, onnx.ModelProto
-        ), f"model_file must be one of (str, Path, onnx.ModelProto) but got {type(model_file)})"
-
-    # Make sure nodes are topologically sorted.
-    sorted_graph = gs.import_onnx(model_file)
-    sorted_graph.toposort()
-    model_file = gs.export_onnx(sorted_graph)
-
-    # Convert the graph into a relax implementation.
-    relax_mod = from_onnx(model_file, shape_dict=shape_dict, dtype_dict=dtype_dict)
-
-    return relax_mod
 
 
 def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModule:
@@ -118,7 +71,7 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
 
 
 def compile(
-    model: Union[str, Path, onnx.ModelProto],
+    model: str,
     target: Optional[tvm.target.Target] = None,
     shape_dict: Optional[Dict[str, List]] = None,
     dtype_dict: Optional[Union[str, Dict[str, str]]] = "float32",
@@ -129,9 +82,8 @@ def compile(
 
     Parameters
     ----------
-    model : Union[str, Path, onnx.ModelProto]
-        An input onnx model to convert. Can either be a path to a model or an already
-        loaded onnx protobuf.
+    model : str
+        Path to the input onnx model to convert.
 
     target : Optional[tvm.target.Target]
         A description of the hardware to compile to. If not provided, one will be extracted for
@@ -172,8 +124,9 @@ def compile(
         target = tvm.target.Target(target)
 
     # Convert model into a relax module.
-    relax_mod = load_onnx_model(model, shape_dict=shape_dict, dtype_dict=dtype_dict)
-
+    relax_mod = from_onnx(model, shape_dict=shape_dict, dtype_dict=dtype_dict)
+    # Explicitly do a garbage collection to free up the onnx model.
+    gc.collect()
     # Extract information about input shapes and types so we can
     # randomly generate them later if needed.
     input_info = {}

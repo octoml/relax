@@ -24,6 +24,46 @@ from ...expr import Call, Expr
 from .common import register_legalize, _call_topi_without_attr
 
 
+@register_legalize("relax.nn.conv1d")
+def _nn_conv1d(bb: BlockBuilder, call: Call) -> Expr:
+    if call.attrs.out_layout != call.attrs.data_layout:
+        logging.info(
+            "TOPI conv1d does not support different input-output "
+            "layouts, and thus cannot be legalized by TOPI"
+        )
+        return call
+    if len(call.attrs.data_layout) != 3 or len(call.attrs.kernel_layout) != 3:
+        logging.info(
+            "Conv1D where data layout or kernel layout have channel chunk "
+            "cannot be legalized by TOPI at this moment."
+        )
+        return call
+    if call.attrs.groups != 1:
+        data_layout = tir.layout(call.attrs.data_layout)
+        kernel_layout = tir.layout(call.attrs.kernel_layout)
+        ic = call.args[0].struct_info.shape.values[data_layout.index_of("C")]
+        oc = call.args[1].struct_info.shape.values[kernel_layout.index_of("O")]
+        if not isinstance(ic, tir.IntImm) or not isinstance(oc, tir.IntImm):
+            logging.info(
+                "Conv1D where number of groups is more than one and input or output "
+                "channel size is symbolic cannot be legalized by TOPI at this moment."
+            )
+            return call
+
+    return bb.call_te(
+        topi.nn.conv1d,
+        data=call.args[0],
+        kernel=call.args[1],
+        strides=call.attrs.strides,
+        padding=call.attrs.padding,
+        dilation=call.attrs.dilation,
+        data_layout=call.attrs.data_layout,
+        kernel_layout=call.attrs.kernel_layout,
+        out_dtype=call.attrs.out_dtype if call.attrs.out_dtype != "" else None,
+        primfunc_name_hint="conv1d",
+    )
+
+
 @register_legalize("relax.nn.conv2d")
 def _nn_conv2d(bb: BlockBuilder, call: Call) -> Expr:
     if call.attrs.out_layout != call.attrs.data_layout:
@@ -274,7 +314,9 @@ def _nn_dropout(bb: BlockBuilder, call: Call) -> Expr:
     return call
 
 
-def _te_attention(q: te.Tensor, k: te.Tensor, v: te.Tensor, bias: te.Tensor) -> te.Tensor:
+def _te_attention(
+    q: te.Tensor, k: te.Tensor, v: te.Tensor, bias: te.Tensor, scale: tir.FloatImm
+) -> te.Tensor:
     batch_size, seq_len, num_head, head_dim = q.shape
     _, seq_len_kv, _, head_dim_v = v.shape
     q = topi.transpose(q, [0, 2, 1, 3])
@@ -284,7 +326,10 @@ def _te_attention(q: te.Tensor, k: te.Tensor, v: te.Tensor, bias: te.Tensor) -> 
     k = topi.reshape(k, [batch_size * num_head, seq_len_kv, head_dim])
     v = topi.reshape(v, [batch_size * num_head, seq_len_kv, head_dim_v])
     p = topi.nn.batch_matmul(q, k)
-    p = topi.divide(p, tir.sqrt(tir.Cast(p.dtype, head_dim)))
+    if scale is not None:
+        p = topi.multiply(p, scale)
+    else:
+        p = topi.divide(p, tir.sqrt(tir.Cast(p.dtype, head_dim)))
     if bias is not None:
         p = topi.reshape(p, [batch_size, num_head, seq_len, seq_len_kv])
         if len(bias.shape) == 2:
@@ -307,6 +352,7 @@ def _nn_attention(bb: BlockBuilder, call: Call) -> Expr:
         call.args[1],
         call.args[2],
         None,
+        call.attrs.scale,
         primfunc_name_hint="attention",
     )
 
@@ -319,5 +365,6 @@ def _nn_attention_bias(bb: BlockBuilder, call: Call) -> Expr:
         call.args[1],
         call.args[2],
         call.args[3],
+        call.attrs.scale,
         primfunc_name_hint="attention_bias",
     )

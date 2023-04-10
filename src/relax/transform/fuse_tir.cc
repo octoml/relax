@@ -81,30 +81,6 @@ class FuseTIRBufferSubstitor : private StmtExprMutator {
     }
   }
 
-  PrimExpr VisitExpr_(const LoadNode* _op) final {
-    Load load = Downcast<Load>(StmtExprMutator::VisitExpr_(_op));
-    auto it = buffer_var_map_.find(load->buffer_var.get());
-    if (it != buffer_var_map_.end()) {
-      auto n = make_object<LoadNode>(*load.get());
-      n->buffer_var = it->second->data;
-      return Load(n);
-    } else {
-      return std::move(load);
-    }
-  }
-
-  Stmt VisitStmt_(const StoreNode* _op) final {
-    Store store = Downcast<Store>(StmtExprMutator::VisitStmt_(_op));
-    auto it = buffer_var_map_.find(store->buffer_var.get());
-    if (it != buffer_var_map_.end()) {
-      auto n = CopyOnWrite(store.get());
-      n->buffer_var = it->second->data;
-      return Store(n);
-    } else {
-      return std::move(store);
-    }
-  }
-
   Stmt VisitStmt_(const BlockNode* _op) final {
     Block block = Downcast<Block>(StmtMutator::VisitStmt_(_op));
 

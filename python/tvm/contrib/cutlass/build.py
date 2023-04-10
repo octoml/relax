@@ -560,22 +560,9 @@ def _extract_relax_function_signature(f):
 
 
 def _extract_arg_idx(pattern_name, f):
-    pattern_entry = relax.backend.get_pattern(pattern_name)
-    if pattern_entry is None:
-        raise ValueError(f"Unsupported op_type {pattern_name}")
-    var2val = relax.analysis.get_var2val(f)
-    matched_expr = pattern_entry.pattern.extract_matched_expr(f.body.body, var2val)
-
-    func_args = list(f.params)
-
-    arg_idx = {}
-    for name, annotation_pattern in pattern_entry.annotation_patterns.items():
-        arg_expr = matched_expr[annotation_pattern]
-        if arg_expr not in func_args:
-            continue
-        arg_idx[name] = func_args.index(arg_expr)
-
-    return arg_idx
+    extract_func = tvm.get_global_func("relax.contrib.extract_arg_idx")
+    arg_indices = extract_func(pattern_name, f)
+    return {k: int(v) for k, v in arg_indices.items()}
 
 
 def is_shape_valid_for_cutlass_matmul(
@@ -786,7 +773,12 @@ class CutlassRelaxFunctionAnnotator(relax.PyExprMutator):
     def handle_attention(self, f, op_type):
         """Tune and annotate a dense op."""
         signature = _extract_relax_function_signature(f)
-
+        if _get_call_node(f.body, "relax.nn.attention") is not None:
+            op_attrs = _get_call_node(f.body, "relax.nn.attention").attrs
+        elif _get_call_node(f.body, "relax.nn.attention_bias") is not None:
+            op_attrs = _get_call_node(f.body, "relax.nn.attention_bias").attrs
+        else:
+            raise ValueError(f"Cannot find call node for attention")
         q_shape = signature["arg0_shape"]
         k_shape = signature["arg1_shape"]
         v_shape = signature["arg2_shape"]
@@ -798,6 +790,7 @@ class CutlassRelaxFunctionAnnotator(relax.PyExprMutator):
         num_batches, num_queries, num_heads, head_dim = q_shape
         _, num_keys, _, _ = k_shape
         _, _, _, head_dim_value = v_shape
+        scale = op_attrs.scale
         bias = {}
         if "arg3_dtype" in signature:
             bias["arg3_dtype"] = signature["arg3_dtype"]
@@ -821,6 +814,7 @@ class CutlassRelaxFunctionAnnotator(relax.PyExprMutator):
                 "num_heads": num_heads,
                 "head_dim": head_dim,
                 "head_dim_value": head_dim_value,
+                "scale": scale,
                 "arch": self.options["sm"],
                 **bias,
             }

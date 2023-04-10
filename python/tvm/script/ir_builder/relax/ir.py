@@ -40,6 +40,7 @@ from tvm.relax.op import (
     atan,
     atanh,
     add,
+    arange,
     argmax,
     argmin,
     assert_op,
@@ -100,7 +101,9 @@ from tvm.relax.op import (
     repeat,
     reshape,
     tensor_to_shape,
+    shape_to_tensor,
     round,
+    rsqrt,
     shape_of,
     std,
     strided_slice,
@@ -129,6 +132,7 @@ from tvm.relax.op import (
     zeros_like,
     nn,
 )
+from tvm.relax.op.builtin import stop_lift_params
 from tvm.relax.struct_info import StructInfo
 from tvm.relax.utils import args_converter
 from tvm.runtime import Object as tvm_Object
@@ -542,6 +546,7 @@ __all__ = [
     "atan",
     "atanh",
     "add",
+    "arange",
     "arg",
     "argmax",
     "argmin",
@@ -618,7 +623,9 @@ __all__ = [
     "repeat",
     "reshape",
     "tensor_to_shape",
+    "shape_to_tensor",
     "round",
+    "rsqrt",
     "shape",
     "shape_of",
     "ShapeExpr",
@@ -634,6 +641,7 @@ __all__ = [
     "square",
     "squeeze",
     "sqrt",
+    "stop_lift_params",
     "str",
     "strided_slice",
     "subtract",

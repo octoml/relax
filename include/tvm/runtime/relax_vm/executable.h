@@ -88,6 +88,10 @@ class Executable : public runtime::ModuleNode {
    * \return PackedFunc or nullptr when it is not available.
    */
   PackedFunc GetFunction(const std::string& name, const ObjectPtr<Object>& sptr_to_self) final;
+
+  /*! \brief Get the property of the runtime module .*/
+  int GetPropertyMask() const final { return ModulePropertyMask::kBinarySerializable; };
+
   /*!
    * \brief Print the detailed statistics of the given code, i.e. number of
    * globals and constants, etc.
