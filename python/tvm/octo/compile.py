@@ -117,7 +117,6 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
     return mod
 
 
-
 def default_schedule_func(
     primfunc: tvm.tir.PrimFunc, target: tvm.target.Target
 ) -> Union[tvm.tir.PrimFunc, None]:
