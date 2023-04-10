@@ -281,3 +281,7 @@ gallery/how_to/work_with_microtvm/micro_tvmc.py
 # scorecard files
 .fish_history
 models.yaml
+/.bashrc
+/.gitconfig
+/.aws/
+/.config/
