@@ -17,6 +17,7 @@
 # pylint: disable=invalid-name, wrong-import-position, redefined-builtin, not-callable
 """Simplified interface for TVM Unity Flow."""
 import gc
+import warnings
 import tempfile
 from typing import Union, Optional, Dict, List
 import tvm
@@ -106,7 +107,7 @@ def default_schedule_func(
         task_name="main",
     ).generate_design_space()
     if len(spaces) == 0:
-        print("No valid candidate for PrimFunc: ", primfunc.script())
+        warnings.warn("No valid candidate for func: " + primfunc.script())
         return None
     # randomly pick up the last candidate from design space
     # anecdotally the last candidate puts intermediate buffers in shared memory
@@ -118,8 +119,8 @@ def default_schedule_func(
     # leaving it here as a safety net.
     try:
         _ = relax.build(mod, target)
-    except:
-        print("Unable to build func ", primfunc.script())
+    except tvm.TVMError:
+        warnings.warn("Unable to build func: " + primfunc.script())
         return None
 
     return mod["main"]
@@ -238,11 +239,12 @@ def compile(
     for gv in relax_mod.get_global_vars():
         func = relax_mod[gv]
         if isinstance(func, tvm.tir.PrimFunc):
-            if func.get_attr("tir.is_scheduled") == True:
+            is_scheduled = "tir.is_scheduled"
+            if is_scheduled in func.attrs and func.attrs[is_scheduled]:
                 continue
             updated_func = default_schedule_func(func, target)
             if updated_func:
-                relax_mod[gv] = updated_func.with_attrs({"tir.is_scheduled": True})
+                relax_mod[gv] = updated_func.with_attrs({is_scheduled: True})
 
     # Finally, add thread binding to remaining kernels to allow them to run on gpu.
     if target.kind.name == "cuda":
