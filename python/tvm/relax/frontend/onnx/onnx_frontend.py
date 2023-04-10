@@ -884,7 +884,7 @@ class Slice(OnnxOpConverter):
                 out_dtype = data.struct_info.dtype
                 data = data.data.numpy()
             # Starts, ends, and steps must be 1-d for shape operation.
-            assert all(len(i) == 1 for i in [starts, ends, steps, axis])
+            assert all(len(i) == 1 for i in [starts, ends, steps, axes])
             # Convert any negative values to positive.
             if starts[0] < 0:
                 starts[0] = data.shape[axes[0]] + starts[0]
