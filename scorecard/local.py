@@ -111,7 +111,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--image",
         help="Docker image to use (can be a specific docker image or 'latest' (alias for "
-        "186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:latest), by default this "
+        "186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:latest). If not specified, "
         "will search for the most recent image for the current git tree)",
     )
     parser.add_argument(
