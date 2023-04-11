@@ -16,7 +16,6 @@
 # under the License.
 # pylint: disable=invalid-name, wrong-import-position, redefined-builtin, not-callable
 """Simplified interface for TVM Unity Flow."""
-import gc
 import warnings
 import tempfile
 from pathlib import Path
