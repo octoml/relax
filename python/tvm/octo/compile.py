@@ -240,7 +240,7 @@ def compile(
         func = relax_mod[gv]
         if isinstance(func, tvm.tir.PrimFunc):
             is_scheduled = "tir.is_scheduled"
-            if is_scheduled in func.attrs and func.attrs[is_scheduled]:
+            if func.attrs is not None and getattr(func.attrs, is_scheduled, False):
                 continue
             updated_func = default_schedule_func(func, target)
             if updated_func:
