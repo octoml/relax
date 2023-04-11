@@ -22,7 +22,12 @@ import grp
 import os
 import subprocess
 import shlex
+import datetime
+import json
+import re
 from pathlib import Path
+
+from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCORECARD_DIR = REPO_ROOT / "scorecard"
@@ -30,8 +35,70 @@ DEFAULT_AWS_DIR = Path("~").expanduser() / ".aws"
 SANDBOX_PROFILE = "Sandbox-Developer-186900524924"
 
 
-def touch(filename: Path):
+def touch(filename: Path) -> None:
     subprocess.check_call(["touch", str(filename)])
+
+
+def find_octo_remote_name() -> Optional[str]:
+    remotes = subprocess.check_output(["git", "remote", "-v"], encoding="utf-8").strip().split("\n")
+    for remote in remotes:
+        if "octoml/relax" in remote:
+            return remote.split()[0]
+
+    return None
+
+
+def find_scorecard_image_tag() -> str:
+    """
+    Find the git merge-base with relax and use that to search for the oldest
+    scorecard image (as long as the git base doesn't change, the image
+    will be the same each time)
+    """
+    remote = find_octo_remote_name()
+    if remote is None:
+        branch = "relax"
+    else:
+        branch = f"{remote}/relax"
+
+    # Find the sha that will be in the image tag for the commit in 'relax'
+    # that is based on
+    base_commit_sha = subprocess.check_output(
+        ["git", "merge-base", "HEAD", branch], encoding="utf-8"
+    ).strip()
+    short_sha = base_commit_sha[0:7]
+
+    # Search for images in ECR with that short hash
+    cmd = [
+        "aws",
+        "ecr",
+        "list-images",
+        "--region",
+        "us-west-2",
+        "--repository-name",
+        "scorecard",
+        "--filter",
+        "tagStatus=TAGGED",
+        "--query",
+        f"imageIds[?contains(imageTag, `{short_sha}`)].[imageTag]",
+    ]
+    data = json.loads(subprocess.check_output(cmd, encoding="utf-8"))
+
+    # Sort the images by date
+    images = [d[0] for d in data]
+    if len(images) == 0:
+        print(f"No image found matching {short_sha}, defaulting to 'latest'...")
+        return "latest"
+    images = list(
+        sorted(
+            images,
+            key=lambda image_tag: datetime.datetime.strptime(
+                image_tag[:-8], "%Y-%m-%d"
+            ).timestamp(),
+        )
+    )
+
+    # Return the oldest one
+    return images[0]
 
 
 if __name__ == "__main__":
@@ -43,8 +110,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--image",
-        help="Docker image to use (default: 186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:latest)",
-        default="186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:latest",
+        help="Docker image to use (can be a specific docker image or 'latest' (alias for "
+        "186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:latest), by default this "
+        "will search for the most recent image for the current git tree)",
     )
     parser.add_argument(
         "--aws-dir",
@@ -158,20 +226,28 @@ if __name__ == "__main__":
     _set_env("CI_BUILD_UID", str(os.getgid()))
     _set_env("CI_BUILD_USER", getpass.getuser())
 
+    if args.image is None:
+        tag = find_scorecard_image_tag()
+        image = f"186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:{tag}"
+    elif args.image == "latest":
+        image = "186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:latest"
+    else:
+        image = args.image
+
     docker_cmd += [
         "--rm",
         "-it",
-        args.image,
+        image,
         SCORECARD_DIR.relative_to(REPO_ROOT) / "docker" / "with_the_same_user",
     ] + user_cmd
 
-    if "/" in args.image:
+    if "/" in image:
         # Always try to pull images from an external repository
-        pull_cmd = ["docker", "pull", args.image]
+        pull_cmd = ["docker", "pull", image]
         print(" ".join(pull_cmd))
         proc = subprocess.run(pull_cmd)
         if proc.returncode != 0:
-            print(f"Unable to pull image {args.image}, maybe you need to run docker/login.py?")
+            print(f"Unable to pull image {image}, maybe you need to run docker/login.py?")
             exit(1)
         subprocess.check_call(pull_cmd)
 
