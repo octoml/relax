@@ -79,7 +79,7 @@ successfully.
 
 ### Build the Docker Image
 
-Scorecard CI will build the Docker image each time before it runs benchmarks and store the resulting image in AWS's ECR. You can pull this image locally after using `docker/login.py` via the image at the end of the logs of any `docker_build` job in a scorecard GitLab pipeline ([example](https://gitlab.com/octoml/relax-scorecard-ci2/-/jobs/4061474766)).
+Scorecard CI will build the Docker image each time before it runs benchmarks and store the resulting image in AWS's ECR. You can pull this image locally after using `docker/login.py` via the image at the end of the logs of any `docker_build` job in a scorecard GitLab pipeline ([example](https://gitlab.com/octoml/relax-scorecard-ci2/-/jobs/4061474766)). `local.py` will also determine an image to use from ECR if none is specified, so if you want to use those images you can skip this step.
 
 You can also build the image locally, though you will still need to authorize with AWS to download models if you do not have them on disk.
 
@@ -123,6 +123,9 @@ python3 local.py --prebuilt-relax
 
 # Use a different Docker image, in this case a locally built version
 python3 local.py --image scorecard:latest
+
+# Use a different Docker image, in this case the latest scorecard image in ECR
+python3 local.py --image latest
 
 # Run a command other than 'bash'
 python3 local.py pytest relax-coverage/ -k 'stable-diffusion and relax-cuda'

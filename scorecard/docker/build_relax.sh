@@ -19,8 +19,8 @@
 set -euxo pipefail
 git config --global --add safe.directory /opt/scorecard
 git submodule update --init --recursive --jobs 0
-mkdir -p build
-cd build
+mkdir -p build-scorecard
+cd build-scorecard
 cmake -GNinja \
     -DCMAKE_LINKER=/usr/bin/lld-15 \
     -DCMAKE_CUDA_ARCHITECTURES=75 \
