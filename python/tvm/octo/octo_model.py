@@ -196,3 +196,4 @@ class OctoModel(object):
         )("main")
         print(report)
         print(timing_result)
+        return report
