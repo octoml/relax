@@ -91,7 +91,8 @@ RUN git config user.name test && git config user.email test@example.com
 # RUN PR_NUMBER=NN bash -c 'cd relax && curl -L "https://github.com/octoml/relax/pull/$PR_NUMBER.diff" | patch -p1 -N -d . && git add . && git commit -m"PR #$PR_NUMBER"'
 # RUN bash -c 'cd relax && curl -L "https://github.com/octoml/relax/compare/TUZ-145.diff" | patch -p1 -N -d . && git add . && git commit -m"Add TUZ-145"'
 
-RUN rm -rf build
+RUN rm -rf build-scorecard
+ENV TVM_LIBRARY_PATH /opt/scorecard/build-scorecard
 RUN bash scorecard/docker/build_relax.sh
 RUN cd python && python3 -m pip install --no-cache-dir -e .
 
