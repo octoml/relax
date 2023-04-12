@@ -65,6 +65,7 @@ docker_build:
     - update_token
   tags:
     - cpu-sole-tenant
+  timeout: 2h
   script:
     - apk add --update py-pip
     - pip install awscli
