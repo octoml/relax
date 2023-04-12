@@ -25,6 +25,7 @@ import shlex
 import datetime
 import json
 import re
+import sys
 from pathlib import Path
 
 from typing import Optional
@@ -33,6 +34,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCORECARD_DIR = REPO_ROOT / "scorecard"
 DEFAULT_AWS_DIR = Path("~").expanduser() / ".aws"
 SANDBOX_PROFILE = "Sandbox-Developer-186900524924"
+
+DOCKER_LOGIN_TOOL = SCORECARD_DIR / "docker" / "login.py"
+
+sys.path.insert(0, str(DOCKER_LOGIN_TOOL.parent))
+try:
+    import login as docker_login
+finally:
+    assert sys.path[0] == str(DOCKER_LOGIN_TOOL.parent)
+    sys.path.pop(0)
 
 
 def touch(filename: Path) -> None:
@@ -72,6 +82,8 @@ def find_scorecard_image_tag() -> str:
         "aws",
         "ecr",
         "list-images",
+        "--profile",
+        docker_login.find_sso_profile(),
         "--region",
         "us-west-2",
         "--repository-name",

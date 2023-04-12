@@ -60,7 +60,11 @@ def check_aws_cli_version():
         sys.exit(2)
 
 
-def ensure_sso_config():
+class NoAwsProfileError(Exception):
+    """Raised when ~/.aws/config is missing the necessary SSO profile."""
+
+
+def find_sso_profile(append_if_missing=False):
     aws_config_path = pathlib.Path.home() / ".aws" / "config"
     profile = None
     if aws_config_path.exists():
@@ -73,6 +77,12 @@ def ensure_sso_config():
                 break
 
     if profile is None:
+        if not append_if_missing:
+            raise NoAwsProfileError(
+                f"find_sso_profile did not find an AWS profile with keys "
+                f"{f'{k}={SSO_PROFILE_CONFIG[k]}' for k in REQUIRED_MATCHING_KEYS}"
+            )
+
         print(f"NOTE: Appending SSO config to {aws_config_path}")
         profile = f"{SSO_PROFILE_CONFIG['sso_role_name']}-{SSO_PROFILE_CONFIG['sso_account_id']}"
         aws_config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,7 +143,7 @@ def main():
 
     check_aws_cli_version()
 
-    sso_profile_name = ensure_sso_config()
+    sso_profile_name = find_sso_profile(append_if_missing=True)
     did_login = False
     num_tries = 0
     docker_password = ""
