@@ -90,6 +90,7 @@ docker_build:
   image:
     # name: 186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:2023-03-10-b4fb5b6
     name: 186900524924.dkr.ecr.us-west-2.amazonaws.com/scorecard:$TAG
+  timeout: 2h
   before_script:
     - *configure_aws
   script: |
