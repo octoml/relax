@@ -26,6 +26,7 @@ from typing import *
 from pathlib import Path
 
 import psycopg2
+import requests
 
 from google.cloud import bigquery
 from google.oauth2 import service_account
@@ -88,6 +89,12 @@ def bigquery_upload(jsonl_file: Path, dataset_id: str, table_id: str) -> int:
     job.result()
 
     return job
+
+
+def query_ec2_metadata(key: str) -> str:
+    url = f"http://169.254.169.254/latest/meta-data/{key}"
+    response = requests.get(url)
+    return response.content.decode().strip()
 
 
 def postgres_upload(jsonl_file: Path, database: str, table_name: str) -> int:

@@ -223,7 +223,29 @@ BAD_WARNINGS = [
 def _test_impl(request, slug, result_directory, run_config: Dict[str, Any]):
     DATE_FORMAT = "%Y-%m-%d-%H:%M:%S"
     run_at = datetime.datetime.now().strftime(DATE_FORMAT)
+
     executor = run_config["executor"]
+    result_directory.mkdir(exist_ok=True, parents=True)
+    i = 0
+    while True:
+        output_path = result_directory / f"{executor}_{i}.json"
+        if not output_path.exists():
+            break
+        i += 1
+
+    extra_data = {
+        "test_run_id": f"{result_directory.name}-{run_at}-{slug}",
+        "run_at": run_at,
+        "test_suite_id": result_directory.name,
+    }
+
+    if IS_IN_CI:
+        # Query stuff about the AWS machine
+        extra_data["hardware"] = {
+            "ami-id": query_ec2_metadata("ami-id"),
+            "instance-type": query_ec2_metadata("instance-type"),
+        }
+
     cmd = [
         sys.executable,
         CLI,
@@ -239,6 +261,10 @@ def _test_impl(request, slug, result_directory, run_config: Dict[str, Any]):
         TEST_RUNS,
         "--warmup-runs",
         WARMUP_RUNS,
+        "--extra-data",
+        json.dumps(extra_data),
+        "--result-path",
+        output_path,
     ]
     if "shapes" in run_config and run_config["shapes"] is not None:
         cmd.append("--shapes")
@@ -278,28 +304,11 @@ def _test_impl(request, slug, result_directory, run_config: Dict[str, Any]):
 
     stdout = proc.stdout.strip()
 
-    if stdout == "":
-        raise RuntimeError(f"No stdout found from process. stderr: {stderr}")
+    with open(output_path) as f:
+        output_json = f.read()
 
-    try:
-        data = json.loads(stdout)
-    except json.decoder.JSONDecodeError as e:
-        raise RuntimeError(f"Could not decode JSON: {e}\n{stdout}")
-
-    result_directory.mkdir(exist_ok=True, parents=True)
-    data["test_run_id"] = f"{result_directory.name}-{run_at}-{slug}"
-    data["run_at"] = run_at
-    data["test_suite_id"] = result_directory.name
-    i = 0
-    while True:
-        output_path = result_directory / f"{executor}_{i}.json"
-        if not output_path.exists():
-            break
-        i += 1
-
-    flush_print(f"Writing to {output_path}")
-    with open(output_path, "w") as f:
-        json.dump(data, f, indent=2)
+    if output_json == "":
+        raise RuntimeError(f"{output_path} was not written to by process. stderr: {stderr}")
 
     if proc.returncode != 0 and not stderr.endswith("free(): invalid pointer"):
         raise RuntimeError(f"Process failed: stdout:\n{proc.stdout}\nstderr:{stderr}")
