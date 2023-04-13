@@ -108,7 +108,7 @@ def should_skip_slow_tests(pr_number) {
 
 def cancel_previous_build() {
   // cancel previous build if it is not on main.
-  if (env.BRANCH_NAME != 'main') {
+  if (env.BRANCH_NAME != 'relax') {
     def buildNumber = env.BUILD_NUMBER as int
     // Milestone API allows us to cancel previous build
     // with the same milestone number
