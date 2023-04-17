@@ -91,7 +91,7 @@ def find_scorecard_image_tag() -> str:
         "--filter",
         "tagStatus=TAGGED",
         "--query",
-        f"imageIds[?contains(imageTag, `{short_sha}`)].[imageTag]",
+        f"imageIds[?contains(imageTag, '{short_sha}')].[imageTag]",
     ]
     data = json.loads(subprocess.check_output(cmd, encoding="utf-8"))
 
