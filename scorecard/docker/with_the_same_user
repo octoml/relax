@@ -67,9 +67,14 @@ sudo chown "${CI_BUILD_USER}:${CI_BUILD_GID}" /opt/scorecard
 cp /root/.bashrc .
 chown "${CI_BUILD_UID}:${CI_BUILD_GID}" .bashrc
 
-if [ -e /root/.aws ]; then
-    cp -r /root/.aws /opt/scorecard
-    chown -R "${CI_BUILD_USER}:${CI_BUILD_GID}" /opt/scorecard/.aws
+if [ -e /opt/aws-credentials ]; then
+    if [ -e .aws ]; then
+        echo "NOTE: not populating AWS credentials because .aws already exists!"
+        echo "NOTE: Delete it if you are unable to access AWS"
+    else
+        ln -s /opt/aws-credentials $(pwd)/.aws
+        trap 'if [ -L .aws -a "$(readlink .aws)" == /opt/aws-credentials ]; then rm .aws; fi' EXIT
+    fi
 fi
 
 if [[ ! -z "${CUDA_VISIBLE_DEVICES-}" ]]; then
@@ -84,6 +89,7 @@ fi
 
 sudo -u "#${CI_BUILD_UID}" --preserve-env \
 ${CUDA_ENV} \
+${AWS_ENV} \
 PATH=${PATH} \
 JAVA_HOME=${JAVA_HOME} \
 LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}" \
