@@ -96,4 +96,4 @@ class OnnxBase(BaseRunner):
             # Check accuracy
             output_deltas.append([gold_results[i] - output[i] for i in range(len(output))])
 
-        return None, None, compile_time_ms, runtimes_ms, output_deltas
+        return None, None, compile_time_ms, runtimes_ms, output_deltas, {}

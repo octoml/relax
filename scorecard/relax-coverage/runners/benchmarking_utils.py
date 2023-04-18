@@ -17,6 +17,7 @@
 
 import json
 import random
+import re
 import string
 import subprocess
 import sys
@@ -295,29 +296,32 @@ class Timer(object):
         self.ms_duration = (self.end - self.start) / 1000 / 1000
 
 
-def extract_framework_ops(model: onnx.ModelProto) -> List[Dict[str, str]]:
-    return []
-    return [{"name": node.name, "op_type": node.op_type} for node in model.graph.node]
+def extract_op_info(
+    onnx_model: "onnx.ModelProto",
+    schedule_map: Dict[str, List[str]],
+) -> Tuple[List[Dict[str, str]], List[Dict[str, any]]]:
+    framework_ops = []
+    relax_ops = []
 
+    seen_framework_ops = {}
 
-def extract_relay_ops(
-    model: onnx.ModelProto,
-    framework_ops: List[Dict[str, str]],
-    shapes: Dict[str, List[int]],
-) -> List[str]:
-    tvm_model = relax.from_onnx(model, shape=shapes)
+    for f_op_list, (relax_packed_func_name, schedule_method, relax_op_list) in schedule_map.items():
+        f_op_indices = []
+        for f_op in f_op_list:
+            if f_op not in seen_framework_ops:
+                seen_framework_ops[f_op] = len(framework_ops)
+                framework_ops.append({"name": f_op,
+                                      "op_type": next(n.op_type for n in onnx_model.graph.node if n.name == f_op),
+                                      "relax_op_group": len(relax_ops)})
 
-    ops = []
-    for item in tvm_model.functions.keys():
-        ops.append(
-            {
-                "framework_op_index": -1,
-                "name": item.name_hint,
-                "schedule_method": "unknown",
-            }
-        )
+            f_op_indices.append(seen_framework_ops[f_op])
 
-    return ops
+        relax_ops.append({"ops": [str(o) for o in relax_op_list],
+                          "schedule_method": schedule_method,
+                          # NOTE: packed_func_name isn't reliable except when fusion is done by cutlass for now.
+                          "packed_func_name": relax_packed_func_name if len(relax_op_list) > 1 else ""})
+
+    return framework_ops, relax_ops
 
 
 class BaseRunner:

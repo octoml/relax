@@ -16,15 +16,18 @@
 # under the License.
 # pylint: disable=invalid-name, wrong-import-position, redefined-builtin, not-callable
 """Simplified interface for TVM Unity Flow."""
-import warnings
-import tempfile
+import hashlib
 from pathlib import Path
-from typing import Union, Optional, Dict, List
+import re
+import tempfile
+from typing import Union, Optional, Dict, List, Tuple
+import warnings
+
 import onnx
 import onnx_graphsurgeon as gs
 import tvm
 from tvm import relax, meta_schedule as ms
-from tvm.relax.frontend.onnx import from_onnx
+from tvm.relax.frontend.onnx import from_onnx, lookup_operator_name
 from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
 from tvm.relax.transform.tuning_api import Trace
 from .utils import get_cuda_target, get_llvm_target
@@ -37,7 +40,7 @@ def load_onnx_model(
     model_file: Union[str, Path, onnx.ModelProto],
     shape_dict: Optional[Dict[str, List]] = None,
     dtype_dict: Optional[Union[str, Dict[str, str]]] = "float32",
-) -> tvm.IRModule:
+) -> Tuple[onnx.ModelProto, tvm.IRModule]:
     """Convert an input onnx model into a relax module.
 
     Parameters
@@ -75,14 +78,16 @@ def load_onnx_model(
     # Convert the graph into a relax implementation.
     relax_mod = from_onnx(model_file, shape_dict=shape_dict, dtype_dict=dtype_dict)
 
-    return relax_mod
+    return model_file, relax_mod
 
 
-def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModule:
+def offload_cutlass(sorted_model: onnx.ModelProto, mod: tvm.IRModule, target: tvm.target.Target) -> Tuple[tvm.IRModule, Dict]:
     """Converts appropriate subgraphs to CUTLASS
 
     Parameters
     ----------
+    sorted_model : onnx.ModelProto
+        The ModelProto passed to from_onnx().
     mod : tvm.IRModule
         The input module that should have subgraphs rewritten to CUTLASS.
     target : tvm.target.Target
@@ -96,6 +101,9 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
         found and annotated. Next, those subgraphs are compiled using nvcc.
         The result is a graph containing a mixture of relax operators
         and external calls to the compiled cutlass kernels.
+    schedule_map : Dict[str, List[Tuple[str, str]]]
+        A dictionary mapping framework op names to a list of tuples. Each tuple
+        contains a relax op name and id, and the schedule that was applied to it.
     """
     # Extract the sm version of the current target.
     assert target.arch, "Target architecture must be specified."
@@ -108,6 +116,9 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
     # Apply partitioning to offload patterns to cutlass.
     mod = partition_for_cutlass(mod)
 
+    # Construct a mapping framework op -> (relax op id, schedule_method)
+    schedule_map = construct_schedule_map(sorted_model, mod)
+
     # Construct CUTLASS codegen pass.
     cutlass_codegen_pass = relax.transform.RunCodegen(
         {"cutlass": {"sm": sm, "find_first_valid": False}}
@@ -115,7 +126,82 @@ def offload_cutlass(mod: tvm.IRModule, target: tvm.target.Target) -> tvm.IRModul
 
     # Generate code for matched cutlass kernels.
     mod = cutlass_codegen_pass(mod)
-    return mod
+
+    return mod, schedule_map
+
+
+def construct_schedule_map(sorted_model: onnx.ModelProto, mod: tvm.IRModule) -> Dict[str, List[Tuple[str, str]]]:
+    """Constructs a mapping from framework op names to a corresponding list of
+    relax ops and how they were scheduled.
+
+    Parameters
+    ----------
+    sorted_model : onnx.ModelProto
+        The ModelProto passed to from_onnx().
+    mod : tvm.IRModule
+        The input IRModule
+
+    Returns
+    -------
+    schedule_map : Dict[str, List[Tuple[str, str]]]
+        A dictionary mapping framework op names to a list of tuples. Each tuple
+        contains a relax op name and id, and the schedule that was applied to it.
+    """
+    def get_offload_type(mod: tvm.IRModule, op: relax.Call) -> str:
+        """Checks if the given relax op is offloaded to a framework.
+        Returns "native" if not.
+        """
+        assert isinstance(
+            op.op, (tvm.ir.GlobalVar, tvm.ir.Op)
+        ), "Expecting op to be an Op or GlobalVar."
+
+        target_name = get_op_name(op)
+        function_names = [var.name_hint for var in mod.get_global_vars()]
+
+        if target_name in function_names:
+            func = mod[target_name]
+            if isinstance(func, relax.Function) and "Codegen" in func.attrs.keys():
+                return func.attrs["Codegen"]
+
+        return "native"
+
+    def get_op_name(call: relax.Call) -> str:
+        """Returns the name of target of this call."""
+        call_tir_op = tvm.relay.op.get("relax.call_tir")
+        if call.op == call_tir_op:
+            return call.args[0].name_hint
+        elif isinstance(call.op, tvm.ir.Op):
+            return call.op.name
+        elif isinstance(call.op, tvm.ir.GlobalVar):
+            return call.op.name_hint
+        else:
+            raise ValueError("Expecting call.op to be an Op or GlobalVar.")
+
+    framework_op_to_relax_op = {}
+
+    @relax.expr_functor.visitor
+    class Visitor(tvm.relax.PyExprVisitor):
+        """Visitor that populates the framework_op_to_relax_op dict."""
+
+        def visit_call_(self, call: relax.Call):  # pylint: disable=arguments-differ
+            offload_type = get_offload_type(mod, call)
+            if hasattr(call.span, "spans"):
+                spans = call.span.spans
+            elif call.span:
+                spans = {call.span: call}
+            else:
+                spans = {}
+
+            all_f_ops = list(set(lookup_operator_name(s, mod) for s in spans))
+            framework_op_to_relax_op[tuple(all_f_ops)] = (get_op_name(call), offload_type, list([get_op_name(c) for c in spans.values()]))
+            super().visit_call_(call)
+
+    visitor = Visitor()
+    main_func = mod["main"]
+    if isinstance(main_func, relax.Function):
+        visitor.visit_expr(main_func)
+
+    return framework_op_to_relax_op
 
 
 def default_schedule_func(
@@ -228,7 +314,7 @@ def compile(
         target = tvm.target.Target(target)
 
     # Convert model into a relax module.
-    relax_mod = load_onnx_model(model, shape_dict=shape_dict, dtype_dict=dtype_dict)
+    sorted_model, relax_mod = load_onnx_model(model, shape_dict=shape_dict, dtype_dict=dtype_dict)
 
     # Extract information about input shapes and types so we can
     # randomly generate them later if needed.
@@ -248,9 +334,12 @@ def compile(
             relax_mod = ScheduleCumsum()(relax_mod)
         if tvm.get_global_func("relax.ext.cutlass", True):
             # Match subgraphs that can be offloaded to cutlass and offload them.
-            relax_mod = offload_cutlass(relax_mod, target)
+            relax_mod, schedule_map = offload_cutlass(sorted_model, relax_mod, target)
         else:
             print("Cutlass backend not detected. Consider enabling it for better performance.")
+    else:
+        assert target.kind.name == "llvm"
+        schedule_map = construct_schedule_map(sorted_model, relax_mod)
 
     # Perform legalization to lower Relax operators.
     relax_mod = relax.transform.LegalizeOps()(relax_mod)
@@ -302,4 +391,4 @@ def compile(
     exe = relax.build(relax_mod, target)
 
     # Create an OctoModel from the compiled artifact.
-    return OctoModel(exe, input_info, target=target)
+    return OctoModel(exe, input_info, target=target, schedule_map=schedule_map)

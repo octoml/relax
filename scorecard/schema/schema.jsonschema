@@ -17,27 +17,21 @@
         "properties": {
           "name": {"type": "string", "description": "Name that uniquely identifies the per-framework operator"},
           "op_type": {"type": "string", "description": "Name of the operator"},
+          "relax_op_group": {"type": "integer", "description": "index into relax_op_groups where this operator is implemented"},
         },
       },
     },
-    "relay_ops": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "name": {"type": "string", "description": "Name of the operator"},
-          "framework_op_index": {"type": "integer", "description": "Index into framework_ops of the framework operator that generated this one"},
-          "schedule_method": {"type": "string", "description": "one of cutlass or native"},
-        },
-      },
-    },
-    "relay_fusion_groups": {
+    "relax_op_groups": {
       "type": "array",
       "items": {
         "type": "array",
         "items": {
-          "type": "integer",
-          "description": "Index into relay_ops of an operator in this fusion group"
+          "type": "object",
+          "properties": {
+            "ops": {"type": "array", "items": {"type": "string", "description": "Name of the operator"}},
+            "packed_func_name": {"type": "string", "description": "name of the PackedFunc which implements these ops"},
+            "schedule_method": {"type": "string", "description": "one of cutlass or native"},
+          },
         },
       },
     },

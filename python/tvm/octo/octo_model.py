@@ -40,6 +40,10 @@ class OctoModel(object):
         be specified.
     target : Optional[tvm.target.Target]
         The target being compiled for.
+    schedule_map : Optional[Dict[str, List[Tuple[int, str]]]]
+        A dictionary of framework op names to a list of tuples of (int, str).
+        Each tuple contains a relax op id and the schedule that was applied to it.
+        If empty, then no schedules were applied.
     """
 
     def __init__(
@@ -48,8 +52,12 @@ class OctoModel(object):
         input_info: Optional[Dict[str, Tuple[List, str]]] = None,
         model_path: Optional[Union[str, Path]] = None,
         target: Optional[tvm.target.Target] = None,
+        schedule_map: Optional[Dict[str, List[Tuple[int, str]]]] = None,
     ):
         self.target = target
+        if schedule_map is None:
+            schedule_map = {}
+        self.schedule_map = schedule_map
 
         if exe is None and model_path is None:
             raise ValueError("One of vm and model_path must be provided.")

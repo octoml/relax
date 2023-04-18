@@ -20,7 +20,7 @@ from benchmarking_utils import (
     BenchmarkConfig,
     ModelConfig,
     eprint,
-    extract_framework_ops,
+    extract_op_info,
     git_info,
 )
 from base import flush_result
@@ -136,18 +136,12 @@ def run(args, runner):
         gold_results = runner.run_onnx_cpu_inference(inputs)
 
     # Run the model a few times and extract timings
-    error, import_error, compile_time_ms, runtimes_ms, output_deltas = runner.run(
+    error, import_error, compile_time_ms, runtimes_ms, output_deltas, schedule_map = runner.run(
         inputs=inputs,
         gold_results=gold_results,
     )
 
-    try:
-        framework_ops = extract_framework_ops(onnx_model)
-    except Exception as e:
-        framework_ops = []
-        error = e
-
-    # TODO: relay ops
+    framework_ops, relax_ops = extract_op_info(onnx_model, schedule_map)
 
     # Send the output results to a JSON file on disk
     flush_result(
@@ -158,7 +152,7 @@ def run(args, runner):
         import_error=import_error,
         compile_time_ms=compile_time_ms,
         output_deltas=output_deltas,
-        relay_ops=[],
+        relax_ops=relax_ops,
         framework_ops=framework_ops,
         runtime_metadata=runner.metadata(),
         extra_info=extra_info,
