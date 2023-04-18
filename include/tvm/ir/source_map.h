@@ -56,6 +56,12 @@ class SourceNameNode : public Object {
     return equal(name, other->name);
   }
 
+  static constexpr const bool _type_has_method_shash_reduce = true;
+
+  void SHashReduce(SHashReducer hash_reduce) const {
+    hash_reduce(name);
+  }
+
   static constexpr const char* _type_key = "SourceName";
   TVM_DECLARE_FINAL_OBJECT_INFO(SourceNameNode, Object);
 };
@@ -111,6 +117,16 @@ class SpanNode : public Object {
     return equal(source_name, other->source_name) && equal(line, other->line) &&
            equal(column, other->column) && equal(end_line, other->end_line) &&
            equal(end_column, other->end_column);
+  }
+
+  static constexpr const bool _type_has_method_shash_reduce = true;
+
+  void SHashReduce(SHashReducer hash_reduce) const {
+    hash_reduce(source_name);
+    hash_reduce(line);
+    hash_reduce(column);
+    hash_reduce(end_line);
+    hash_reduce(end_column);
   }
 
   static constexpr const char* _type_key = "Span";

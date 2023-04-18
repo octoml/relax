@@ -103,6 +103,18 @@ TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
     });
 
 TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
+.set_dispatch<Span>("", [](Span span, ObjectPath p, IRDocsifier d) -> Doc {
+  return IdDoc(String("Span"))->Call(
+    Array<ExprDoc, void>({
+        LiteralDoc::Str(span->source_name->name, p),
+        LiteralDoc::Int(span->line, p),
+        LiteralDoc::Int(span->column, p),
+        LiteralDoc::Int(span->end_line, p),
+        LiteralDoc::Int(span->end_column, p)}));
+});
+
+
+TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
     .set_dispatch<DictAttrs>("", [](DictAttrs attrs, ObjectPath p, IRDocsifier d) -> Doc {
       return d->AsDoc(attrs->dict, p->Attr("dict"));
     });
