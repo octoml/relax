@@ -137,7 +137,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--models-yaml",
-        default="gitlab-scorecard/models.yaml",
+        default=REPO_ROOT / "scorecard/gitlab-scorecard/models.yaml",
         help="Path to models.yaml (default: gitlab-scorecard/models.yaml)",
     )
     parser.add_argument(
