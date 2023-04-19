@@ -79,6 +79,11 @@ class BatchNormAttrs(Attrs):
     """Attributes used in batch_norm operator"""
 
 
+@tvm._ffi.register_object("relax.attrs.LRNAttrs")
+class LRNAttrs(Attrs):
+    """Attributes used in lrn operator"""
+
+
 @tvm._ffi.register_object("relax.attrs.LayerNormAttrs")
 class LayerNormAttrs(Attrs):
     """Attributes used in layer_norm operator"""

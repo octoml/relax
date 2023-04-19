@@ -242,6 +242,19 @@ def _nn_batch_norm(bb: BlockBuilder, call: Call) -> Expr:
     )
 
 
+@register_legalize("relax.nn.lrn")
+def _nn_lrn(bb: BlockBuilder, call: Call) -> Expr:
+    return bb.call_te(
+        topi.nn.lrn,
+        call.args[0],
+        call.attrs.size,
+        1,  # axis
+        call.attrs.alpha,
+        call.attrs.beta,
+        call.attrs.bias,
+    )
+
+
 @register_legalize("relax.nn.layer_norm")
 def _nn_layer_norm(bb: BlockBuilder, call: Call) -> Expr:
     return bb.call_te(

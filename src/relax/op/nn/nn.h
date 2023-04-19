@@ -64,6 +64,9 @@ Expr log_softmax(Expr data, int axis);
 Expr batch_norm(Expr data, Expr gamma, Expr beta, Expr moving_mean, Expr moving_var,  //
                 int axis, double epsilon, bool center, bool scale);
 
+/*! \brief Compute local response normalization (LRN) */
+Expr lrn(Expr data, int size, int axis, double alpha, double beta, double bias);
+
 /*! \brief Compute layer normalization. */
 Expr layer_norm(Expr data, Expr gamma, Expr beta, Array<Integer> axes, double epsilon, bool center,
                 bool scale);

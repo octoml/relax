@@ -205,6 +205,23 @@ struct BatchNormAttrs : public tvm::AttrsNode<BatchNormAttrs> {
   }
 };  // struct BatchNormAttrs
 
+/*! \brief Attributes used in lrn operator */
+struct LRNAttrs : public tvm::AttrsNode<LRNAttrs> {
+  int size;
+  int axis;
+  double alpha;
+  double beta;
+  double bias;
+
+  TVM_DECLARE_ATTRS(LRNAttrs, "relax.attrs.LRNAttrs") {
+    TVM_ATTR_FIELD(size).describe("The number of channels.");
+    TVM_ATTR_FIELD(axis).describe("Input data layout channel axis.");
+    TVM_ATTR_FIELD(alpha).describe("The scaling parameter.");
+    TVM_ATTR_FIELD(beta).describe("The exponent parameter.");
+    TVM_ATTR_FIELD(bias).describe("The offset parameter to avoid dividing by 0.");
+  }
+};  // struct LRNAttrs
+
 /*! \brief Attributes used in layer_norm operator */
 struct LayerNormAttrs : public tvm::AttrsNode<LayerNormAttrs> {
   Array<Integer> axes;

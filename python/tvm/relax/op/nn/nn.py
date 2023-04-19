@@ -644,6 +644,59 @@ def batch_norm(
     )
 
 
+def lrn(
+    data: Expr,
+    size: int,
+    axis: int = 1,
+    bias: float = 2,
+    alpha: float = 1e-4,
+    beta: float = 0.75,
+) -> Expr:
+    """This operator takes data as input and does local response normalization.
+
+    Normalize the input over local input regions. The local region is defined across the channels.
+    For an element X[n, c, d1, ..., dk] in a tensor of shape (N x C x D1 x D2, ..., Dk),
+    its region is {X[n, i, d1, ..., dk], where i is defined from enequalities:
+    max(0, c - floor((size - 1) / 2)) <= i <= min(C - 1, c + ceil((size - 1) / 2))}.
+    Each input value is divided by (bias + (alpha * sum_data ^2 /size))^beta), where
+    size is number of channels, and the sum_data is taken over the region centered at that value.
+
+    .. math::
+        out_data = in_data / (bias + (alpha * sum_data ^2 /size))^beta
+        sum_data = sum(in_data[n, i, d1, ..., dk] ^ 2), where
+        max(0, c - floor((size - 1) / 2)) <= i <= min(C - 1, c + ceil((size - 1) / 2)).
+
+    Parameters
+    ----------
+    data : relay.Expr
+        The input data to the operator. Dimensions for image case are (N x C x H x W),
+        where N is the batch size, C is the number of channels, and H and W are the height
+        and the width of the data. For non image case, the dimensions are in the form of
+        (N x C x D1 x D2 ... Dn), where N is the batch size.
+
+    size : int
+        The number of channels to sum over.
+
+    axis : int, optional
+        Input data layout channel axis. Default value is 1 for NCHW format
+
+    bias : float, optional
+        The offset parameter to avoid dividing by 0. It is 1 by default.
+
+    alpha : float, optional
+        The scaling parameter. It is 1e-4 by default.
+
+    beta : float, optional
+        The exponent parameter. It is 0.75 by default.
+
+    Returns
+    -------
+    result : relay.Expr
+        The computed result.
+    """
+    return _ffi_api.lrn(data, size, axis, alpha, beta, bias)
+
+
 def layer_norm(
     data: Expr,
     gamma: Expr,
