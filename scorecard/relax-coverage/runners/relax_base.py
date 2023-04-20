@@ -82,7 +82,7 @@ class RelaxBase(BaseRunner):
                     tuning_steps=self.benchmark_config.config.tuning_steps,
                 )
             except Exception as e:
-                return e, ImportError.FAILED_OCTO_COMPILE, 0, [], []
+                return e, ImportError.FAILED_OCTO_COMPILE, 0, [], [], {}
 
         compile_time_ms = compile_timer.ms_duration
 
@@ -114,9 +114,9 @@ class RelaxBase(BaseRunner):
                 runtimes_ms.append(timer.ms_duration)
 
             except Exception as e:
-                return e, ImportError.FAILED_EXECUTION, 0, [], []
+                return e, ImportError.FAILED_EXECUTION, 0, [], [], tvm_model.schedule_map
 
             # Check accuracy
             output_deltas.append([gold_results[i] - output[i] for i in range(len(output))])
 
-        return None, None, compile_time_ms, runtimes_ms, output_deltas
+        return None, None, compile_time_ms, runtimes_ms, output_deltas, tvm_model.schedule_map

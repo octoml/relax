@@ -56,6 +56,12 @@ class SourceNameNode : public Object {
     return equal(name, other->name);
   }
 
+  static constexpr const bool _type_has_method_shash_reduce = true;
+
+  void SHashReduce(SHashReducer hash_reduce) const {
+    hash_reduce(name);
+  }
+
   static constexpr const char* _type_key = "SourceName";
   TVM_DECLARE_FINAL_OBJECT_INFO(SourceNameNode, Object);
 };
@@ -113,8 +119,18 @@ class SpanNode : public Object {
            equal(end_column, other->end_column);
   }
 
+  static constexpr const bool _type_has_method_shash_reduce = true;
+
+  void SHashReduce(SHashReducer hash_reduce) const {
+    hash_reduce(source_name);
+    hash_reduce(line);
+    hash_reduce(column);
+    hash_reduce(end_line);
+    hash_reduce(end_column);
+  }
+
   static constexpr const char* _type_key = "Span";
-  TVM_DECLARE_FINAL_OBJECT_INFO(SpanNode, Object);
+  TVM_DECLARE_BASE_OBJECT_INFO(SpanNode, Object);
 };
 
 class Span : public ObjectRef {
@@ -125,6 +141,31 @@ class Span : public ObjectRef {
   TVM_DLL Span Merge(const Span& other) const;
 
   TVM_DEFINE_OBJECT_REF_METHODS(Span, ObjectRef, SpanNode);
+};
+
+class MultiSpanNode : public SpanNode {
+ public:
+  Map<Span,ObjectRef> spans;
+
+  // override attr visitor
+  void VisitAttrs(AttrVisitor* v) { v->Visit("spans", &spans); }
+
+  bool SEqualReduce(const MultiSpanNode* other, SEqualReducer equal) const {
+    return equal(spans, other->spans);
+  }
+
+  static constexpr const char* _type_key = "MultiSpan";
+  TVM_DECLARE_FINAL_OBJECT_INFO(MultiSpanNode, SpanNode);
+};
+
+/*!
+ * \brief Attaches multiple disjoint Span to a given IR node.
+ */
+class MultiSpan : public Span {
+ public:
+  TVM_DLL MultiSpan(Map<Span,ObjectRef> spans);
+
+  TVM_DEFINE_NOTNULLABLE_OBJECT_REF_METHODS(MultiSpan, Span, MultiSpanNode);
 };
 
 /*! \brief A program source in any language.

@@ -460,7 +460,7 @@ class Shape(OnnxOpConverter):
 
         # If no shape is defined in the struct info, it must be computed at runtime.
         if not data_info.shape:
-            data_shape = bb.normalize(relax.op.shape_of(inputs[0]))
+            data_shape = bb.normalize(attach_span(relax.op.shape_of(inputs[0])))
             return data_shape
 
         return data_info.shape

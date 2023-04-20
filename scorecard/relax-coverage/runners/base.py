@@ -35,7 +35,7 @@ def flush_result(
     run_config: BenchmarkConfig,
     framework_ops: List[str],
     runtime_metadata: Dict[str, Any],
-    relay_ops: List[Dict[str, Any]],
+    relax_ops: List[Dict[str, Any]],
     extra_info: Dict[str, Any],
 ) -> None:
     """
@@ -53,7 +53,9 @@ def flush_result(
                 outputs_match_onnx = False
 
     end_to_end_runtimes_ms = np.array(runtimes_ms)
-    relay_fusion_groups: List[List[int]] = []
+    # branch, sha = git_info()
+    branch = "tbd"
+    sha = "tbd"
 
     if model_config.file() == FROM_HUB:
         # TODO: implement this for hub models
@@ -105,8 +107,7 @@ def flush_result(
         "outputs_match_onnx": outputs_match_onnx,
         # model details
         "framework_ops": framework_ops,
-        "relay_ops": relay_ops,
-        "relay_fusion_groups": relay_fusion_groups,
+        "relax_ops": relax_ops,
         # coverage results
         **extra_info,
     }
