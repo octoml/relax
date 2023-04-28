@@ -285,4 +285,4 @@ models.yaml
 /.gitconfig
 /.aws/
 /.config/
-.coverage-results/
+.coverage_results/

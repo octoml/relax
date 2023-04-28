@@ -100,7 +100,12 @@ docker_build:
     ./scripts/show_node_info.sh
     mkdir model-data
     echo "$GCP_AUTH_JSON" > gcp_auth.json
-    curl -L -o models.yaml --header "PRIVATE-TOKEN: $RELAX_SCORECARD_GITLAB_PAT" "https://gitlab.com/api/v4/projects/$RELAX_SCORECARD_PROJECT_ID/repository/files/models.yaml/raw?ref=main"
+
+    # The commit SHA of the models.yaml to use, from
+    # https://gitlab.com/octoml/relax-scorecard/-/commits/main?ref_type=heads
+    export MODELS_YAML_COMMIT=0c59efb5a134876eb1db25a21dce5bee1eca1f8d
+
+    curl -L -o models.yaml --header "PRIVATE-TOKEN: $RELAX_SCORECARD_GITLAB_PAT" "https://gitlab.com/api/v4/projects/$RELAX_SCORECARD_PROJECT_ID/repository/files/models.yaml/raw?ref=$MODELS_YAML_COMMIT"
     export UPLOAD_GCP=1
     export TEST_RUNS=10
     export WARMUP_RUNS=3
