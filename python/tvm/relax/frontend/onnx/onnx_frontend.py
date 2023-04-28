@@ -1299,11 +1299,46 @@ class BatchNormalization(OnnxOpConverter):
         )
 
 
-class MaxPool(OnnxOpConverter):
-    """Converts an onnx MaxPool node into an equivalent Relax expression."""
+class Pool:
+    """Base class for MaxPool and AveragePool nodes."""
 
     @classmethod
-    def _impl_v12(cls, bb, inputs, attr):
+    def _get_input_spatial_shape(cls, tensor):
+        # shape is (N x C x D1 x D2 ... Dn)
+        return _np.array([int(d) for d in tensor.struct_info.shape], dtype="int64")[2:]
+
+    @classmethod
+    def _prepare_auto_pads(cls, auto_pad, data, kernel_shape, strides, dilations):
+        input_spatial_shape = cls._get_input_spatial_shape(data)
+        output_spatial_shape = [0 for _ in input_spatial_shape]
+
+        pads = _np.array([(0, 0) for _ in range(len(kernel_shape))])
+
+        for i, _ in enumerate(input_spatial_shape):
+            if auto_pad == "SAME_UPPER":
+                output_spatial_shape[i] = int(_np.ceil(input_spatial_shape[i] / strides[i]))
+            else:
+                output_spatial_shape[i] = int(_np.floor(input_spatial_shape[i] / strides[i]))
+            pad_i = (
+                (output_spatial_shape[i] - 1) * strides[i]
+                + ((kernel_shape[i] - 1) * dilations[i] + 1)
+                - input_spatial_shape[i]
+            )
+            if auto_pad == "SAME_UPPER":
+                pads[i, 0] = pad_i // 2
+                pads[i, 1] = pad_i - pads[i, 0]
+            else:
+                pads[i, 1] = pad_i // 2
+                pads[i, 0] = pad_i - pads[i, 1]
+
+        # TODO(agladyshev): for now we support only 2D kernel
+        # (top, left, bottom, right)
+        flatten_pads = [pads[0][0], pads[1][0], pads[0][1], pads[1][1]]
+        pads = tuple(flatten_pads)
+        return pads
+
+    @classmethod
+    def _base_impl(cls, bb, inputs, attr, type="max"):
         # Unpack inputs and attributes.
         data = inputs[0]
         auto_pad = attr.get("auto_pad", b"NOTSET").decode("utf-8")
@@ -1322,41 +1357,34 @@ class MaxPool(OnnxOpConverter):
         ], f"Value {auto_pad} in attribute auto_pad is invalid."
 
         if auto_pad in ("SAME_UPPER", "SAME_LOWER"):
-            input_spatial_shape = cls._get_input_spatial_shape(data)
-            output_spatial_shape = [0 for _ in input_spatial_shape]
+            pads = cls._prepare_auto_pads(auto_pad, data, kernel_shape, strides, dilations)
 
-            pads = _np.array([(0, 0) for _ in range(len(kernel_shape))])
+        if type == "max":
+            return attach_span(
+                relax.op.nn.max_pool2d(data, kernel_shape, strides, pads, dilations, ceil_mode)
+            )
+        elif type == "avg":
+            return attach_span(
+                relax.op.nn.avg_pool2d(data, kernel_shape, strides, pads, dilations, ceil_mode)
+            )
+        else:
+            raise ValueError(f"Pooling type {type} is unsupported")
 
-            for i, _ in enumerate(input_spatial_shape):
-                if auto_pad == "SAME_UPPER":
-                    output_spatial_shape[i] = int(_np.ceil(input_spatial_shape[i] / strides[i]))
-                else:
-                    output_spatial_shape[i] = int(_np.floor(input_spatial_shape[i] / strides[i]))
-                pad_i = (
-                    (output_spatial_shape[i] - 1) * strides[i]
-                    + ((kernel_shape[i] - 1) * dilations[i] + 1)
-                    - input_spatial_shape[i]
-                )
-                if auto_pad == "SAME_UPPER":
-                    pads[i, 0] = pad_i // 2
-                    pads[i, 1] = pad_i - pads[i, 0]
-                else:
-                    pads[i, 1] = pad_i // 2
-                    pads[i, 0] = pad_i - pads[i, 1]
 
-            # TODO(agladyshev): for now we support only 2D kernel
-            # (top, left, bottom, right)
-            flatten_pads = [pads[0][0], pads[1][0], pads[0][1], pads[1][1]]
-            pads = tuple(flatten_pads)
-
-        return attach_span(
-            relax.op.nn.max_pool2d(data, kernel_shape, strides, pads, dilations, ceil_mode)
-        )
+class MaxPool(OnnxOpConverter, Pool):
+    """Converts an onnx MaxPool node into an equivalent Relax expression."""
 
     @classmethod
-    def _get_input_spatial_shape(cls, tensor):
-        # shape is (N x C x D1 x D2 ... Dn)
-        return _np.array([int(d) for d in tensor.struct_info.shape], dtype="int64")[2:]
+    def _impl_v12(cls, bb, inputs, attr):
+        return cls._base_impl(bb, inputs, attr)
+
+
+class AveragePool(OnnxOpConverter, Pool):
+    """Converts an onnx MaxPool node into an equivalent Relax expression."""
+
+    @classmethod
+    def _impl_v12(cls, bb, inputs, attr):
+        return cls._base_impl(bb, inputs, attr, "avg")
 
 
 class GlobalAveragePool(OnnxOpConverter):
@@ -1783,6 +1811,7 @@ def _get_convert_map():
         "GlobalAveragePool": GlobalAveragePool,
         "Flatten": Flatten,
         "MaxPool": MaxPool,
+        "AveragePool": AveragePool,
         "Identity": Identity,
         "Resize": Resize,
         "Einsum": Einsum,

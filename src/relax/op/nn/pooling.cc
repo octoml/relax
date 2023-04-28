@@ -142,6 +142,7 @@ TVM_REGISTER_OP("relax.nn.max_pool2d")
     .set_attr<FRelaxInferLayout>("FRelaxInferLayout", InferLayoutPool2d)
     .set_attr<TMixedPrecisionPolicy>("TMixedPrecisionPolicy", MixedPrecisionPolicyKind::kFollow);
 
+/* relax.nn.avg_pool2d */
 Expr avg_pool2d(Expr data, Array<IntImm> pool_size, Array<IntImm> strides, Array<IntImm> padding,
                 Array<IntImm> dilation, bool ceil_mode, String layout,
                 Optional<String> out_layout) {

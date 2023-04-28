@@ -1583,10 +1583,11 @@ def test_batch_norm():
     check_correctness(model)
 
 
-def test_max_pool():
+@pytest.mark.parametrize("node_type", ["MaxPool", "AveragePool"])
+def test_pool(node_type):
     # Pool2D
     verify_unary(
-        "MaxPool",
+        node_type,
         [1, 1, 32, 32],
         dict(
             auto_pad="NOTSET",
@@ -1597,7 +1598,7 @@ def test_max_pool():
     )
     # Pool2D with stride
     verify_unary(
-        "MaxPool",
+        node_type,
         [1, 1, 32, 32],
         dict(
             auto_pad="NOTSET",
@@ -1608,7 +1609,7 @@ def test_max_pool():
     )
     # Pool2D with stride and autopadding
     verify_unary(
-        "MaxPool",
+        node_type,
         [1, 1, 32, 32],
         dict(
             auto_pad="SAME_UPPER",
@@ -1618,7 +1619,7 @@ def test_max_pool():
         ),
     )
     verify_unary(
-        "MaxPool",
+        node_type,
         [1, 1, 32, 32],
         dict(
             auto_pad="SAME_LOWER",
@@ -1628,7 +1629,7 @@ def test_max_pool():
         ),
     )
     verify_unary(
-        "MaxPool",
+        node_type,
         [1, 1, 32, 32],
         dict(
             auto_pad="VALID",
