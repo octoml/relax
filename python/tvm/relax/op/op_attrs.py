@@ -69,6 +69,11 @@ class AdaptivePool2DAttrs(Attrs):
     """Attributes for 2d adaptive pool operator"""
 
 
+@tvm._ffi.register_object("relax.attrs.LeakyReluAttrs")
+class LeakyReluAttrs(Attrs):
+    """Attributes for nn.leaky_relu"""
+
+
 @tvm._ffi.register_object("relax.attrs.SoftmaxAttrs")
 class SoftmaxAttrs(Attrs):
     """Attributes for nn.softmax"""

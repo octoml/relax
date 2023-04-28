@@ -26,6 +26,7 @@ from tvm.script import relax as R
 def test_op_correctness():
     x = relax.Var("x", R.Tensor((2, 3), "float32"))
     assert relax.op.nn.relu(x).op == Op.get("relax.nn.relu")
+    assert relax.op.nn.leaky_relu(x).op == Op.get("relax.nn.leaky_relu")
     assert relax.op.nn.gelu(x).op == Op.get("relax.nn.gelu")
     assert relax.op.nn.silu(x).op == Op.get("relax.nn.silu")
     assert relax.op.nn.softmax(x).op == Op.get("relax.nn.softmax")
@@ -61,12 +62,14 @@ def test_linear_unit_infer_struct_info():
     x2 = relax.Var("x", R.Tensor("float32", ndim=-1))
     x3 = relax.Var("x", R.Tensor((2, 3)))
     x4 = relax.Var("x", R.Tensor())
+    x5 = relax.Var("x", R.Tensor((2, 3), "float32"))
 
     _check_inference(bb, relax.op.nn.relu(x0), relax.TensorStructInfo((2, 3), "float32"))
     _check_inference(bb, relax.op.nn.silu(x1), relax.TensorStructInfo(dtype="float32", ndim=3))
     _check_inference(bb, relax.op.nn.gelu(x2), relax.TensorStructInfo(dtype="float32"))
     _check_inference(bb, relax.op.nn.relu(x3), relax.TensorStructInfo((2, 3), dtype=""))
     _check_inference(bb, relax.op.nn.gelu(x4), relax.TensorStructInfo(dtype=""))
+    _check_inference(bb, relax.op.nn.leaky_relu(x0), relax.TensorStructInfo((2, 3), "float32"))
 
 
 def test_linear_unit_infer_struct_info_shape_symbolic():
@@ -75,9 +78,11 @@ def test_linear_unit_infer_struct_info_shape_symbolic():
     n = tir.Var("n", "int64")
     x0 = relax.Var("x", R.Tensor((m, n), "float32"))
     x1 = relax.Var("x", R.Tensor((4, n), "float32"))
+    x2 = relax.Var("x", R.Tensor((m, 8), "float32"))
 
     _check_inference(bb, relax.op.nn.silu(x0), relax.TensorStructInfo((m, n), "float32"))
     _check_inference(bb, relax.op.nn.relu(x1), relax.TensorStructInfo((4, n), "float32"))
+    _check_inference(bb, relax.op.nn.leaky_relu(x2), relax.TensorStructInfo((m, 8), "float32"))
 
 
 def test_linear_unit_infer_struct_info_shape_var():

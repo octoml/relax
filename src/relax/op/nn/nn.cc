@@ -34,6 +34,37 @@ RELAX_REGISTER_UNARY_NN_OP_AND_IMPL(gelu, "nn.gelu", /*require_float_dtype=*/tru
 /* relax.nn.silu */
 RELAX_REGISTER_UNARY_NN_OP_AND_IMPL(silu, "nn.silu", /*require_float_dtype=*/true);
 
+/* relax.nn.leaky_relu */
+TVM_REGISTER_NODE_TYPE(LeakyReluAttrs);
+
+Expr leaky_relu(Expr data, double alpha) {
+  auto attrs = make_object<LeakyReluAttrs>();
+  attrs->alpha = alpha;
+  static const Op& op = Op::Get("relax.nn.leaky_relu");
+  return Call(op, {data}, Attrs(attrs), {});
+}
+
+TVM_REGISTER_GLOBAL("relax.op.nn.leaky_relu").set_body_typed(leaky_relu);
+
+StructInfo InferStructInfoLeakyRelu(const Call& call, const BlockBuilder& ctx) {
+  TensorStructInfo data_sinfo = GetUnaryInputTensorStructInfo(call, ctx);
+
+  if (!data_sinfo->IsUnknownDtype() &&
+      !(data_sinfo->dtype.is_float() || data_sinfo->dtype.is_bfloat16())) {
+    ctx->ReportFatal(Diagnostic::Error(call) << "LeakyRelu requires the input tensor to have float "
+                                                "dtype. However, the given input dtype is "
+                                             << data_sinfo->dtype);
+  }
+
+  return data_sinfo;
+}
+
+TVM_REGISTER_OP("relax.nn.leaky_relu")
+    .set_num_inputs(1)
+    .add_argument("data", "Tensor", "The input tensor.")
+    .set_attrs_type<LeakyReluAttrs>()
+    .set_attr<FInferStructInfo>("FInferStructInfo", InferStructInfoLeakyRelu);
+
 /* relax.nn.softmax */
 TVM_REGISTER_NODE_TYPE(SoftmaxAttrs);
 

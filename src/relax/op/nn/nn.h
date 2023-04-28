@@ -54,6 +54,9 @@ Expr gelu(Expr data);
 /*! \brief Sigmoid Linear Unit function. */
 Expr silu(Expr data);
 
+/*! \brief Leaky rectified linear unit. */
+Expr leaky_relu(Expr data, double alpha);
+
 /*! \brief Softmax function. */
 Expr softmax(Expr data, int axis);
 

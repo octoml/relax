@@ -201,6 +201,11 @@ def _nn_silu(bb: BlockBuilder, call: Call) -> Expr:
     return bb.call_te(te_silu, call.args[0], primfunc_name_hint="silu")
 
 
+@register_legalize("relax.nn.leaky_relu")
+def _nn_leaky_relu(bb: BlockBuilder, call: Call) -> Expr:
+    return bb.call_te(topi.nn.leaky_relu, call.args[0], call.attrs.alpha)
+
+
 @register_legalize("relax.nn.softmax")
 def _nn_softmax(bb: BlockBuilder, call: Call) -> Expr:
     return bb.call_te(topi.nn.softmax, call.args[0], call.attrs.axis)
